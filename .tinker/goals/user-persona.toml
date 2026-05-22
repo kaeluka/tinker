@@ -1,0 +1,99 @@
+id = "user-persona"
+description = """
+## WHAT
+The user persona driving Tinker's architecture: an experienced software
+developer who uses AI tools extensively but no longer reads source
+code. Tinker acts as a compiler; the user interacts with the system
+strictly through goals, observable behavior, and architectural
+concepts.
+
+## WHY
+This goal carries the *persona-specific* consequences. The broader
+principles it depends on live in two parent goals:
+
+- `user-system-interaction` defines what state gets exposed to the
+  user and what tinker holds. Because the user does not look at
+  source code, any explanation tinker gives about its internals is
+  the user's only window into the *is*. An undetected error in
+  that explanation cannot be caught from the user's side.
+- `creative-process` defines how the user and tinker collaborate.
+  The user operates as Donald Schön's reflective practitioner —
+  building, observing, reframing. Their reflection runs on the
+  observations and explanations tinker provides. Undetectable
+  errors break the reflective loop because the user would then be
+  reflecting on false premises.
+
+The decisions below — the no-margin-of-error explanation
+requirement, the prove-by-tinkering stance, the design-partner
+posture, the Pareto-frontier framing — all follow from those two
+parent commitments operating on *this particular persona*. This goal
+does not re-articulate the dialectical process itself (that is in
+`creative-process`), nor the orchestrator's convention-engine role
+(also in `creative-process`), nor the state-ownership split (that is
+in `user-system-interaction`); it specifies what each of those
+implies for communication with this specific user.
+
+## SCOPE
+- In scope: who the user is; the no-error-explanation requirement
+  and why it is structural rather than a quality bar; tinker's
+  prove-by-running stance toward its own claims; tinker's design-
+  partner communication posture toward this user; the multi-
+  variable optimization framing of the goal system as it relates
+  to how this user thinks about design.
+- Out of scope: the state-ownership split itself (handled by
+  `user-system-interaction`); the dialectical interaction pattern,
+  the convention-engine framing of the orchestrator, the
+  inflection-point surfacing duty, the irreplaceability of the
+  human stakeholder, and the role of goals as the bridge between
+  intuition and convention (all handled by `creative-process`);
+  what specifically gets exposed to the user vs. held by tinker
+  (handled by the two-surfaces decision in
+  `user-system-interaction`).
+
+## DECISIONS (vetted)
+- Decision: The user is an experienced software developer who
+  understands AI tools well. Source: user said "the persona is a
+  software developer by training", "they're pretty good at using
+  this ai thing... ok, let's be real, I'm that person."
+- Decision: Tinker is treated as a compiler. The user no longer
+  looks at the source code. Source: user said "the developer does
+  no longer look at the code. tinker is taking the role of a
+  compiler in some sense."
+- Decision: Tinker must explain the code it builds with no margin
+  of error. This is not a quality bar — it is a structural
+  consequence of asymmetric state ownership (per
+  `user-system-interaction`) combined with the user's dependence
+  on those explanations for reflective practice (per
+  `creative-process`). Any undetectable error in explanation
+  breaks both the trust contract and the reflective loop. Source:
+  user said "tinker needs to be able to explain the code that it
+  built really well and... has (almost) no margin of error."
+- Decision: Tinker proves its conceptual explanations are correct
+  by running actual code (tinkering), never just reading code.
+  Source: user said "tinker proves its explanations are correct
+  by tinkering... never just read code and say 'trust me bro'."
+- Decision: Tinkering — interacting with what has been built to
+  understand what to build next — is a reflective design practice
+  that surfaces tacit knowledge, not merely a debugging mechanism.
+  This is the user-side instance of the reflective-practitioner
+  pattern named in `creative-process`. Source: user said "it's
+  the act of interacting with what you've built trying to
+  understand what it is that you should be building next."
+- Decision: When reporting observations, tinker acts as an active
+  design partner, pairing execution results with questions or
+  proposed alternatives rather than as a reporter delivering
+  conclusions. Source: user said "I ran this and this succeeded,
+  but on second thought, don't you think this rather should do X?"
+- Decision: The goal system models software design as a multi-
+  variable optimization problem. Tinker's job during interviews
+  is to point out trade-offs between goals and ideally model the
+  "Pareto frontier" of the design space. Source: user confirmed
+  "that would be extremely useful communication... tinker could
+  model a pareto frontier."
+
+"""
+parent_id = "user-system-interaction"
+children = []
+related = [
+  { id = "creative-process", reason = "The user as 'reflective practitioner with knowing-in-action,' and the orchestrator's dual duty of executing conventions while surfacing inflection points, both originate in `creative-process`. This goal applies those framings to the specific persona — what they imply for explanation quality, design-partner posture, and the Pareto-frontier framing." }
+]

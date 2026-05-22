@@ -1,0 +1,190 @@
+id = "orchestrator-introspection"
+description = """
+## WHAT
+A runtime introspection substrate that lets the orchestrator inspect
+its own state — token usage per turn, the goal-session queue, the
+current UI snapshot, message history — instead of estimating from
+inference or asking the user to read numbers off. Two artifacts: an
+append-only log of runtime events at `.tinker/logs/runtime.jsonl`,
+and a state file holding the current semantic UI snapshot at
+`.tinker/state/runtime.json`. The orchestrator reads both with its
+existing file-access tools when it needs them; it never writes to
+either, and goal sessions don't touch them at all.
+
+## WHY
+The orchestrator has been operating on inferred state — estimating
+its own cost, asking the user "what's running?", reconstructing turn
+counts from memory. That's silly: tinker itself knows. The
+user-system-interaction principle says tinker holds the *is*, but the
+*is* never reaches the orchestrator's reasoning — only the user's
+view. This goal closes that asymmetry. The orchestrator is part of
+tinker, and the *is* should be available to it the same way it's
+available to the user.
+
+The persistent log also opens cross-session self-improvement. Every
+session's transcript, timing, cost, queue events, and observable
+goal-session facts become durable. Questions like "why did the
+previous session need a restart?", "did my reactive scheduling
+produce real work?", and "how does cost compare across goals?" turn
+into structured queries instead of fading memory.
+
+## SCOPE
+- In scope: an append-only event log capturing orchestrator turn
+  boundaries (with token usage), goal-session lifecycle and
+  observables, message-level conversation including every
+  tinker-injected system message (full user input, full assistant
+  reply, and full system-message text per turn), /run emissions,
+  cleanup-hook results, TUI structural state changes (queue,
+  selection, focus, scroll), and a `goal_file_changed` event
+  derived from filesystem watching `.tinker/goals/`; a state file
+  holding current selected goal id, focus region, scroll offsets,
+  queue snapshot (running + pending with reasons and start/queue
+  timestamps), and rolling session usage totals; async non-blocking
+  writes via a background writer task on a channel, batched flush;
+  state file debounced or written at significant moments only;
+  backend-agnostic structure with best-effort cost capture for
+  every Claude and opencode call; passive read-only access for the
+  orchestrator via existing file tools.
+- Out of scope: pane content beyond message-level — the conversation
+  pane's verbatim rendered text per line, the session-log pane's
+  streaming line-by-line capture (subsumed by message-level events
+  for the conversation pane, and by `full_output` on
+  `goal_session_finished` for the session-log pane); orchestrator-
+  self-emitted structured events for its own dialectic moves
+  (reframe, frame-check, playback-sent, playback-confirmed) — those
+  remain in pane content and `notes.md` for now, and may become a
+  follow-up goal if reframe-frequency analysis turns out to matter;
+  goal sessions reading the log or state file (they retain their
+  narrow focused scope); orchestrator control over runtime state
+  (cancelling queued sessions, manipulating queue) — that is a
+  separate parked goal framed as
+  "orchestrator-controls-itself-like-the-user-can"; log rotation,
+  retention, or compression (the log grows; the user clears it
+  manually if it ever bothers them); redaction of sensitive content
+  surfaced by tool outputs (user-managed cleanup for now); making
+  the log or state file available to anything beyond the
+  orchestrator's own reading.
+
+## DECISIONS (vetted)
+- Decision: The mechanism is hybrid — a log file for sequence and
+  history, plus a state file for "what the user is looking at right
+  now." A pure state file loses temporal information (durations,
+  ordering); a pure log requires reconstructing current state from
+  scanning. Source: user said "log file would have the advantage
+  that you could tell 'goal x was running before this one, and it
+  took 35s'" then "perhaps there should be a separate file that
+  shows a snapshot of the current UI + a log file."
+- Decision: Log format is JSON Lines with required `ts` (ISO 8601
+  UTC), `kind`, and `source` fields per line, plus event-specific
+  payload. JSONL gives a `kind` grep marker AND queryability via
+  `jq` aggregations. Source: user said either a log-kind marker or
+  a jq filter expression would work — "whatever works best for you
+  in order to achieve your goals"; orchestrator picked JSONL as the
+  shape satisfying both.
+- Decision: State file format is JSON. Contents are semantic only
+  (selected goal id, focus region, scroll offsets, queue snapshot,
+  rolling session usage totals) — NOT verbatim pane text. Verbatim
+  pane content can be added later as a purely additive change if
+  a concrete need emerges; rendering pane text is harder than
+  exporting semantic state and the user-visible need has not yet
+  justified the work. Source: user said "(a) suffices for now IMO"
+  between semantic-only, pane-content, and both.
+- Decision: The log file is `.tinker/logs/runtime.jsonl`. The state
+  file is `.tinker/state/runtime.json`. Both directories are pre-
+  created at startup if missing. Source: orchestrator default,
+  confirmed in playback.
+- Decision: No log rotation. The log appends forever; the user
+  clears it manually if it grows too large. Tinker is a personal
+  tool; the file is unlikely to become a problem in practice.
+  Source: user said "(i) - user can delete manually, but when
+  you're reading the log: it should be greppable nicely."
+- Decision: Backend-agnostic structure with best-effort cost capture
+  per call. Both Claude and opencode emit events into the same log
+  shape, AND every Claude or opencode call captures its cost on a
+  best-effort basis. For Claude this is already implemented
+  (input/output/cache_read/cache_write tokens from the stream-json
+  result event). For opencode-via-OpenRouter, the implementing
+  session investigates concrete cost-extraction paths (OpenRouter
+  response metadata, response headers, follow-up generation-query
+  API calls) and surfaces findings — what is and isn't available,
+  and the implementation chosen. When cost is genuinely unavailable
+  for a specific call, the `usage` field is `null` AND that
+  unavailability is recorded as a known gap, not accepted as the
+  default. Source: user said "don't forget opencode. opencode must
+  always be supported equally well" and "have you made sure any
+  claude/opencode call is logging its cost?"
+- Decision: Writes are async and non-blocking. A single background
+  writer task drains a channel from producers (TUI, runners,
+  dispatcher, filesystem watcher) and batches flushes (every 100ms
+  or 10 events, whichever first). State file writes are debounced
+  ~100ms after the last change, or written only at significant
+  moments (turn complete, queue change). Source: user flagged
+  performance concerns and proposed "fire off async tasks or
+  something like that"; orchestrator agreed and sketched the
+  writer pattern.
+- Decision: The substrate is passive observability, read-only, and
+  orchestrator-only. Goal sessions do not read the log or state
+  file. The orchestrator cannot mutate runtime state through this
+  primitive — no cancelling queued sessions, no UI manipulation.
+  Source: user said "a for now. definitely out of reach for goal
+  agents. maybe you should be able to cancel later. but even i
+  can't do that. if we ever get to that that should be framed as
+  a 'orchestrator can control itself like the user can' goal."
+- Decision: Each `goal_session_finished` event carries observable
+  facts only — `exit_status` (clean/crash/timeout), `duration_ms`,
+  `files_modified` (count and paths, from filesystem watch),
+  `tool_calls` (count, from stream-json), `summary_chars` (size of
+  the returned summary), `full_output` (the entire streamed
+  transcript), `usage` (best-effort per backend per the cost-capture
+  rule above), `backend`. No session-declared `outcome` field. The
+  session is an unreliable narrator about its own work — self-
+  classification fails exactly where it matters most (scope
+  expansion, scope shrinkage, doing something else). Patterns like
+  "no work needed" emerge from observables (short duration + zero
+  files + small summary), not from the session labeling itself.
+  Source: user said "i don't think the goal session has demonstrated
+  this sort of introspection to use. it's an everyday occurrence
+  that it does something that goes beyond what was asked, or doesn't
+  do enough, or does something else."
+- Decision: Every message in the orchestrator session is logged in
+  three categories — user input, assistant reply, and tinker-
+  injected system message. Specifically:
+  `orchestrator_session_started` once at tinker start (with system
+  prompt text and a goal-list hash, so we can detect persona/goal
+  drift across sessions); `orchestrator_user_message_received` per
+  user input (full text); `orchestrator_reply_emitted` per assistant
+  reply (full text, including tool calls and tool results inline);
+  `orchestrator_system_message_received` per tinker-injected system
+  message (post-batch summaries, /run dispatch notifications,
+  system reminders, error injections, etc.), each carrying a
+  `source` field naming the component that emitted it (dispatcher,
+  batch-summary composer, harness, etc.) and the full `content`.
+  System messages are a first-class third category alongside user
+  input and assistant output — they explain *why* turns happened,
+  not just what was said. This makes cross-session analysis
+  viable — questions like "why did the previous session need a
+  restart?" and "what triggered this /run?" become queryable
+  instead of fading. Source: user said "what if we logged every
+  message in the orchestrator session, too? that would contain the
+  information about why a restart was necessary for instance" and
+  "have you also added the ability to read sys messages?"
+- Decision: Initial event kinds: `orchestrator_session_started`,
+  `orchestrator_turn_start`, `orchestrator_turn_end` (with usage,
+  duration, backend), `orchestrator_user_message_received`,
+  `orchestrator_reply_emitted`, `orchestrator_system_message_received`,
+  `goal_session_dispatched`, `goal_session_started`,
+  `goal_session_finished` (with the observable set above),
+  `cleanup_hook_run`, `run_command_emitted`, `goal_file_changed`,
+  `tui_selection_changed`, `tui_focus_changed`, `tui_scroll_changed`,
+  `tui_queue_changed`. New kinds can be added later additively.
+  Source: enumerated through the interview, refined when usage was
+  folded into turn/session-end events, when session-declared outcome
+  was removed in favor of observables, and when the system-message
+  category was added.
+
+"""
+parent_id = "orchestrator"
+children = []
+related = [
+  { id = "user-system-interaction", reason = "The orchestrator is part of tinker; 'tinker holds the *is*' is only half-true if the *is* never reaches the orchestrator's reasoning. This goal closes that gap by giving the orchestrator structured access to the *is* that tinker already holds." }
+]

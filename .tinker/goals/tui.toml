@@ -1,0 +1,126 @@
+id = "tui"
+description = """
+## WHAT
+Tinker presents a terminal interface with three regions visible at
+once. One region carries the live conversation with the
+orchestrator — typed input, streamed replies. Another lists the
+current goals and, beneath that list, shows the full text of
+whichever goal is currently selected. The third shows the output
+of whatever goal session is currently running. Any text region can
+be scrolled with the mouse wheel; new content keeps the view at
+the bottom unless the user has scrolled away manually.
+
+## WHY
+Tinker is meant to be watched while it works. A single REPL would
+hide too much — the user wants to see the conversation, the
+standing intent, and what the goal sessions are actually doing,
+all at the same time.
+
+## SCOPE
+- In scope: a layout that keeps all three regions visible without
+  configuration; live streaming of conversation and session
+  output; mouse-wheel scrolling with auto-follow behavior;
+  keyboard navigation of the goal list with automatic scrolling;
+  dimming and summarizing tool calls in the conversation view;
+  rendering the system message that lists triggered follow-up
+  goals in grey; a modal text input dialog to collect trigger
+  reasons; rendering the trigger reason in bold in the session
+  log; rendering queue markers (a glyph for the running goal,
+  integer indices for queued entries) next to goal names in the
+  goal-list region; rendering each marked goal's pending
+  invocations with their queue indices and reasons in the
+  goal-text region beneath the description.
+- Out of scope: themes, syntax highlighting, layout
+  configurability, syncing the interface to a remote viewer;
+  any interactive manipulation of the queue (cancel, reorder,
+  pause, clear) — the queue surface is read-only.
+
+## DECISIONS (vetted)
+- Decision: The goal region shows BOTH the selectable goal list
+  AND the description text of the currently selected goal. Only
+  the list is selectable; the text below is read-and-scroll
+  only. Source: user said "show the tree as you currently do.
+  but after, show ... full goal text of the currently selected
+  goal, scrollable. make sure I can only select goals, not the
+  text after."
+- Decision: The layout proportions for the right side are fixed at
+  25% height for the goal list, 50% for the goal text view, and
+  25% for the session log. Source: user requested these exact proportions.
+- Decision: When navigating the goal list with the keyboard, the
+  list view automatically scrolls to ensure the currently selected
+  goal is always visible (standard edge scrolling). Source: user confirmed.
+- Decision: Mouse wheel scrolls whichever region is under the
+  cursor. Source: user agreed to add mouse routing this way.
+- Decision: Text regions follow the tail of new content by
+  default. Scrolling up disables the follow until the user
+  scrolls all the way back to the bottom, at which point follow
+  re-engages. Source: matches how every chat-style interface
+  handles streaming text; built this way without contention.
+- Decision: All orchestrator tool calls (bash, read, edit, etc.)
+  shown in the conversation pane are rendered in a grey/dim style
+  to reduce visual noise. Their payloads are summarized (cropped
+  to the first line) to prevent multi-line strings from flooding
+  the view. Source: user said "all in grey and summarized, yes".
+- Decision: When a goal session starts, the specific "reason" it
+  was triggered must be rendered in the log pane in bold font.
+  Source: user requested "that reason must show up in the agent
+  log in bold font."
+- Decision: When the user manually triggers a goal via Enter in
+  the tree (or via `/run` without arguments), a modal text input
+  dialog pops up to collect the trigger reason. Source: user said
+  "3. i hit enter in the goal pane... 3: modal dialog". The old
+  YAGNI constraint against modals is explicitly removed.
+- Decision: The system message that lists the goals the
+  orchestrator triggered (via `/run` lines in its last reply)
+  and their reasons must be rendered in grey to reduce visual
+  noise. Source: user said "in grey"; producer changed from the
+  retired scheduler to the orchestrator without changing the
+  rendering rule.
+- Decision: Goals in the goal-list region carry a marker next to
+  their name when they have a running or pending session. The
+  currently-running goal gets a distinct glyph (e.g. `▶`); each
+  goal with queued entries gets a bracketed integer showing its
+  next upcoming queue position (e.g. `[1]`, `[2]`). Goals with
+  nothing pending carry no marker. Source: user picked option
+  (i) (marker next to name) and option (ii) (distinct glyph for
+  running) during the queue-visibility interview, saying "a
+  marker next to the name (like a queue index integer)" and "ii".
+- Decision: When a goal with a marker is selected, the goal-text
+  region shows an extra section beneath the description listing
+  every pending invocation for that goal — including the
+  currently-running one if applicable — in queue order, with
+  each line carrying the running glyph or queue index and the
+  trigger reason. This makes the goal-text region a complete
+  picture of "what's happening with this goal." Source: user
+  picked option (i) for reason placement ("i") and option (A)
+  for multi-queueing display ("a").
+- Decision: When the same goal has multiple pending invocations,
+  every entry appears in the goal-text region section in queue
+  order, each with its own queue index and reason. The marker on
+  the list itself always shows only the *next* index for that
+  goal — never multiple numbers — so the list stays uncluttered.
+  Source: user picked option (A) for multi-queueing.
+- Decision: Markers in the goal-list region are rendered in a
+  dim/grey style so they don't visually dominate the goal name.
+  Source: confirmed in playback as an orchestrator default.
+- Decision: When the queue is empty and no session is running,
+  no markers appear in the goal-list region, and the goal-text
+  region shows only the description. The queue surface is not
+  visible at all in the idle state. Source: confirmed in
+  playback.
+- Decision: The queue-visibility additions do not change the
+  fixed 25%/50%/25% layout proportions, do not introduce a new
+  region, and do not change the existing selectability rules
+  (list selectable, text-below read-only). Source: user said
+  the option that motivated this — "a marker next to the name"
+  — was acceptable because it was "low-disruption"; confirmed
+  in playback.
+- Decision: The queue surface is read-only. The user does not
+  cancel, reorder, pause, or otherwise manipulate the queue from
+  the interface. Source: user said "lets not cancel yet - just a
+  queue concept that i can't 'mess with'", walking back from
+  earlier "b sounds fantastic" on first-class queue control.
+
+"""
+parent_id = ""
+children = []

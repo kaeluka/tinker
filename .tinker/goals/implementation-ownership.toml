@@ -1,0 +1,45 @@
+id = "implementation-ownership"
+description = """
+## WHAT
+A formal mandate applied to Goal Sessions establishing that they own the
+source code implementation. It explicitly overrides the default LLM
+behavior of acting as a cautious "guest" who avoids deleting or radically
+restructuring code.
+
+## WHY
+Standard LLMs perceive a "structural taboo" against making large
+architectural leaps (e.g., turning a linear pipeline into a DAG) because
+their RLHF training assumes the human owns the code and will be angry if
+it is deleted. But in Tinker, the human owns the *Intent* (Goals), and
+Tinker owns the *Implementation* (Source code). To optimize globally
+rather than just locally, the agents need the psychological permission to
+demolish and rebuild the house. If they perceive the artifact as *theirs*,
+the taboo disappears.
+
+## SCOPE
+- In scope: Modifying the system prompt for Goal Sessions to explicitly
+  grant them ownership of the source code; instructing them to mutate,
+  delete, and rewire architecture without hesitation if it better satisfies
+  the goal.
+- Out of scope: A separate Optimization Agent (we are trying the prompt
+  tactic first); orchestrator ownership (the orchestrator still doesn't
+  write code); allowing Goal Sessions to write their own `.toml` subgoals
+  (that crosses back into Intent, which remains strictly human-owned).
+
+## DECISIONS (vetted)
+- Decision: Goal sessions are not guests in the codebase. They own the
+  implementation and are expected to demolish and restructure it when a
+  better architecture satisfies the goal. Source: user's insight on the
+  consequences of the Should/Is boundary.
+- Decision: The first tactical attempt to break the structural taboo is
+  injecting this ownership mandate directly into the Goal Session prompt,
+  rather than building complex new agent architectures. Source: user's
+  distinction between the goal (the outcome) and the tactic.
+
+"""
+parent_id = "user-system-interaction"
+children = []
+
+[[related]]
+id = "goal-sessions"
+reason = "Goal sessions are the target of this mandate. The ownership override must be injected into their system prompt."
