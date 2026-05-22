@@ -1,0 +1,6 @@
+/target
+# Tinker's own dogfood goals — describe what tinker is, as if built by
+# tinker itself. They live in the repo. Other .tinker state (sessions,
+# runtime cache) stays ignored.
+.tinker/*
+!.tinker/goals/

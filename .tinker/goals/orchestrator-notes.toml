@@ -1,0 +1,76 @@
+id = "orchestrator-notes"
+description = """
+## WHAT
+The orchestrator silently maintains a single append-only notes file at
+`.tinker/notes/notes.md`. Throughout conversation, it writes brief
+timestamped entries capturing things that may be useful for later
+self-improvement — friction, surprise, reframes, recurring threads,
+moments where the user explicitly asks it to remember something. The
+orchestrator does not talk about taking notes; it writes them and keeps
+the conversation moving. There is no retrieval or reflection mechanism
+yet — this goal builds only the substrate.
+
+## WHY
+Tinker shouldn't become a tool that's only great for building tinker;
+it should optimize building tinker in a generalizable way. The path
+toward that is self-improvement, which requires observation
+accumulating somewhere the orchestrator can later reflect on. Right
+now no such accumulation exists — every conversation starts fresh.
+This goal lays the substrate. Doing it incrementally — substrate
+first, reflection later — keeps the design honest: we will know what
+notes actually look like before we design the pass that reads them.
+
+## SCOPE
+- In scope: a single append-only markdown file at
+  `.tinker/notes/notes.md`; silent writes that never interrupt the
+  conversation; brief timestamped entries; a defined set of triggers
+  (below); "observe without judging" tone — descriptive,
+  point-of-interest framing, not problem framing; creating the
+  `.tinker/notes/` directory at startup if missing.
+- Out of scope: any retrieval, reflection, or proposal mechanism that
+  reads the notes back (that is a separate later goal); note-taking
+  by goal sessions (they do not share the orchestrator's
+  conversational chain of thought); organizing notes by topic or
+  splitting into multiple files; pruning, summarization, or rotation
+  of the file.
+
+## DECISIONS (vetted)
+- Decision: Notes go in a single append-only markdown file at
+  `.tinker/notes/notes.md`. Source: user said "single append only
+  file is good".
+- Decision: The triggers are (a) friction — user corrects, repeats
+  themselves, or pushes back; (b) surprise — something behaved
+  differently than expected, framed as a point of interest, not a
+  problem; (c) reframes — conversation pivots from one framing to
+  another, also a point of interest; (d) recurring threads —
+  observed during conversation OR explicitly mentioned by the user
+  ("I noticed something similar last week"); (e) self-introduced
+  framing that gets called out — logged as data, not dwelt on; (f)
+  the user explicitly asks the orchestrator to remember a
+  situation. Source: user said "surprise and reframes can be a sign
+  of the process working well. these can be logged, but don't frame
+  them as a problem"; "also log when i tell you to remember a
+  situation"; "the narcissism trap thing is interesting to log but
+  ... you're fallible, too. so don't sweat it"; "recurring threads:
+  i'll also mention these ('i noticed something similar last
+  week')".
+- Decision: The tone of notes is "observe without judging." Brief,
+  descriptive, point-of-interest framing. Source: user said
+  "observe without judging".
+- Decision: Note-taking is silent. The orchestrator does not
+  interrupt the user's chain of thought to talk about taking a
+  note. Same pattern as the vocabulary file. Source: user said
+  "don't interrupt my chain of thought by talking about that —
+  just make a note of a point of friction and move on".
+- Decision: This goal builds the substrate only. No retrieval,
+  reflection, or proposal mechanism is included; that is a later
+  goal, once we can see what notes actually look like. Source:
+  user said "maybe we can build this incrementally — tinker just
+  takes notes ... that will be useful to self improve later".
+- Decision: Only the orchestrator takes notes in this round. Goal
+  sessions are not included because they do not share the same
+  conversational chain of thought. Source: confirmed in playback.
+
+"""
+parent_id = "orchestrator"
+children = []

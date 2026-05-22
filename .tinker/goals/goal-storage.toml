@@ -1,0 +1,50 @@
+id = "goal-storage"
+description = """
+## WHAT
+Goals are persistent files associated with a project. They live in
+a project-local subdirectory and survive across tinker runs. Goals
+from ancestor directories of the current working directory also
+apply, merged with the project's own — so a shared standard
+defined once in the user's home directory takes effect in every
+project.
+
+## WHY
+Goals are the user's standing intent. They have to survive
+restarts, be human-editable, and diff cleanly in version control.
+Sharing across projects matters because some intent (coding
+standards, security rules) is global; the user shouldn't have to
+copy-paste it into every project.
+
+## SCOPE
+- In scope: a human-editable text format for goals; recovery from
+  a single malformed file (the rest still load); ancestor-
+  directory merge with the current project's copy taking
+  precedence on duplicates; following symlinks transparently
+  so a shared goal directory can live in a separate repo.
+- Out of scope: nested goal subdirectories, runtime format
+  migrations.
+
+## DECISIONS (vetted)
+- Decision: A malformed goal file is reported as an error in the
+  interface but does not block sibling goals from loading.
+  Source: losing every goal because one is broken would be a
+  miserable recovery story.
+- Decision: When the same goal id appears in both an ancestor
+  directory and the current project, the current project's
+  version wins. Source: project-local intent is more specific
+  than inherited intent.
+- Decision: Goal storage strictly stores intent, not session state.
+  Session IDs and history are not persisted to disk at all. Source:
+  user requested dropping persistent sessions entirely so the goal
+  file acts as the ultimate single source of truth.
+- Decision: Symbolic links into goal directories are followed
+  transparently. This is what makes a shared goal directory work
+  when it's checked into a separate repo and linked into the
+  user's home directory. Source: covered behaviorally.
+- Decision: Goals no longer contain a `change_log` field. The orchestrator
+  now triggers updates using explicit `/run` slash commands. Source:
+  user suggested replacing the historic change_log with runtime reason strings.
+
+"""
+parent_id = ""
+children = []

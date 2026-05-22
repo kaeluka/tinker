@@ -1,0 +1,48 @@
+id = "claude-backend"
+description = """
+## WHAT
+Add a `--claude` CLI flag that makes tinker shell out to `claude -p` instead of
+`opencode`. When set, the orchestrator uses Opus, goal sessions use Sonnet,
+and the scheduler uses Haiku.
+
+## WHY
+Users may prefer Claude models over the default OpenRouter-backed models. A
+flag-based toggle lets them choose at startup without configuration overhead.
+
+## SCOPE
+- In scope: a boolean `--claude` CLI flag; a new `ClaudeRunner` implementing
+  the existing `OpenCodeRunner` trait; streaming JSON parsing for Claude's
+  output format; model tier mapping (opus/sonnet/haiku); session resumption
+  via `--resume`; tool-call rendering in the TUI as compact one-liners;
+  passing the orchestrator persona via `--system-prompt` instead of agent
+  file installation.
+- Out of scope: persisting the backend choice in config; supporting other
+  backends beyond opencode and claude; auto-detecting which CLI is available.
+
+## DECISIONS (vetted)
+- Decision: Model tier mapping is opus (orchestrator), sonnet (goal sessions),
+  haiku (scheduler). Source: user said "opus for the orchestrator, sonnet for
+  everything else" then "scheduler can use haiku."
+- Decision: The orchestrator persona is passed via `--system-prompt` when using
+  Claude, not via agent file installation. Source: user chose option C.
+- Decision: Session resumption uses `--resume <session-id>`, the Claude equivalent
+  of opencode's `-s`. Source: user confirmed "yes, same way."
+- Decision: Tool calls in the TUI are rendered as compact one-liners, similar to
+  the opencode style (e.g., `→ bash echo hello`). Source: user confirmed
+  "reasonably similar."
+- Decision: `--claude` is a boolean flag only, no config file persistence.
+  Source: user chose option A.
+- Decision: Claude output format requires `--output-format stream-json --verbose`.
+  Source: CLI probe showed the verbose flag is required for stream-json.
+- Decision: New implementation lives in `src/claude.rs`, parallel to `src/opencode.rs`.
+  The trait name `OpenCodeRunner` stays unchanged (internal naming, not worth
+  rename churn). Source: orchestrator assumption confirmed by "go."
+- Decision: Model constants use Claude's short aliases: "opus", "sonnet", "haiku".
+  Source: orchestrator assumption confirmed by "go."
+
+"""
+parent_id = ""
+children = []
+related = [
+  { id = "cost-reduction", reason = "`cost-reduction` builds its measurement substrate by extending `src/claude.rs`'s output parser to capture the `usage` field that's currently discarded. Cost-cutting work on the Claude path is scoped through this goal." }
+]

@@ -1,0 +1,111 @@
+id = "cost-reduction"
+description = """
+## WHAT
+An ongoing investigative goal whose job is to find cost-cutting
+opportunities in how tinker uses LLMs, and to maintain a persistent
+record of observations across sessions. When the goal session runs,
+it inspects how tinker is built and run — prompt construction, cache
+behaviour, context shipped per turn, model tiering, session
+lifecycle, sibling-goal injection — looks for waste, and surfaces
+findings in its structured summary. The orchestrator folds
+significant observations into `.tinker/notes/cost-observations.md`
+so subsequent runs have continuity. Acting on any finding requires
+a fresh interview with the user — findings never become new goal
+TOMLs on their own.
+
+A first concrete substep, on the first run: extend the Claude CLI
+output parser in `src/claude.rs` to capture the per-message `usage`
+field (input/output tokens plus cache reads/creations) that tinker
+currently discards, and surface those numbers somewhere visible.
+Everything else benefits from having this data.
+
+## WHY
+Tinker works well but is expensive to use — the user grounded this
+in numbers from the Anthropic usage dashboard, divided by lines of
+code shipped. The user wants to know where the spend goes and what
+is worth cutting, on an ongoing basis rather than as a one-off
+audit. Quality dominates cost as a constraint; the dialectical
+interview (per `creative-process`) is protected territory and must
+not be silently squeezed.
+
+Persistence across sessions matters because findings accumulate —
+one batch may notice that the orchestrator persona is large, a
+later batch may notice that the goal list ships fresh every turn,
+and a third may notice both interact. Without continuity each
+investigation starts from zero.
+
+Why a Sonnet-tier goal session does the recon instead of the
+orchestrator itself: the orchestrator runs on Opus and (per the
+introspection that produced this goal) arbitrates between many
+overlapping conventions on every turn, so its per-turn cost is
+high. Pushing recon onto a cheaper tier is itself a cost-aware
+move.
+
+## SCOPE
+- In scope: standing investigative goal that examines how tinker
+  uses LLMs; using the Claude CLI `usage` events as the primary
+  data source; identifying and surfacing cuts (cache layout, prompt
+  size, session lifecycle, model tiering, sibling-goal injection,
+  conversation history growth); building and maintaining the
+  measurement substrate as the first concrete substep; persisting
+  observations to `.tinker/notes/cost-observations.md` (orchestrator
+  writes, goal sessions surface in summaries).
+- Out of scope: implementing cuts directly — each cut becomes a
+  separate interviewed goal; enforcing a numeric budget or target
+  ratio; changes that visibly degrade interview depth, playback
+  fidelity, or goal-session quality; investigation of the
+  opencode/openrouter backend path until confirmed that is where
+  the user spends.
+
+## DECISIONS (vetted)
+- Decision: The goal is investigative, not target-driven. No
+  headline metric, no "halve it." Source: user said "i'm
+  interested in finding cost cutting potential, there isn't really
+  a 'target'."
+- Decision: Quality dominates cost. Some thinking may be sacrificed
+  for cost, but not much. The dialectical interview process is
+  protected territory per `creative-process` and must not be
+  silently squeezed by this goal. Source: user said "quality is
+  the more important goal; we may sacrifice some thinking for
+  cost, but not much."
+- Decision: Findings do not become new goal TOML files. They
+  surface only through the investigation goal session's structured
+  summary, which the orchestrator folds into the user-facing batch
+  message. Acting on a finding requires a fresh interview, same as
+  any other goal creation. There is no draft-goal or inactive-goal
+  mechanism. Source: user said "if findings surface as proposals,
+  won't that mean they'll eventually be auto-triggered by you?" —
+  catching that the prior phrasing claimed a vetting boundary the
+  system does not enforce. Already partly mechanically enforced by
+  `goal-sessions` (goal sessions cannot write to `.tinker/goals/`).
+- Decision: Significant findings persist to
+  `.tinker/notes/cost-observations.md`, owned and written by the
+  orchestrator. The investigation goal session reads this file at
+  the start of each run for continuity but never writes to it,
+  consistent with the `.tinker/`-write prohibition in
+  `goal-sessions`. Source: user said "could it make sense to
+  persist information in the .tinker/notes dir?"; confirmed.
+- Decision: Entries in `cost-observations.md` are observation-
+  shaped (what was seen), not TODO-shaped (what to do). This
+  avoids the drift that retired `change_log` per
+  `orchestrator-triggers`. Source: orchestrator default; not
+  contradicted.
+- Decision: The first concrete substep is to extend
+  `src/claude.rs`'s `ClaudeEvent` deserialization to capture
+  `usage`, and surface the numbers somewhere visible. The data is
+  already in the Claude CLI stream-json output and is currently
+  discarded. Source: orchestrator reconnaissance during the
+  interview confirmed the field is dropped.
+- Decision: Backend scope is the Claude path first (opus / sonnet
+  / haiku via the `claude` CLI). Cost work on the
+  opencode-via-openrouter path waits until confirmed that path is
+  where the user spends. Source: orchestrator default; user has
+  been running on the Claude path during the interview that
+  produced this goal.
+
+"""
+parent_id = ""
+children = []
+related = [
+  { id = "claude-backend", reason = "This goal's first concrete substep is extending `src/claude.rs` (from `claude-backend`) to capture the per-message `usage` field the Claude CLI emits. Backend scope is limited to the Claude path until confirmed that's where the user spends." }
+]

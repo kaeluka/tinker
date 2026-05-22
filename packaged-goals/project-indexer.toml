@@ -1,0 +1,67 @@
+id = "project-indexer"
+description = """
+## WHAT
+A goal whose job is to maintain a single file at the project root —
+`AGENTS.md` — summarizing what the project is and where the
+load-bearing code lives. The file is short and high-level, organized
+around the project's goals: each goal gets a brief summary and
+pointers to the source files that implement it. The content is
+written for LLMs to read, optimized for prompting; the structure is
+left to whatever the indexing agent decides works best.
+
+## WHY
+Any agent (or human) arriving fresh at a project needs a way to
+locate the relevant code without scanning the whole tree. A
+goals-oriented index gives that map: it answers "what is this
+project doing?" and "where is X handled?" in one read. Maintaining
+it as a goal means the same orchestration loop that builds the
+project keeps the index in sync — no separate tool to invoke.
+
+## SCOPE
+- In scope: keeping `AGENTS.md` at the project root, written for
+  LLM consumption; organizing the content around the current goal
+  set; pointing readers toward the source files relevant to each
+  goal; updating reactively when other goal sessions report
+  changes that affect what should be in the index.
+- Out of scope: prescribing the file's structure (the agent picks
+  what works); reflecting manual user edits to source files in
+  real time — it's acceptable for the index to lag a short while
+  until the next scheduler wake-up catches it up; maintaining
+  indexes for anything outside the project root.
+
+## DECISIONS (vetted)
+- Decision: The file is named `AGENTS.md` and lives at the project
+  root. Source: established as the conventional location during
+  the interview.
+- Decision: The file is organized around the project's goals, not
+  its directory tree. Each goal is summarized briefly and paired
+  with pointers into the source. Source: confirmed in playback as
+  "a short, high-level summary of the active goals, oriented
+  around the goals but pointing to the relevant source files."
+- Decision: The content is written following good prompting rules
+  — clear, structured for LLM consumption. The exact structure
+  (headings, ordering, depth) is left to the indexing agent, not
+  prescribed here. Source: user said "agents.md should be written
+  according to good prompting rules. but i don't want to
+  prescribe a structure."
+- Decision: Updates run reactively. The indexer is triggered when
+  the scheduler observes in other session summaries that source
+  files have changed. Lag between a manual user edit and the
+  next index update is acceptable. Source: user said "yes, not
+  handling manual edits is fine."
+- Decision: This is a packaged goal, applicable to any tinker-
+  built application — not specific to one project. Source: user
+  said "project-indexer should be a packaged-goal, it applies to
+  any tinker-built application."
+
+"""
+parent_id = ""
+children = []
+
+[[related]]
+id = "shared-language"
+reason = "The `AGENTS.md` file this goal maintains is written for LLM consumption, which `shared-language` explicitly carves out as exempt from the shared-vocabulary rule. Documentation aimed at users must use shared vocabulary; AGENTS.md does not."
+
+[[related]]
+id = "readme-maintainer"
+reason = "Dual documentation goals: project-indexer maintains the LLM-facing map (AGENTS.md), while readme-maintainer maintains the human-facing narrative (README.md)."

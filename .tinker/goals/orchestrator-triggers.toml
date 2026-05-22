@@ -1,0 +1,76 @@
+id = "orchestrator-triggers"
+description = """
+## WHAT
+When the orchestrator wants a goal session to run — a goal it just
+created, a goal it just edited, a downstream goal that should
+react to a just-finished batch, or any other reason to act on a
+goal — it announces the trigger in its chat output as a line of
+the form `/run <goal-id> <reason>`. Tinker scans the orchestrator's
+finalized message for those lines and dispatches a goal session
+for each, with the reason threaded through as the goal session's
+"what to do right now" context. The same syntax is what the user
+types at the input prompt to fire a goal manually.
+
+## WHY
+Earlier, goals carried a `change_log` array recording pending work
+the orchestrator wanted the goal session to act on. That had three
+problems. The name implied a historic record (not pending tasks).
+The field accumulated cruft across resumes. And it coupled spec
+storage to runtime triggers. Moving the trigger out of the file and
+into a chat-line slash command keeps the spec clean and ties each
+trigger to a specific moment with a specific reason. The same
+mechanism now also serves reactive scheduling — what used to be a
+separate cheap-model scheduler component is now just the
+orchestrator emitting more `/run` lines in its post-batch reply.
+
+## SCOPE
+- In scope: orchestrator emits `/run <goal-id> <reason>` in chat
+  output to trigger goal sessions, for both newly-edited goals
+  and reactive scheduling after a goal-session batch finishes;
+  tinker scans the finalized assistant message for those lines;
+  one goal session fires per matching line, with the reason
+  threaded through as context; multiple `/run` lines per
+  orchestrator turn each fire a separate session (queued in the
+  existing goal queue); the same `/run` syntax usable by the
+  user at the input prompt.
+- Out of scope: triggering arbitrary commands other than `/run`;
+  argument syntax beyond goal-id and reason; cross-project
+  triggers.
+
+## DECISIONS (vetted)
+- Decision: The trigger is a chat-line slash command, not a tool
+  call. The orchestrator emits `/run <goal-id> <reason>` as plain
+  text in its reply; tinker parses it after the message
+  finalizes. Source: user said "what if the orchestrator would
+  'trigger' a goal by appending '/run <goal-id> <reason...>' to
+  their message and a hard-coded check would parse the slash
+  command? just like slash commands are parsed from user
+  messages..?"
+- Decision: `change_log` is removed from goals entirely. The
+  orchestrator never records pending work on the spec; it emits
+  triggers at the moment they are needed. Source: user said
+  "we're using the change log as a todo list, but to the agent
+  it may look like that's just a historic record. a change log
+  doesn't imply that there's a spec/implementation gap to be
+  fixed. it reads a bit weird."
+- Decision: Multiple `/run` lines per orchestrator turn are
+  allowed. Each line fires a separate goal session; the first
+  runs immediately, the rest queue. Source: open question in the
+  draft; ratified as the natural extension of the syntax.
+- Decision: Text that isn't a recognized `/run` command is shown
+  to the user as normal chat. Triggers and prose coexist in the
+  same orchestrator reply. Source: keeps the syntax unobtrusive.
+- Decision: The `/run` mechanism is used both for goals the
+  orchestrator created/edited AND for reactive scheduling after
+  a goal-session batch finishes. There is no second trigger
+  channel; the orchestrator's reply is the single source of
+  goal-session dispatches that don't come from manual user
+  input. Source: user said "(a)" to folding reactive scheduling
+  into the orchestrator and retiring the scheduler component.
+
+"""
+parent_id = "orchestrator"
+children = []
+related = [
+  { id = "goal-sessions", reason = "Each `/run` line the orchestrator emits becomes a dispatch into `goal-sessions`'s pending queue, with the parsed reason threaded into the session context. The trigger syntax has no effect without the dispatch mechanism on the other end." }
+]
