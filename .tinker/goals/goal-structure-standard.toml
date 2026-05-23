@@ -1,7 +1,7 @@
 id = "goal-structure-standard"
 description = """
 ## WHAT
-A set of structural rules the orchestrator uses to organize goals
+A set of structural rules tinker uses to organize goals
 hierarchically instead of defaulting to flat lists. It defines four
 operations for integrating new user intent: Merge (modify existing),
 Nest Down (create child), Nest Up (create parent), and New Root (sibling).
@@ -20,7 +20,7 @@ accumulates value by making the system's goals legible at different
 levels of abstraction.
 
 The parent-summary and related-link rules extend that logic. Goals are
-read on every orchestrator turn and every fresh goal-session start, but
+read on every tinker turn and every fresh goal-session start, but
 written rarely — paying coherence-maintenance cost at write time keeps
 the common read path cheap and correct. Parent summaries let cross-goal
 alignment start at parents and drill down only when warranted, instead
@@ -37,11 +37,11 @@ cannot express.
   rules on every edit, with partner edits bundled into the same write
   turn; the symmetry exception for packaged goals.
 - Out of scope: automated background refactoring of goal files (the
-  orchestrator applies these rules interactively during conversation);
+  tinker applies these rules interactively during conversation);
   backfilling existing parents with child summaries (a one-time
   migration, handled as a separate deliberate step); seeding initial
   related-links across existing goals (same); TUI rendering of
-  related-links; orchestrator-protocol updates to actively use the
+  related-links; tinker-protocol updates to actively use the
   new primitives during cross-goal alignment.
 
 ## DECISIONS (vetted)
@@ -57,15 +57,15 @@ cannot express.
   that existing goals are reparented under, if the new intent
   represents a broader justification or conceptual umbrella. Source:
   user said "imagine i'd have a new goal idea that justifies WHY
-  the orchestrator exists... inserted above".
+  tinker exists... inserted above".
 - Decision: The standard is framed as a collaborative definition of
   value, not a rigid mechanical constraint. Source: user rejected
   "forcing" language in favor of "giving you a guideline for
   creating value by defining what value means."
-- Decision: When the orchestrator updates or creates a goal and wants
+- Decision: When tinker updates or creates a goal and wants
   the goal session to execute, it explicitly triggers it by emitting
   `/run <goal-id> <reason...>` in its chat response. Source: user
-  requested explicitly parsing slash commands from orchestrator
+  requested explicitly parsing slash commands from tinker
   output.
 - Decision: Parent goals must summarize their children sufficiently
   to enable drill-down filtering during cross-goal alignment. If a
@@ -82,9 +82,9 @@ cannot express.
   links are symmetric — `a -related-> b` always implies
   `b -related-> a`, and both files must list each other. The reason
   text on each side may differ, because the relationship reads
-  differently from each end (e.g. `shared-language → orchestrator`:
-  "orchestrator chat is one of the user-facing surfaces these
-  filters apply to"; `orchestrator → shared-language`: "the filtering
+  differently from each end (e.g. `shared-language → tinker`:
+  "tinker chat is one of the user-facing surfaces these
+  filters apply to"; `tinker → shared-language`: "the filtering
   rules for what surfaces to the user come from here"). Source: user
   said "yeah, not the same string."
 - Decision: Symmetry of related-links is enforced; transitivity is
@@ -106,7 +106,7 @@ cannot express.
   (B is a sub-aspect of A); the second captures interaction (B's
   behavior depends on or affects A's). Cross-goal alignment uses
   them differently — parent-first drill-down vs. lateral lookup.
-  Source: orchestrator default, confirmed in playback.
+  Source: tinker default, confirmed in playback.
 - Decision: Related-links can be carried by any goal, not only root
   goals. Cross-cutting concerns do not respect tree level (e.g.
   `shared-language` is a nested child but cross-cuts widely), so
@@ -121,7 +121,7 @@ cannot express.
   breaks the sharing boundary.
 
 """
-parent_id = "orchestrator"
+parent_id = "tinker"
 children = []
 
 [[related]]

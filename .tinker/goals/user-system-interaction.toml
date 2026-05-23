@@ -43,7 +43,7 @@ user-persona named who the user is and the "tinker as compiler"
 framing. shared-language named how internal references get
 translated when they must surface. Neither named the underlying
 rule that determines what gets surfaced at all, who holds what
-state, and why the user can expect the orchestrator to keep the
+state, and why the user can expect tinker to keep the
 implementation substrate coherent without being asked to track
 it. The stale-binary debugging session — where tinker assumed
 the user knew which artifact was running, theorized for two
@@ -61,7 +61,7 @@ visible.
   applications of this principle.
 - Out of scope: the specific mechanisms by which these rules
   are enforced (those live in children and in operational
-  goals like orchestrator-agent, goal-sessions, cleanup-hook);
+  goals like tinker-agent, goal-sessions, cleanup-hook);
   rollout across existing operational surfaces (each
   operational goal that needs to absorb this principle is
   its own follow-up edit, deliberate rather than one-shot).
@@ -114,5 +114,5 @@ parent_id = "the-false-promise"
 children = ["user-persona", "shared-language", "implementation-ownership"]
 
 [[related]]
-id = "orchestrator-introspection"
-reason = "That goal is the in-tinker mechanism by which the orchestrator — itself a part of tinker — gains structured access to the *is* this principle defines tinker as holding. Without it, the verify-by-observation rule applies to the user-facing surface but the orchestrator's own reasoning stays inference-based, leaving the principle only half-realized."
+id = "tinker-introspection"
+reason = "That goal is the in-tinker mechanism by which tinker — itself a part of tinker — gains structured access to the *is* this principle defines tinker as holding. Without it, the verify-by-observation rule applies to the user-facing surface but tinker's own reasoning stays inference-based, leaving the principle only half-realized."

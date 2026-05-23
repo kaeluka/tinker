@@ -1,7 +1,7 @@
 id = "cleanup-hook"
 description = """
 ## WHAT
-While the orchestrator tinkers — writing temporary tests, exposing
+While tinker tinkers — writing temporary tests, exposing
 private symbols, swapping constants, adding scratch programs —
 every change it makes carries a marker comment of the form
 `tinker-test-case: <one-line reason>`. Before any goal session
@@ -12,7 +12,7 @@ files still need attention.
 
 ## WHY
 Without a marker convention, investigation code accumulates and
-contaminates production. With one, the orchestrator can probe
+contaminates production. With one, tinker can probe
 freely — including in production source, including by exposing
 private symbols — and the cleanup step keeps the codebase honest.
 The blocking-on-failure behavior is deliberate: a goal session
@@ -26,7 +26,7 @@ not running at all.
   unrecoverable failures to the user; correctly distinguishing
   real markers from prose mentions of the marker name.
 - Out of scope: enforcing the marker at write time (the
-  orchestrator self-enforces; this hook only cleans up after);
+  tinker self-enforces; this hook only cleans up after);
   recovering across project boundaries.
 
 ## DECISIONS (vetted)

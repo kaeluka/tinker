@@ -3,9 +3,16 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum ActiveAgent {
+    Tinker,
+    Rummage,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Role {
     User,
     Assistant,
+    RummageAssistant,
     System,
 }
 
@@ -101,7 +108,7 @@ impl ScrollState {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Phase {
-    /// Sending the init prompt to the orchestrator.
+    /// Sending the init prompt to tinker.
     Initializing,
     /// Nothing running; waiting for user input or new goals.
     Idle,
@@ -109,7 +116,7 @@ pub enum Phase {
     RunningGoal(String),
     /// Manual mode: next goal chosen, waiting for user to approve.
     AwaitingConfirm(String),
-    /// Batch finished — asking the orchestrator to summarize what was done.
+    /// Batch finished — asking tinker to summarize what was done.
     SummarizingBatch,
 }
 
@@ -126,9 +133,9 @@ pub struct App {
     pub selected_goal: usize,
     pub active_goal_id: Option<String>,
     pub goal_logs: HashMap<String, String>,
-    pub orchestrator_session_id: Option<String>,
-    /// How many orchestrator LLM tasks are currently running or queued.
-    pub orchestrator_tasks: usize,
+    pub tinker_session_id: Option<String>,
+    /// How many tinker LLM tasks are currently running or queued.
+    pub tinker_tasks: usize,
     /// Trigger reason for the currently-running goal session.
     /// Cleared when the session finishes or is blocked.
     pub active_goal_reason: Option<String>,
@@ -140,16 +147,16 @@ pub struct App {
     /// Goals queued to run after the current one finishes (from a multi-goal
     /// scheduling response). Drained before triggering a new schedule.
     /// Each entry is `(Goal, optional reason)` — the reason is the per-trigger
-    /// "what to do right now" hint emitted by the orchestrator's `/run` line
+    /// "what to do right now" hint emitted by tinker's `/run` line
     /// or by the scheduler's `yes|<reason>` reply.
     pub goal_queue: VecDeque<(Goal, Option<String>)>,
     /// True if any goal session has fired since the last batch summary.
     /// Used to decide whether to ask for a batch summary when scheduling returns `none`.
     pub batch_had_goals: bool,
     /// (goal_id, summary) entries accumulated for the current batch.
-    /// Forwarded to the orchestrator in the batch summary request, then cleared.
+    /// Forwarded to tinker in the batch summary request, then cleared.
     pub batch_summaries: Vec<(String, String)>,
-    /// How many times we've asked the orchestrator to fix a parse error in this
+    /// How many times we've asked tinker to fix a parse error in this
     /// edit cycle. Reset on a fresh user message or a clean Done.
     pub correction_attempts: u8,
     pub focus: Focus,
@@ -161,6 +168,14 @@ pub struct App {
     /// When `Some`, the reason-prompt modal is open; all keys route to it
     /// until submit/cancel. The previous `focus` is preserved unchanged.
     pub modal: Option<ModalState>,
+    /// Which agent currently receives the user's REPL input.
+    pub active_agent: ActiveAgent,
+    /// Streaming text buffer for the rummage agent (analogous to `current_assistant_text`).
+    pub rummage_current_text: String,
+    /// Rummage session ID for in-process turn resumption.
+    pub rummage_session_id: Option<String>,
+    /// How many rummage LLM tasks are currently running.
+    pub rummage_tasks: usize,
 }
 
 impl App {
@@ -176,8 +191,8 @@ impl App {
             active_goal_id: None,
             active_goal_reason: None,
             goal_logs: HashMap::new(),
-            orchestrator_session_id: None,
-            orchestrator_tasks: 0,
+            tinker_session_id: None,
+            tinker_tasks: 0,
             user_has_interacted: false,
             phase: Phase::Initializing,
             loop_mode: LoopMode::Auto,
@@ -200,6 +215,10 @@ impl App {
                 s
             },
             modal: None,
+            active_agent: ActiveAgent::Tinker,
+            rummage_current_text: String::new(),
+            rummage_session_id: None,
+            rummage_tasks: 0,
         }
     }
 
@@ -215,6 +234,17 @@ impl App {
         if !self.current_assistant_text.is_empty() {
             let text = std::mem::take(&mut self.current_assistant_text);
             self.messages.push(Message { role: Role::Assistant, text });
+        }
+    }
+
+    pub fn append_rummage_chunk(&mut self, chunk: &str) {
+        self.rummage_current_text.push_str(chunk);
+    }
+
+    pub fn finalize_rummage_message(&mut self) {
+        if !self.rummage_current_text.is_empty() {
+            let text = std::mem::take(&mut self.rummage_current_text);
+            self.messages.push(Message { role: Role::RummageAssistant, text });
         }
     }
 

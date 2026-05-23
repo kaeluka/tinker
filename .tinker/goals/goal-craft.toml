@@ -3,7 +3,7 @@ description = """
 ## WHAT
 Operational rules for writing the content of a goal so that the
 goal does its job as both a standing intent file and as the prompt
-the orchestrator and goal sessions read. Four tactics: sparseness
+tinker and goal sessions read. Four tactics: sparseness
 (operationalized by an anchor test), positive framing, orthogonality
 of content, and goals-are-prompts (a small set of prompt-quality
 rules).
@@ -38,7 +38,7 @@ well by these tactics, five things follow:
 - Out of scope: automated tooling that scans existing goals for
   density, negative framing, or missing anchors; retroactive mass
   cleanup of existing goals (each cleanup is a deliberate
-  hand-picked move, with `orchestrator-introspection` as the first
+  hand-picked move, with `tinker-introspection` as the first
   worked example); defining prompt-quality rules beyond the five
   listed (we lean on shared prompt-engineering practice for
   anything not enumerated); mechanical re-validation of these
@@ -80,7 +80,7 @@ well by these tactics, five things follow:
   other goals is enabled by goals linking to related goals,
   parents, children."
 - Decision: Tactic 4 — Goals are prompts. Every goal does double
-  duty as the prompt the orchestrator and goal sessions read.
+  duty as the prompt tinker and goal sessions read.
   Five operational rules follow:
   (i) Define terms before first use — new concepts get a phrase
       of definition the first time they appear, so the session
@@ -98,11 +98,11 @@ well by these tactics, five things follow:
       points stay buried.
   Source: user said "a goal is ALWAYS doing double duty as a
   prompt. and it needs to follow guidelines for good prompts";
-  the five operational rules were orchestrator-proposed and
+  the five operational rules were tinker-proposed and
   user-confirmed — "these are good, we can always refine later."
 - Decision: Enforcement posture is read-time only. The rules
   apply during interviews and cross-goal alignment, with the
-  orchestrator citing this goal when it surfaces a candidate
+  tinker citing this goal when it surfaces a candidate
   dense bullet, a negative form with a clean positive
   reformulation, content that belongs in a related-link instead
   of duplicated, or a missing anchor. No automatic re-validation
@@ -111,9 +111,9 @@ well by these tactics, five things follow:
   symmetry) catch things that break the moment they are
   written; content-quality rules can degrade gracefully and
   rely on conversational application. Drift is handled by the
-  same mechanism: when the orchestrator edits a goal and
+  same mechanism: when tinker edits a goal and
   notices an anchor has dissolved, it surfaces and proposes
-  rewriting or retiring the bullet. Source: orchestrator
+  rewriting or retiring the bullet. Source: tinker
   default, confirmed in playback.
 - Decision: Sparseness is a tactic, not the goal. An earlier
   framing treated sparseness as its own standalone goal; the
@@ -127,7 +127,7 @@ well by these tactics, five things follow:
 
 ## HOW
 Applies to goal files at `.tinker/goals/*.toml` and
-`packaged-goals/*.toml`. Consumed by the orchestrator during
+`packaged-goals/*.toml`. Consumed by tinker during
 interviews, edits, and cross-goal alignment, and by goal sessions
 through sibling-goal injection. No implementation artifact — the
 goal text itself is the artifact this goal governs.
@@ -144,5 +144,5 @@ id = "goal-sessions"
 reason = "`goal-sessions`' 'Pushback is exceptional' decision names goal sparseness as the mechanism that makes pushback rare. Sparseness is operationalized in `goal-craft` via the anchor test."
 
 [[related]]
-id = "orchestrator"
-reason = "The orchestrator applies these rules during interview and edit-time cross-goal alignment. Without enforcement at that surface, the rules do not fire."
+id = "tinker"
+reason = "Tinker applies these rules during interview and edit-time cross-goal alignment. Without enforcement at that surface, the rules do not fire."

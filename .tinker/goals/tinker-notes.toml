@@ -1,13 +1,13 @@
-id = "orchestrator-notes"
+id = "tinker-notes"
 description = """
 ## WHAT
-The orchestrator silently maintains a single append-only notes file at
+Tinker silently maintains a single append-only notes file at
 `.tinker/notes/notes.md`. Throughout conversation, it writes brief
 timestamped entries capturing things that may be useful for later
 self-improvement — friction, surprise, reframes, recurring threads,
 moments where the user explicitly asks it to remember something. The
-orchestrator does not talk about taking notes; it writes them and keeps
-the conversation moving. The file is read-private to the orchestrator —
+tinker does not talk about taking notes; it writes them and keeps
+the conversation moving. The file is read-private to tinker —
 goal sessions cannot read it. There is no retrieval or reflection
 mechanism yet — this goal builds only the substrate.
 
@@ -15,7 +15,7 @@ mechanism yet — this goal builds only the substrate.
 Tinker shouldn't become a tool that's only great for building tinker;
 it should optimize building tinker in a generalizable way. The path
 toward that is self-improvement, which requires observation
-accumulating somewhere the orchestrator can later reflect on. Right
+accumulating somewhere tinker can later reflect on. Right
 now no such accumulation exists — every conversation starts fresh.
 This goal lays the substrate. Doing it incrementally — substrate
 first, reflection later — keeps the design honest: we will know what
@@ -31,8 +31,8 @@ notes actually look like before we design the pass that reads them.
 - Out of scope: any retrieval, reflection, or proposal mechanism that
   reads the notes back (that is a separate later goal); note-taking
   by goal sessions, including reading the notes file (they do not
-  share the orchestrator's conversational chain of thought, and the
-  file's contents would leak orchestrator deliberation into session
+  share tinker's conversational chain of thought, and the
+  file's contents would leak tinker deliberation into session
   context); organizing notes by topic or splitting into multiple
   files; pruning, summarization, or rotation of the file.
 
@@ -48,7 +48,7 @@ notes actually look like before we design the pass that reads them.
   observed during conversation OR explicitly mentioned by the user
   ("I noticed something similar last week"); (e) self-introduced
   framing that gets called out — logged as data, not dwelt on; (f)
-  the user explicitly asks the orchestrator to remember a
+  the user explicitly asks tinker to remember a
   situation. Source: user said "surprise and reframes can be a sign
   of the process working well. these can be logged, but don't frame
   them as a problem"; "also log when i tell you to remember a
@@ -59,7 +59,7 @@ notes actually look like before we design the pass that reads them.
 - Decision: The tone of notes is "observe without judging." Brief,
   descriptive, point-of-interest framing. Source: user said
   "observe without judging".
-- Decision: Note-taking is silent. The orchestrator does not
+- Decision: Note-taking is silent. Tinker does not
   interrupt the user's chain of thought to talk about taking a
   note. Same pattern as the vocabulary file. Source: user said
   "don't interrupt my chain of thought by talking about that —
@@ -69,18 +69,18 @@ notes actually look like before we design the pass that reads them.
   goal, once we can see what notes actually look like. Source:
   user said "maybe we can build this incrementally — tinker just
   takes notes ... that will be useful to self improve later".
-- Decision: Only the orchestrator takes notes in this round. Goal
+- Decision: Only tinker takes notes in this round. Goal
   sessions are not included because they do not share the same
   conversational chain of thought. Source: confirmed in playback.
 - Decision: `.tinker/notes/notes.md` is read-private to the
-  orchestrator. Goal sessions cannot read it; only the orchestrator
+  tinker. Goal sessions cannot read it; only tinker
   reads and writes. Making the file readable to sessions would
-  leak orchestrator deliberation into session context that should
+  leak tinker deliberation into session context that should
   be guided only by goals, trigger reasons, and source. The
   prohibition is enforced in `goal-sessions` through the session
   prompt's injected rule block. Source: user confirmed "notes is
-  orchestrator private - should be clear in goals."
+  tinker private - should be clear in goals."
 
 """
-parent_id = "orchestrator"
+parent_id = "tinker"
 children = []

@@ -42,18 +42,24 @@ spot the friction, the things that could work better. You decide when a
 design is good enough and when it needs another pass. The tool is named after
 what you do: you tinker.
 
-The **orchestrator** handles the rules. It reads your goals, checks them
-against each other, finds conflicts, and writes code that follows them. It
-is good at following instructions and bad at guessing what you meant. When
-it cannot figure something out from the rules alone, it stops and asks you.
-It does not make things up.
+**Tinker** (the conversational agent) handles the rules. It reads your
+goals, checks them against each other, finds conflicts, and writes code that
+follows them. It is good at following instructions and bad at guessing what
+you meant. When it cannot figure something out from the rules alone, it stops
+and asks you. It does not make things up.
 
-The two of you work in rounds. You say what you want. The orchestrator
-writes it down as a goal and reads it back to you. You correct it. It reads
-it back again. Once the goal says what you mean, the orchestrator hands it
-to a **goal session** — a focused agent that reads the goal, writes the
-code, and reports back what it did. Only one goal session runs at a time, so
-you always know what is happening.
+A second agent, **rummage**, lives in the same conversation pane. Where
+tinker manages intent and drives code, rummage is a separate character you
+can bring in for a different perspective. You switch between them with
+`/rummage` and `/tinker`. The prompt line always shows which agent is
+currently listening.
+
+The two of you work in rounds. You say what you want. Tinker writes it
+down as a goal and reads it back to you. You correct it. It reads it back
+again. Once the goal says what you mean, tinker hands it to a **goal
+session** — a focused agent that reads the goal, writes the code, and
+reports back what it did. Only one goal session runs at a time, so you
+always know what is happening.
 
 Goals are kept deliberately sparse. Each line in a goal must be anchored by
 something outside the implementation — a decision you actually made, an
@@ -95,10 +101,12 @@ variables. Everything behind that is Tinker's job to keep straight.
 cargo run
 ```
 
-You get a three-pane terminal: a conversation with the orchestrator, a list
-of your goals, and a log of whatever goal session is currently running. All
-text areas scroll with the mouse wheel. New content follows the bottom of
-the view unless you scroll up.
+You get a three-pane terminal: a conversation pane where you talk to the
+active agent (tinker or rummage), a list of your goals with the full text
+of the selected goal below it, and a log of whatever goal session is
+currently running. The prompt line in the conversation pane shows which
+agent is active. All text areas scroll with the mouse wheel. New content
+follows the bottom of the view unless you scroll up.
 
 Two backends are available:
 - **Default** — uses opencode with configurable models.

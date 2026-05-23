@@ -1,0 +1,61 @@
+id = "rummage"
+description = """
+## WHAT
+A sibling chat agent to tinker. v1 is a placeholder persona that
+responds in Vogon-poetry style — no actual debugger behavior yet.
+The substantive debugger spec lands as a separate goal once the
+UX shell feels right.
+
+## WHY
+Validating the agent-switching UX (how the user knows which agent
+they are talking to, how they switch, how it feels) is cheaper to
+do against a placeholder than against a half-built debugger.
+Building the UX shell first means later debugger design decisions
+ride on top of a working interface rather than competing with one.
+
+## SCOPE
+- In scope: a rummage agent process with a Vogon-poetry response
+  persona; explicit `/rummage` and `/tinker` slash commands to
+  switch the active agent; one agent active at a time; a UI tag in
+  the REPL prompt that names the active agent.
+- Out of scope: auto-detect handoff between tinker and rummage;
+  cross-agent `/run` dispatch (e.g. rummage emitting `/run tinker
+  <spec delta>`); investigation thread persistence; probe markers;
+  any actual debugger behavior; persistent state beyond the chat
+  history.
+
+## DECISIONS (vetted)
+- Decision: Rummage is a sibling chat agent to tinker, not a child
+  goal session. Rummage is persistent across turns within its own
+  agent context, like tinker. Source: user said "siblings on
+  speaking terms" — rummage and tinker as peer agents.
+- Decision: v1 persona is Vogon poetry — a placeholder that does
+  not perform debugging. The debugger spec lands as a separate
+  later goal. Source: user said "let's just build rummage with a
+  personality that is not actually a debugger - it just responds
+  with vogon poetry."
+- Decision: Agent switching is via explicit slash commands only —
+  `/rummage` to switch to rummage, `/tinker` to switch back. No
+  auto-detect handoff in v1. Source: user said "explicit commands
+  only for now - /rummage and /tinker to switch back."
+- Decision: One agent is active at a time. User messages go to
+  whoever is active. The REPL prompt carries the active agent's
+  name (e.g. `tinker> ` vs `rummage> `) so the user always sees
+  which agent will receive their input. Source: confirmed in
+  playback.
+- Decision: Rummage runs on the cheapest model tier (haiku on the
+  Claude backend). The Vogon-poetry persona does not need more.
+  Source: tinker default, confirmed in playback.
+
+## HOW
+A new agent process parallel to tinker's, sharing the existing
+REPL pane via the active-agent switch. Initial prompt: a short
+system message instructing the agent to respond in Vogon-poetry
+style to anything the user says. No tools needed beyond chat I/O.
+"""
+parent_id = ""
+children = []
+
+[[related]]
+id = "tui"
+reason = "The TUI renders the active-agent tag in the REPL prompt and recognizes the `/rummage` and `/tinker` slash commands. The UX shape of rummage as a sibling agent is realized at the TUI level."

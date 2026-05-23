@@ -41,7 +41,7 @@ copy-paste it into every project.
   transparently. This is what makes a shared goal directory work
   when it's checked into a separate repo and linked into the
   user's home directory. Source: covered behaviorally.
-- Decision: Goals no longer contain a `change_log` field. The orchestrator
+- Decision: Goals no longer contain a `change_log` field. Tinker
   now triggers updates using explicit `/run` slash commands. Source:
   user suggested replacing the historic change_log with runtime reason strings.
 

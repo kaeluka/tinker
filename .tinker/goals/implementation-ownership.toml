@@ -23,7 +23,7 @@ the taboo disappears.
   delete, and rewire architecture without hesitation if it better satisfies
   the goal.
 - Out of scope: A separate Optimization Agent (we are trying the prompt
-  tactic first); orchestrator ownership (the orchestrator still doesn't
+  tactic first); tinker ownership (tinker still doesn't
   write code); allowing Goal Sessions to write their own `.toml` subgoals
   (that crosses back into Intent, which remains strictly human-owned).
 

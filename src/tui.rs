@@ -1,4 +1,4 @@
-use crate::app::{App, Focus, LoopMode, Phase, Role};
+use crate::app::{ActiveAgent, App, Focus, LoopMode, Phase, Role};
 use crate::claude::USAGE_LINE_MARKER;
 use crate::goal_session::TRIGGER_REASON_MARKER;
 use crate::goal::{build_tree, GoalNode};
@@ -134,13 +134,25 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let (prompt, prompt_style) = match &app.phase {
-        Phase::Initializing => ("… ", Style::default().fg(Color::DarkGray)),
-        Phase::AwaitingConfirm(_) => ("▶ ", Style::default().fg(Color::Yellow)),
-        _ if app.orchestrator_tasks > 0 => ("… ", Style::default().fg(Color::DarkGray)),
-        _ => ("❯ ", Style::default().fg(Color::Yellow)),
+    let (prompt, prompt_style): (&str, Style) = match app.active_agent {
+        ActiveAgent::Tinker => match &app.phase {
+            Phase::Initializing => ("… ", Style::default().fg(Color::DarkGray)),
+            Phase::AwaitingConfirm(_) => ("▶ ", Style::default().fg(Color::Yellow)),
+            _ if app.tinker_tasks > 0 => ("… ", Style::default().fg(Color::DarkGray)),
+            _ => ("tinker> ", Style::default().fg(Color::Yellow)),
+        },
+        ActiveAgent::Rummage => {
+            if app.rummage_tasks > 0 {
+                ("… ", Style::default().fg(Color::DarkGray))
+            } else {
+                ("rummage> ", Style::default().fg(Color::Magenta))
+            }
+        }
     };
-    let input_locked = app.orchestrator_tasks > 0 || app.phase == Phase::Initializing;
+    let input_locked = match app.active_agent {
+        ActiveAgent::Tinker => app.tinker_tasks > 0 || app.phase == Phase::Initializing,
+        ActiveAgent::Rummage => app.rummage_tasks > 0,
+    };
     let input_text_style = if input_locked {
         Style::default().fg(Color::DarkGray)
     } else {
@@ -174,6 +186,9 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
     if !app.current_assistant_text.is_empty() {
         push_assistant_text(&mut lines, &app.current_assistant_text);
     }
+    if !app.rummage_current_text.is_empty() {
+        push_rummage_text(&mut lines, &app.rummage_current_text);
+    }
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
     let total = paragraph.line_count(msg_area.width);
     app.repl_scroll.record_render(total, msg_area.height);
@@ -205,10 +220,33 @@ fn push_message_lines(lines: &mut Vec<Line<'static>>, msg: &crate::app::Message)
         Role::Assistant => {
             push_assistant_text(lines, &msg.text);
         }
+        Role::RummageAssistant => {
+            push_rummage_text(lines, &msg.text);
+        }
         Role::System => {
             lines.push(Line::from(vec![
                 Span::styled("sys    ", Style::default().fg(Color::Yellow)),
                 Span::styled(msg.text.clone(), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+    }
+}
+
+fn push_rummage_text(lines: &mut Vec<Line<'static>>, text: &str) {
+    for (i, line) in text.lines().enumerate() {
+        if i == 0 {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "rummage",
+                    Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                Span::raw(line.to_string()),
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::raw("       "),
+                Span::raw(line.to_string()),
             ]));
         }
     }
@@ -343,7 +381,7 @@ fn draw_goal_tree(
         let inner = Block::default().borders(Borders::ALL).inner(area);
         frame.render_widget(
             Paragraph::new(Span::styled(
-                "No goals yet. Ask the orchestrator to add one.",
+                "No goals yet. Ask tinker to add one.",
                 Style::default().fg(Color::DarkGray),
             )),
             inner,
@@ -976,6 +1014,51 @@ mod tests {
             m.as_deref(),
             Some("[2]"),
             "list marker must show the next (lowest) position only",
+        );
+    }
+
+    /// Spec (rummage / tui): rummage messages (Role::RummageAssistant) must be
+    /// rendered with a `rummage` speaker label in magenta+bold, not the tinker
+    /// green label, so the user always knows which agent is speaking.
+    #[test]
+    fn test_spec_rummage_messages_rendered_with_magenta_rummage_label() {
+        use crate::app::Message;
+        let msg = Message {
+            role: Role::RummageAssistant,
+            text: "Oh freddled gruntbuggly\nthy micturations are to me".to_string(),
+        };
+        let mut lines: Vec<Line> = vec![];
+        push_message_lines(&mut lines, &msg);
+        assert!(!lines.is_empty(), "rummage message must produce lines");
+        // First line must carry the `rummage` label span.
+        let label_span = lines[0].spans.iter().find(|s| s.content == "rummage");
+        assert!(label_span.is_some(), "first line must have a 'rummage' label span");
+        let label = label_span.unwrap();
+        assert_eq!(label.style.fg, Some(Color::Magenta), "rummage label must be Magenta");
+        assert!(
+            label.style.add_modifier.contains(Modifier::BOLD),
+            "rummage label must be bold",
+        );
+        // Second line (continuation) must NOT repeat the label.
+        assert!(
+            !lines[1].spans.iter().any(|s| s.content == "rummage"),
+            "continuation lines must not repeat the rummage label",
+        );
+    }
+
+    /// Spec (tui): "The conversation pane's input prompt carries a tag naming
+    /// the currently active agent." When active_agent is Rummage, the prompt
+    /// string must contain `rummage>`.
+    #[test]
+    fn test_spec_rummage_prompt_tag_in_tui_source() {
+        let tui_rs = include_str!("tui.rs");
+        assert!(
+            tui_rs.contains("rummage>"),
+            "TUI source must contain the rummage> prompt tag string",
+        );
+        assert!(
+            tui_rs.contains("tinker>"),
+            "TUI source must contain the tinker> prompt tag string",
         );
     }
 

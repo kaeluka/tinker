@@ -1,9 +1,9 @@
 //! Cleanup of tinker-test-case markers before each goal session.
 //!
-//! See `## Tinkering` in the orchestrator prompt and section 5 of
+//! See `## Tinkering` in the tinker prompt and section 5 of
 //! `packaged-goals/coding-standards.toml` for the marker convention.
 //!
-//! The orchestrator's tinkering accumulates across its turns and is wiped
+//! Tinker's tinkering accumulates across its turns and is wiped
 //! between goal-session runs. This module is what does the wiping: walks the
 //! project tree, finds files containing comment-form markers, dispatches a
 //! cheap opencode agent to remove them, retries up to N times, and reports
@@ -155,7 +155,7 @@ pub fn build_cleanup_prompt(files: &[PathBuf]) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        r#"You are a cleanup agent for tinker. Your only job is to remove or revert investigation markers left by the orchestrator's tinkering. Don't touch anything else in the codebase.
+        r#"You are a cleanup agent for tinker. Your only job is to remove or revert investigation markers left by tinker's tinkering. Don't touch anything else in the codebase.
 
 ## What counts as a real marker
 
@@ -170,8 +170,8 @@ A real marker is a comment line whose content begins with `tinker-test-case:` �
 These references mention the marker name but aren't markers themselves:
 
 - A string literal containing the marker text (e.g. `const MARKER: &str = "tinker-test-case:";`).
-- A prose mention inside another comment, like `// the orchestrator emits tinker-test-case: lines`.
-- Mentions in this project's own source describing the convention — typically in `src/cleanup.rs` (where the matcher and this very prompt live) and `src/orchestrator.rs` (where the convention is documented for the orchestrator). Leave these intact.
+- A prose mention inside another comment, like `// tinker emits tinker-test-case: lines`.
+- Mentions in this project's own source describing the convention — typically in `src/cleanup.rs` (where the matcher and this very prompt live) and `src/tinker.rs` (where the convention is documented for tinker). Leave these intact.
 
 ## Files with real markers
 
@@ -313,7 +313,7 @@ mod tests {
         // otherwise running tinker against itself mangles its own source.
         let fs = crate::realfs::RealFilesystem;
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        for name in ["src/cleanup.rs", "src/orchestrator.rs"] {
+        for name in ["src/cleanup.rs", "src/tinker.rs"] {
             let content = fs.read_to_string(&root.join(name)).unwrap();
             assert!(
                 !file_contains_marker(&content),

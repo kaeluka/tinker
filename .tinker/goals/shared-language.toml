@@ -2,7 +2,7 @@ id = "shared-language"
 description = """
 ## WHAT
 Tinker uses shared vocabulary in every user-facing surface it produces —
-the orchestrator's conversation, structured summaries goal sessions emit
+tinker's conversation, structured summaries goal sessions emit
 to the user, and any human-readable documentation tinker writes into the
 tree (READMEs, in-tree docs, human-targeted code comments). All of these
 default to conceptual descriptions — business logic, architectural
@@ -21,7 +21,7 @@ agent, not the user.
 If tinker assumes the user knows the internal codebase layout, it sounds
 condescending ("obviously this is in app.rs"). If it over-explains
 things the user explicitly created, it sounds obtuse. Applying the rule
-only to the orchestrator's chat would leave documentation as a side
+only to tinker's chat would leave documentation as a side
 channel where code-identifier soup slips through. By covering every
 user-facing surface, tinker stays legible to a user who does not read
 source. LLM-targeted artifacts are deliberately excluded because LLMs
@@ -34,8 +34,8 @@ shared language; this goal defines what that filtering looks like —
 the vocabulary file, the anchoring rule, the per-surface application.
 
 ## SCOPE
-- In scope: orchestrator chat; user-facing batch messages the
-  orchestrator composes from goal session summaries; READMEs, guides,
+- In scope: tinker chat; user-facing batch messages the
+  tinker composes from goal session summaries; READMEs, guides,
   and other human-readable documentation goal sessions write into the
   project tree; code comments written for a human audience; tracking
   user knowledge in a persistent `.tinker/state/vocabulary.txt` file;
@@ -46,13 +46,13 @@ the vocabulary file, the anchoring rule, the per-surface application.
   (e.g. `AGENTS.md`); implementation comments aimed at future LLM
   agents; goal file contents themselves (those are LLM-consumed by
   goal sessions); background processes or automated hooks to manage
-  the vocabulary file (the orchestrator manages it manually); per-
-  session internal summaries before the orchestrator composes them
+  the vocabulary file (tinker manages it manually); per-
+  session internal summaries before tinker composes them
   into a user-facing batch message.
 
 ## DECISIONS (vetted)
 - Decision: The shared-language rule applies to every user-facing
-  surface tinker produces — orchestrator chat, user-facing batch
+  surface tinker produces — tinker chat, user-facing batch
   messages, and human-readable documentation written by goal sessions.
   Source: user said "when tinker writes documentation, it should follow
   the shared language approach - use shared language, or at least
@@ -66,8 +66,8 @@ the vocabulary file, the anchoring rule, the per-surface application.
   `user-system-interaction` — specifically, the filtering mechanism
   for the second exposure surface defined there (internals filtered
   through what the user is known to know). Its parent is
-  `user-system-interaction`, not the orchestrator, because it applies
-  to both the orchestrator (chat) and goal sessions (documentation),
+  `user-system-interaction`, not tinker, because it applies
+  to both tinker (chat) and goal sessions (documentation),
   and because the broader principle that justifies it is articulated
   in the parent goal. Source: user confirmed "ii feels right"
   selecting the structural option that creates a new root above this
@@ -77,10 +77,10 @@ the vocabulary file, the anchoring rule, the per-surface application.
   at the code - it makes no sense using function names, file names, etc..."
 - Decision: A persistent state file (`.tinker/state/vocabulary.txt`)
   tracks known files and concepts. Source: agreed in playback.
-- Decision: The orchestrator fully owns this file, silently updating it
+- Decision: Tinker fully owns this file, silently updating it
   manually via `Read`/`Write` tools when the user demonstrates knowledge
   of a new technical term. It never asks permission to update it and
-  never mentions the file to the user. Source: user said "orchestrator
+  never mentions the file to the user. Source: user said "tinker
   fully owns ./tinker/state/vocabulary.txt. it never asks permission to
   update it, it never mentions it."
 - Decision: A technical term goes into the file if the user explicitly
@@ -90,7 +90,7 @@ the vocabulary file, the anchoring rule, the per-surface application.
 - Decision: Goal sessions writing documentation read the vocabulary file
   but do not write to it. If a goal session needs a term not in the
   vocabulary, it anchors that term to a known concept on first use,
-  same rule as orchestrator chat. Source: confirmed in playback.
+  same rule as tinker chat. Source: confirmed in playback.
 - Decision: If tinker *must* use a technical term that isn't in the
   vocabulary file, it must have a strong reason, and it must explicitly
   anchor it to a known concept. Source: user said "when using a
@@ -99,12 +99,12 @@ the vocabulary file, the anchoring rule, the per-surface application.
 - Decision: Documentation may go more technical in deeper sections,
   provided every technical term is anchored to a known concept on first
   use. Source: user said "documentation that tinker writes should use
-  the same shared language standard as the orchestrator by default.
+  the same shared language standard as tinker by default.
   it's ok to go more technical eventually, but always connect to shared
   language."
 - Decision: The same vocabulary file is the source of truth across all
   in-scope surfaces. There is no separate "doc vocabulary." Source:
-  orchestrator default in playback; no second file warranted.
+  tinker default in playback; no second file warranted.
 
 """
 parent_id = "user-system-interaction"

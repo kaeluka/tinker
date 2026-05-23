@@ -35,7 +35,7 @@ is just a reflection of the tree.
   explicit stylistic constraints for the LLM.
 - Decision: The README must start with content that assumes zero prior
   knowledge, using even *less* in-group shared language than the
-  orchestrator uses. The top of the README is a landing point that must
+  tinker uses. The top of the README is a landing point that must
   convince a first-time viewer by picking them up exactly where they are.
   Source: user clarified the audience gradient for the README.
 - Decision: It is the human-facing counterpart to `project-indexer`. It
