@@ -55,6 +55,17 @@ to a **goal session** — a focused agent that reads the goal, writes the
 code, and reports back what it did. Only one goal session runs at a time, so
 you always know what is happening.
 
+Goals are kept deliberately sparse. Each line in a goal must be anchored by
+something outside the implementation — a decision you actually made, an
+external constraint, or a hard lesson from a previous attempt. Nothing
+goes in just because it seemed like a good idea. That sparseness matters
+because goals do double duty: they are the standing record of your intent
+AND the prompt the goal session reads when it starts work. A cluttered
+goal gives the agent a cluttered target. A sparse goal gives the iteration
+loop room to converge — the session implements what the goal says, you try
+the result, and if something is missing or wrong, that gap drives the next
+update to the goal rather than staying hidden.
+
 ---
 
 ## Who holds what

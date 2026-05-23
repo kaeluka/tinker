@@ -77,11 +77,12 @@ human in a dialectical process."
   tone as the visible surface of operating with these strengths
   properly, not as a principle of its own.
 - Out of scope: the specific format and structural rules for goal
-  files (handled by `goal-structure-standard`); the conversational
-  mechanics of the interview protocol itself (handled by
-  `orchestrator`); the rules for what gets exposed to the user vs.
-  held by tinker (handled by `user-system-interaction`); the
-  persona file installation mechanism (handled by
+  files (handled by `goal-structure-standard`); the operational
+  rules for writing goal content (handled by `goal-craft`); the
+  conversational mechanics of the interview protocol itself
+  (handled by `orchestrator`); the rules for what gets exposed to
+  the user vs. held by tinker (handled by `user-system-interaction`);
+  the persona file installation mechanism (handled by
   `orchestrator-agent`); the rollout of this principle into those
   operational goals (each is a separate deliberate edit).
 
@@ -200,7 +201,7 @@ human in a dialectical process."
 
 """
 parent_id = "the-false-promise"
-children = []
+children = ["goal-craft"]
 
 [[related]]
 id = "user-persona"

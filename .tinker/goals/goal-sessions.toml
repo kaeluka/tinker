@@ -159,5 +159,6 @@ parent_id = ""
 children = ["cleanup-hook"]
 related = [
   { id = "coding-standards", reason = "Goal sessions write code, so they're subject to this standard. In particular, the decision that the structured summary must list `test_spec_*` functions exists specifically to enforce coding-standards' 'Tests as guardrails' requirement." },
-  { id = "orchestrator-triggers", reason = "Goal sessions are dispatched by `/run` lines defined in `orchestrator-triggers`. The per-entry reason string, the multi-queueing semantics, and the manual-vs-orchestrator dispatch distinction all originate in the trigger syntax." }
+  { id = "orchestrator-triggers", reason = "Goal sessions are dispatched by `/run` lines defined in `orchestrator-triggers`. The per-entry reason string, the multi-queueing semantics, and the manual-vs-orchestrator dispatch distinction all originate in the trigger syntax." },
+  { id = "goal-craft", reason = "The 'mechanism is goal sparseness' phrase in the 'Pushback is exceptional' decision refers to the sparseness tactic defined in `goal-craft`. Sparse goals are what make the tractable-optimization-target assumption hold." }
 ]

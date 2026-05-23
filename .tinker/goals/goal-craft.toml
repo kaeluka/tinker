@@ -1,0 +1,148 @@
+id = "goal-craft"
+description = """
+## WHAT
+Operational rules for writing the content of a goal so that the
+goal does its job as both a standing intent file and as the prompt
+the orchestrator and goal sessions read. Four tactics: sparseness
+(operationalized by an anchor test), positive framing, orthogonality
+of content, and goals-are-prompts (a small set of prompt-quality
+rules).
+
+## WHY
+Serves `creative-process`'s iteration loop. When goals are written
+well by these tactics, five things follow:
+
+1. The goal layer carries only user-vetted intent — no laundered
+   implementation. Applies `the-false-promise`'s antidote
+   recursively at the goal layer.
+2. Goal sessions retain meaningful implementation autonomy per
+   `implementation-ownership`; goals stay high-level optimization
+   targets rather than literal specs.
+3. The iteration loop stays fast and the user stays rested across
+   it. Less time spec'ing means more time tinkering with results.
+4. Pushback from goal sessions stays exceptional, per
+   `goal-sessions`' "Pushback is exceptional" decision — a sparse
+   goal gives the session a tractable optimization target it
+   rarely needs to question.
+5. New orthogonal goals slot in cleanly — "UI needs to breathe"
+   added later does not collide with over-specified incidentals —
+   and the goal agent reading the union of goals retains maximum
+   collective leeway.
+
+## SCOPE
+- In scope: the four tactics; the anchor test that operationalizes
+  sparseness; the positive-reformulation rule that gates hard-won
+  negatives; the five operational prompt-quality rules under
+  goals-are-prompts; read-time application of all rules during
+  interviews and cross-goal alignment.
+- Out of scope: automated tooling that scans existing goals for
+  density, negative framing, or missing anchors; retroactive mass
+  cleanup of existing goals (each cleanup is a deliberate
+  hand-picked move, with `orchestrator-introspection` as the first
+  worked example); defining prompt-quality rules beyond the five
+  listed (we lean on shared prompt-engineering practice for
+  anything not enumerated); mechanical re-validation of these
+  rules at write time (see Enforcement posture below).
+
+## DECISIONS (vetted)
+- Decision: Tactic 1 — Sparseness. A bullet belongs in a goal iff
+  something outside the implementation anchors it. The anchor
+  categories are (a) user intent or preference, (b) external
+  dependency (facts about the world outside the codebase —
+  existing systems, vendor contracts, regulation, hardware), and
+  (c) hard-won negative constraint, gated by the
+  positive-reformulation test (kept only when no positive form
+  captures the same constraint). Source: user reframed an initial
+  disqualifier framing into a positive qualifier — "the goal is a
+  constraint on the search of an implementation. a fixed point in
+  a standing wave. as such, the spec could contain things that we
+  rely on else where. that can be a 'why' given by a user. that
+  can be an external dependency. that can be other things as
+  well."
+- Decision: Tactic 2 — Positive framing. WHAT not whatn't, WHY not
+  whyn't. Negatives are not forbidden but are discouraged. A
+  hard-won negative is acceptable only when no positive
+  reformulation captures the same constraint — "UI needs to
+  breathe" is preferred over "don't do X because the UI loses
+  breathing room." Source: user said "a good goal usually is
+  framed positively. a what. not a 'whatn't'. a why. not a
+  'whyn't'. negatives are not forbidden, because they're
+  sometimes the best we can think of. but they're not
+  encouraged."
+- Decision: Tactic 3 — Orthogonality of content. Goals are
+  free-standing in their content. Cross-cutting concerns are
+  carried by the link mechanism (`parent_id`, `children`,
+  `related`), not duplicated inside the content of each goal.
+  The work of "fitting" between goals is done by the link graph,
+  not by retrofitting one goal's content with another's
+  constraints. Source: user said "goals don't work around each
+  other. goals are free-standing, orthogonal. the working around
+  other goals is enabled by goals linking to related goals,
+  parents, children."
+- Decision: Tactic 4 — Goals are prompts. Every goal does double
+  duty as the prompt the orchestrator and goal sessions read.
+  Five operational rules follow:
+  (i) Define terms before first use — new concepts get a phrase
+      of definition the first time they appear, so the session
+      does not have to guess.
+  (ii) Use the same word for the same thing throughout the file
+      and across sibling goals — consistent vocabulary keeps
+      sibling-injection coherent.
+  (iii) Reference other goals by id when invoking cross-cutting
+      concerns — `creative-process`, not "the dialectical-loop
+      goal" — so the session can resolve the pointer.
+  (iv) A concrete example earns its keep only when it anchors an
+      abstract claim. Decorative examples add density.
+  (v) Lead with the load-bearing point; supporting context goes
+      after. Sessions re-read goals across runs; buried main
+      points stay buried.
+  Source: user said "a goal is ALWAYS doing double duty as a
+  prompt. and it needs to follow guidelines for good prompts";
+  the five operational rules were orchestrator-proposed and
+  user-confirmed — "these are good, we can always refine later."
+- Decision: Enforcement posture is read-time only. The rules
+  apply during interviews and cross-goal alignment, with the
+  orchestrator citing this goal when it surfaces a candidate
+  dense bullet, a negative form with a clean positive
+  reformulation, content that belongs in a related-link instead
+  of duplicated, or a missing anchor. No automatic re-validation
+  step is added to `goal-structure-standard`'s write protocol.
+  The structural rules there (parent-summary, related-link
+  symmetry) catch things that break the moment they are
+  written; content-quality rules can degrade gracefully and
+  rely on conversational application. Drift is handled by the
+  same mechanism: when the orchestrator edits a goal and
+  notices an anchor has dissolved, it surfaces and proposes
+  rewriting or retiring the bullet. Source: orchestrator
+  default, confirmed in playback.
+- Decision: Sparseness is a tactic, not the goal. An earlier
+  framing treated sparseness as its own standalone goal; the
+  user identified that the WHAT under discussion was the
+  technique, not the outcome. The outcome is the iteration
+  loop converging well, which is `creative-process`'s WHY.
+  Sparseness and the other three tactics serve that outcome.
+  Source: user said "is goal sparseness the GOAL, or is it the
+  tactic?" then "sparseness is a tactic where the 'why' is the
+  iteration loop."
+
+## HOW
+Applies to goal files at `.tinker/goals/*.toml` and
+`packaged-goals/*.toml`. Consumed by the orchestrator during
+interviews, edits, and cross-goal alignment, and by goal sessions
+through sibling-goal injection. No implementation artifact — the
+goal text itself is the artifact this goal governs.
+"""
+parent_id = "creative-process"
+children = []
+
+[[related]]
+id = "goal-structure-standard"
+reason = "Structural twin at write-time. `goal-structure-standard` governs tree organization (Merge, Nest Down, Nest Up, New Root, Retire; parent-summary; related-link symmetry); `goal-craft` governs content quality within each goal. Both apply on every edit."
+
+[[related]]
+id = "goal-sessions"
+reason = "`goal-sessions`' 'Pushback is exceptional' decision names goal sparseness as the mechanism that makes pushback rare. Sparseness is operationalized in `goal-craft` via the anchor test."
+
+[[related]]
+id = "orchestrator"
+reason = "The orchestrator applies these rules during interview and edit-time cross-goal alignment. Without enforcement at that surface, the rules do not fire."
