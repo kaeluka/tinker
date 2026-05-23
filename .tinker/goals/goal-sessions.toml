@@ -2,17 +2,24 @@ id = "goal-sessions"
 description = """
 ## WHAT
 When a goal is created or edited, the system launches a dedicated
-LLM session whose job is to act on that goal — reading code,
-writing code, running tests. Only one goal session runs at a time.
-When a session is dispatched, it is given an explicit "reason"
-string that focuses its attention (e.g. "make sure to implement X").
-Before each one starts, investigation code from the previous
-orchestrator turn (see `cleanup-hook`) is removed. After each one
-finishes, the session reports a structured summary of what it did
-and what it decided beyond what the goal explicitly stated. When
-a batch of sessions has all finished, the orchestrator composes a
-single message for the user covering the whole batch and a "try
-it now" invitation.
+LLM session whose job is to act on that goal as a high-level
+optimization target — reading code, writing code, running tests.
+The goal describes the problem and the constraints on the
+solution; related goals add to that picture; beyond that the
+session is unconstrained in the implementation domain and
+optimizes toward the best solution. Only one goal session runs
+at a time. Each dispatch is a fresh session — there is no
+resumption across triggers; state across runs lives in code,
+git, and the spec. When a session is dispatched, it is given
+an explicit "reason" string that points at what's new
+(typically what changed in the goal text since the previous
+run). Before each one starts, investigation code from the
+previous orchestrator turn (see `cleanup-hook`) is removed.
+After each one finishes, the session reports a structured
+summary of what it did and what it decided beyond what the goal
+explicitly stated. When a batch of sessions has all finished,
+the orchestrator composes a single message for the user
+covering the whole batch and a "try it now" invitation.
 
 ## WHY
 Goals would be useless without something that acts on them.
@@ -26,16 +33,15 @@ in a huge goal file.
 
 ## SCOPE
 - In scope: dispatching exactly one goal session at a time;
-  giving a freshly-started session the full text of every
+  starting each dispatch as a fresh session with no in-process
+  resumption; giving every session the full text of every
   sibling goal so coding standards and other standing concerns
-  are in its context; resuming an existing in-memory session
-  during a run; producing per-goal and per-batch summaries;
-  blocking when cleanup of investigation code fails; passing
-  an explicit trigger reason to the agent; forcing goal
-  sessions to explicitly list `test_spec_` functions in
-  their summary; preserving every pending invocation as a
-  separate queue entry, even when several point at the same
-  goal-id.
+  are in its context; producing per-goal and per-batch
+  summaries; blocking when cleanup of investigation code fails;
+  passing an explicit trigger reason to the agent; forcing goal
+  sessions to explicitly list `test_spec_` functions in their
+  summary; preserving every pending invocation as a separate
+  queue entry, even when several point at the same goal-id.
 - Out of scope: parallel goal sessions, partial-session resume
   after a crash, mid-session cancellation, mutating state in
   Git or any other version control system, persisting the
@@ -77,12 +83,26 @@ in a huge goal file.
   or modified. This systemically forces the LLM to account for
   the "Tests as guardrails" standard. Source: user directed
   "yes, do that" to the idea of enforcing testing via the summary.
-- Decision: Goal sessions only persist in memory for the duration
-  of the Tinker process. On restart, any previously active session
-  is forgotten. This ensures the goal files are the ultimate single
-  source of truth. Source: user agreed to drop disk persistence
-  because "total amnesia is maybe a good thing - tinker is driven
-  by specifications in goals".
+- Decision: Every goal session starts fresh — there is no
+  in-process resumption across triggers. Within a single
+  dispatch, the structured-summary request continues the same
+  LLM conversation as the main work — that's intra-dispatch
+  continuity (necessary for the summary to refer to what just
+  happened), not cross-trigger resumption. State across runs
+  lives in code, git, and the spec; the trigger reason carries
+  any transient context the spec doesn't. The point is that
+  spec gaps become unhideable: a session that cannot remember
+  "what we agreed last turn" can only act on what's in the spec
+  right now, so an incomplete spec causes visible misbehavior
+  that drives iteration toward a complete spec. If mid-task
+  continuity ever proves to be a real problem in practice, the
+  answer is richer trigger reasons, not session memory. Source:
+  user said "do we really need to resume sessions? or could we
+  create a new one? would reduce cost and be better at
+  highlighting bad specificiations IMO"; confirmed in playback;
+  intra-dispatch continuity clarification added after a session
+  correctly inferred it but the spec hadn't named the
+  distinction.
 - Decision: The same goal can appear in the pending-session queue
   multiple times. When the orchestrator emits several `/run`
   lines for one goal across turns, or when a user-typed `/run`
@@ -91,10 +111,10 @@ in a huge goal file.
   queue does not deduplicate by goal-id; sessions run in FIFO
   order regardless of repetition. Source: user picked option (A)
   for multi-queueing during the queue-visibility interview.
-- Decision: The pending-session queue is in-memory only, like
-  the sessions themselves. It dies on tinker restart. Source:
-  extends the existing no-persistence stance to the queue
-  itself; confirmed in the queue-visibility playback.
+- Decision: The pending-session queue is in-memory only and dies
+  on tinker restart. Source: extends the no-persistence stance
+  to the queue itself; confirmed in the queue-visibility
+  playback.
 - Decision: Goal sessions must not write to `.tinker/goals/`,
   `.tinker/notes/`, or `.tinker/state/`. These directories are
   owned by the orchestrator; goal sessions read them at startup
@@ -105,6 +125,34 @@ in a huge goal file.
   Source: two consecutive batches saw goal sessions modify
   `.tinker/goals/*.toml` files when dispatched with narrow scope
   — a constraint violation that stretched beyond the trigger reason.
+- Decision: A session treats its goal as a high-level optimization
+  target, not a literal exhaustive spec. The goal describes the
+  problem to solve and constraints on the solution; related
+  goals add to that picture. Beyond that, the session is
+  completely unconstrained in the implementation domain and
+  optimizes toward the best solution. Source: user said "they
+  should treat the goal as a high level optimization target. the
+  goal should describe the problem to solve and constraints on
+  the solution ... the goal agent is completely unconstrained
+  otherwise."
+- Decision: Pushback is exceptional, not forbidden. Sessions may
+  raise concerns through their structured summary in exceptional
+  circumstances, but the system is designed so the situation
+  almost never arises. The mechanism is goal sparseness — a goal
+  that records only what is actually relevant to the user, with
+  no laundered implementation details, gives the session a
+  tractable optimization target that rarely needs to be
+  questioned. Source: user said "in exceptional circumstances,
+  that'd be ok. but the system as a whole should optimize to
+  basically never bring a goal session in that situation."
+- Decision: Goal sessions cannot read `.tinker/notes/notes.md`.
+  That file is the orchestrator's private chain-of-thought log;
+  making it readable would leak orchestrator deliberation into
+  session context that should be guided only by goals, trigger
+  reasons, and source. The prohibition is enforced through the
+  session prompt's injected rule block, alongside the existing
+  write prohibition. Source: user confirmed "notes is orchestrator
+  private - should be clear in goals."
 
 """
 parent_id = ""

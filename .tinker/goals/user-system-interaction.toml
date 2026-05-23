@@ -54,8 +54,10 @@ visible.
 - In scope: defining who holds what state (should vs is);
   defining what surfaces are legitimate (interface as-is,
   internals only via shared-language filtering); framing
-  user-persona (who the user is) and shared-language (the
-  filtering mechanism for the second surface) as downstream
+  user-persona (who the user is), shared-language (the
+  filtering mechanism for the second surface), and
+  implementation-ownership (the specific application of
+  "tinker holds the *is*" to source code) as downstream
   applications of this principle.
 - Out of scope: the specific mechanisms by which these rules
   are enforced (those live in children and in operational
@@ -94,21 +96,22 @@ visible.
   to know that this requires an env var to be set" and "i'm
   exposed to INTERFACE and INTERNALS VIEWED THROUGH THE LENS
   OF WHAT YOU KNOW I KNOW."
-- Decision: This principle sits structurally above user-persona
-  and shared-language; both are downstream applications.
-  user-persona is the specific account of who the user is and
-  how tinker positions itself cognitively. shared-language is
-  the specific filtering mechanism for the second exposure
-  surface. Source: user confirmed "ii feels right" referring
-  to the structural option that creates a new root above both
-  existing goals.
+- Decision: This principle sits structurally above user-persona,
+  shared-language, and implementation-ownership; all three are
+  downstream applications. user-persona is the specific account
+  of who the user is and how tinker positions itself
+  cognitively. shared-language is the specific filtering
+  mechanism for the second exposure surface.
+  implementation-ownership is the specific application of
+  "tinker holds the *is*" to source code — establishing that
+  goal sessions own the implementation, scope-bounded by the
+  goal text plus any related goals. Source: user confirmed "ii
+  feels right" referring to the structural option that creates
+  a new root above the existing goals.
 
-children and into other goals that touch user-facing surfaces.
-Each ripple is its own deliberate rollout step, not part of this
-spec.
 """
 parent_id = "the-false-promise"
-children = ["user-persona", "shared-language"]
+children = ["user-persona", "shared-language", "implementation-ownership"]
 
 [[related]]
 id = "orchestrator-introspection"

@@ -245,11 +245,8 @@ async fn main() -> Result<()> {
     // Goal runner task — one goal at a time. Updates go back to each goal's source file.
     // Before each goal session, runs the tinker-test-case cleanup hook (see
     // `src/cleanup.rs` and `## Tinkering` in the orchestrator prompt).
-    // Per `goal-sessions.toml`: "Goal sessions only persist in memory for
-    // the duration of the Tinker process. On restart, any previously
-    // active session is forgotten." This is the in-memory map.
-    let sessions: goal_session::SessionStore =
-        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    // Per `goal-sessions` decision: every dispatch is a fresh session — no
+    // in-process resumption across triggers.
     {
         let primary_tinker_dir = primary_tinker_dir.clone();
         let work_dir = work_dir.clone();
@@ -257,7 +254,6 @@ async fn main() -> Result<()> {
         let oc = oc_goal.clone();
         let oc_cleanup = oc_cleanup_runner.clone();
         let fs = fs.clone();
-        let sessions = sessions.clone();
         let log_goal = log.clone();
         let backend_name_goal = backend_name.to_string();
         tokio::spawn(async move {
@@ -317,10 +313,8 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                let is_resume = sessions.lock().unwrap().contains_key(&goal.id);
                 log_goal.emit("goal_session", logger::LogEvent::GoalSessionStarted {
                     goal_id: goal.id.clone(),
-                    is_resume,
                 });
 
                 let session_t0 = std::time::Instant::now();
@@ -332,7 +326,6 @@ async fn main() -> Result<()> {
                     goal_tx.clone(),
                     oc.clone(),
                     fs.clone(),
-                    sessions.clone(),
                 )
                 .await;
                 let session_ms = session_t0.elapsed().as_millis() as u64;

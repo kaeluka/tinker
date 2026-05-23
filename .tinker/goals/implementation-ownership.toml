@@ -2,9 +2,10 @@ id = "implementation-ownership"
 description = """
 ## WHAT
 A formal mandate applied to Goal Sessions establishing that they own the
-source code implementation. It explicitly overrides the default LLM
-behavior of acting as a cautious "guest" who avoids deleting or radically
-restructuring code.
+source code implementation. Ownership is scope-bounded by the goal text
+plus any related goals, and unconstrained beyond that. The mandate
+explicitly overrides the default LLM behavior of acting as a cautious
+"guest" who avoids deleting or radically restructuring code.
 
 ## WHY
 Standard LLMs perceive a "structural taboo" against making large
@@ -35,6 +36,14 @@ the taboo disappears.
   injecting this ownership mandate directly into the Goal Session prompt,
   rather than building complex new agent architectures. Source: user's
   distinction between the goal (the outcome) and the tactic.
+- Decision: Implementation ownership is scope-bounded by the goal text
+  and any related goals, and unconstrained beyond that. Sessions hold
+  full autonomy over implementation choices the spec doesn't dictate;
+  they don't hold autonomy over choices the spec does dictate. The goal
+  is treated as a high-level optimization target, not a literal
+  exhaustive spec. Source: user said "they should treat the goal as a
+  high level optimization target ... the goal agent is completely
+  unconstrained otherwise."
 
 """
 parent_id = "user-system-interaction"
