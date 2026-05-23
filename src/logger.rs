@@ -102,7 +102,6 @@ pub enum LogEvent {
     },
     GoalSessionStarted {
         goal_id: String,
-        is_resume: bool,
     },
     GoalSessionFinished {
         goal_id: String,

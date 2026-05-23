@@ -1,23 +1,14 @@
 use crate::cap::{Filesystem, OpenCodeRunner};
 use crate::goal::Goal;
 use anyhow::Result;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
-/// In-memory map of `goal_id -> session_id`. Lives for the duration of the
-/// tinker process and is forgotten on restart (per `goal-sessions.toml`
-/// decision: "Goal sessions only persist in memory for the duration of the
-/// Tinker process"). Shared between `main()` and the goal-runner task; the
-/// goal-runner reads on each dispatch and writes after each session
-/// completes.
-pub type SessionStore = Arc<Mutex<HashMap<String, String>>>;
-
-/// Shared VCS-mutation rule, used by the orchestrator prompt and by both
-/// goal-session init/resume messages. The orchestrator and goal sessions
-/// alike may read VCS state but never mutate it — version control is the
-/// user's job (per `orchestrator-agent` and `goal-sessions` goals).
+/// Shared VCS-mutation rule, used by the orchestrator prompt and by the
+/// goal-session init message. The orchestrator and goal sessions alike may
+/// read VCS state but never mutate it — version control is the user's job
+/// (per `orchestrator-agent` and `goal-sessions` goals).
 pub const VCS_RULES: &str = "Treat version control as read-only. \
 You may read state (`git status`, `git diff`, `git log`) to orient yourself, \
 but don't mutate it — no commits, pushes, checkouts, branch operations, \
@@ -135,23 +126,6 @@ When you have made meaningful progress (or decided no action is warranted), stop
     prompt
 }
 
-fn goal_resume_message(goal: &Goal, reason: Option<&str>) -> String {
-    let mut msg = format!(
-        "Continue working on: {}\n\nYour session history has full context.",
-        goal.description
-    );
-    if let Some(r) = reason {
-        msg.push_str(&format!("\n\n## Reason for triggering\n{}", r));
-    }
-    msg.push_str(&format!(
-        "\n\nPick up where you left off, or stop if nothing currently needs doing.\n\n## Rules\n- {}\n- {}\n- {}",
-        VCS_RULES,
-        TINKER_DIR_WRITE_RULES,
-        IMPLEMENTATION_OWNERSHIP_MANDATE,
-    ));
-    msg
-}
-
 pub async fn run_silent(
     oc: &dyn OpenCodeRunner,
     message: &str,
@@ -182,27 +156,18 @@ pub async fn run_goal(
     tx: mpsc::Sender<GoalEvent>,
     oc: Arc<dyn OpenCodeRunner>,
     fs: Arc<dyn Filesystem>,
-    sessions: SessionStore,
 ) -> Result<(String, String)> {
     let goal_id = goal.id.clone();
-    // Sessions are ephemeral — per `goal-sessions.toml`, they live in memory
-    // for the lifetime of the tinker process and are forgotten on restart.
-    let existing_sid = {
-        let map = sessions.lock().unwrap();
-        map.get(&goal.id).filter(|s| !s.is_empty()).cloned()
-    };
-    // On first run, give the session the FULL CONTENT of every sibling goal —
-    // including coding-standards and other standing concerns — so it doesn't
-    // have to rely on the orchestrator copying snippets into the description.
-    let message = if existing_sid.is_none() {
-        let dirs = crate::goal::discover_tinker_dirs(fs.as_ref(), &work_dir);
-        let siblings: Vec<Goal> = crate::goal::load_all_goals(fs.as_ref(), &dirs)
-            .map(|l| l.goals)
-            .unwrap_or_default();
-        goal_init_message(&goal, reason.as_deref(), &siblings)
-    } else {
-        goal_resume_message(&goal, reason.as_deref())
-    };
+    // Every dispatch is a fresh session — per `goal-sessions` decision, there
+    // is no in-process resumption across triggers. Give the session the FULL
+    // CONTENT of every sibling goal so coding-standards and other standing
+    // concerns are in its context without the orchestrator copying snippets
+    // into the description.
+    let dirs = crate::goal::discover_tinker_dirs(fs.as_ref(), &work_dir);
+    let siblings: Vec<Goal> = crate::goal::load_all_goals(fs.as_ref(), &dirs)
+        .map(|l| l.goals)
+        .unwrap_or_default();
+    let message = goal_init_message(&goal, reason.as_deref(), &siblings);
 
     // Emit the trigger reason as the very first log line, marked for bold
     // rendering by the TUI (tui-goal decision: "the specific 'reason' it was
@@ -228,28 +193,15 @@ pub async fn run_goal(
         });
     });
     let session_id = oc
-        .run(&message, existing_sid.as_deref(), &work_dir, on_sid, on_chunk)
+        .run(&message, None, &work_dir, on_sid, on_chunk)
         .await?;
-
-    // Record the new session ID in the in-memory map so a subsequent run of
-    // the same goal in this tinker process can resume it. Nothing hits disk;
-    // on restart the map is empty.
-    if !session_id.is_empty() {
-        sessions
-            .lock()
-            .unwrap()
-            .insert(goal.id.clone(), session_id.clone());
-    }
-
-    let effective_sid = if session_id.is_empty() {
-        existing_sid.unwrap_or_default()
-    } else {
-        session_id
-    };
 
     let _ = tx.send(GoalEvent::RunDone).await;
 
-    let summary = run_silent(oc.as_ref(), SUMMARY_REQUEST, Some(&effective_sid), &work_dir)
+    // Intra-dispatch continuity: the structured-summary request continues
+    // the same LLM conversation as the main work, so the summary can refer
+    // to what just happened. This is not cross-trigger resumption.
+    let summary = run_silent(oc.as_ref(), SUMMARY_REQUEST, Some(&session_id), &work_dir)
         .await
         .unwrap_or_default();
 
@@ -281,8 +233,8 @@ mod tests {
 
     // spec: goal-sessions decision — "Every goal session dispatch must be
     // accompanied by a reason string … This reason must be passed explicitly
-    // into the agent's prompt/context." Both fresh-start and resume messages
-    // must surface the reason verbatim when one is given.
+    // into the agent's prompt/context." The init message must surface the
+    // reason verbatim when one is given.
     #[test]
     fn test_spec_goal_init_message_includes_reason() {
         let calc = make_goal("calc", "build calc");
@@ -292,29 +244,19 @@ mod tests {
             init.contains(reason),
             "init message must surface the trigger reason"
         );
-        let resume = goal_resume_message(&calc, Some(reason));
-        assert!(
-            resume.contains(reason),
-            "resume message must surface the trigger reason"
-        );
     }
 
     // spec: goal-sessions decision — "Goal sessions may read version control
     // state … but are strictly prohibited from mutating it (no commit, push,
-    // checkout)." Both init and resume prompts must carry the VCS_RULES
-    // policy text into the agent's context.
+    // checkout)." The init prompt must carry the VCS_RULES policy text into
+    // the agent's context.
     #[test]
     fn test_spec_goal_messages_carry_vcs_read_only_rule() {
         let calc = make_goal("calc", "build calc");
         let init = goal_init_message(&calc, None, &[]);
-        let resume = goal_resume_message(&calc, None);
         assert!(
             init.contains(VCS_RULES),
             "init message must carry VCS read-only rule verbatim"
-        );
-        assert!(
-            resume.contains(VCS_RULES),
-            "resume message must carry VCS read-only rule verbatim"
         );
         // Sanity: the rule itself must actually forbid mutation.
         assert!(VCS_RULES.contains("read"));
@@ -324,56 +266,40 @@ mod tests {
     }
 
     // spec: goal-sessions decision — "Goal sessions must not write to
-    // `.tinker/goals/`, `.tinker/notes/`, or `.tinker/state/`." Both init and
-    // resume prompts must carry the directory write restriction into the
-    // agent's context so it cannot silently mutate the orchestrator-owned
+    // `.tinker/goals/`, `.tinker/notes/`, or `.tinker/state/`." The init
+    // prompt must carry the directory write restriction into the agent's
+    // context so it cannot silently mutate the orchestrator-owned
     // directories when dispatched with a narrow scope.
     #[test]
     fn test_spec_goal_messages_carry_tinker_dir_write_restriction() {
         let calc = make_goal("calc", "build calc");
         let init = goal_init_message(&calc, None, &[]);
-        let resume = goal_resume_message(&calc, None);
-        for (label, msg) in [("init", &init), ("resume", &resume)] {
-            assert!(
-                msg.contains(TINKER_DIR_WRITE_RULES),
-                "{label} message must carry tinker-dir write restriction verbatim"
-            );
-            // The restriction must name the three protected directories.
-            assert!(
-                msg.contains(".tinker/goals/"),
-                "{label} message must mention .tinker/goals/"
-            );
-            assert!(
-                msg.contains(".tinker/notes/"),
-                "{label} message must mention .tinker/notes/"
-            );
-            assert!(
-                msg.contains(".tinker/state/"),
-                "{label} message must mention .tinker/state/"
-            );
-        }
+        assert!(
+            init.contains(TINKER_DIR_WRITE_RULES),
+            "init message must carry tinker-dir write restriction verbatim"
+        );
+        // The restriction must name the three protected directories.
+        assert!(init.contains(".tinker/goals/"));
+        assert!(init.contains(".tinker/notes/"));
+        assert!(init.contains(".tinker/state/"));
     }
 
     // spec: implementation-ownership decision — "Goal sessions own the
     // implementation and are expected to demolish and restructure existing
-    // code when a better architecture satisfies the goal." Both init and
-    // resume prompts must carry the ownership mandate into the agent's
-    // context so the structural taboo is lifted.
+    // code when a better architecture satisfies the goal." The init prompt
+    // must carry the ownership mandate so the structural taboo is lifted.
     #[test]
     fn test_spec_goal_messages_carry_ownership_mandate() {
         let calc = make_goal("calc", "build calc");
         let init = goal_init_message(&calc, None, &[]);
-        let resume = goal_resume_message(&calc, None);
-        for (label, msg) in [("init", &init), ("resume", &resume)] {
-            assert!(
-                msg.contains(IMPLEMENTATION_OWNERSHIP_MANDATE),
-                "{label} message must carry ownership mandate verbatim"
-            );
-            assert!(
-                msg.to_lowercase().contains("you own the"),
-                "{label} message must convey ownership framing"
-            );
-        }
+        assert!(
+            init.contains(IMPLEMENTATION_OWNERSHIP_MANDATE),
+            "init message must carry ownership mandate verbatim"
+        );
+        assert!(
+            init.to_lowercase().contains("you own the"),
+            "init message must convey ownership framing"
+        );
         // The mandate must actually assert ownership, not just mention it.
         assert!(
             IMPLEMENTATION_OWNERSHIP_MANDATE

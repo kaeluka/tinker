@@ -7,8 +7,9 @@ timestamped entries capturing things that may be useful for later
 self-improvement — friction, surprise, reframes, recurring threads,
 moments where the user explicitly asks it to remember something. The
 orchestrator does not talk about taking notes; it writes them and keeps
-the conversation moving. There is no retrieval or reflection mechanism
-yet — this goal builds only the substrate.
+the conversation moving. The file is read-private to the orchestrator —
+goal sessions cannot read it. There is no retrieval or reflection
+mechanism yet — this goal builds only the substrate.
 
 ## WHY
 Tinker shouldn't become a tool that's only great for building tinker;
@@ -29,10 +30,11 @@ notes actually look like before we design the pass that reads them.
   `.tinker/notes/` directory at startup if missing.
 - Out of scope: any retrieval, reflection, or proposal mechanism that
   reads the notes back (that is a separate later goal); note-taking
-  by goal sessions (they do not share the orchestrator's
-  conversational chain of thought); organizing notes by topic or
-  splitting into multiple files; pruning, summarization, or rotation
-  of the file.
+  by goal sessions, including reading the notes file (they do not
+  share the orchestrator's conversational chain of thought, and the
+  file's contents would leak orchestrator deliberation into session
+  context); organizing notes by topic or splitting into multiple
+  files; pruning, summarization, or rotation of the file.
 
 ## DECISIONS (vetted)
 - Decision: Notes go in a single append-only markdown file at
@@ -70,6 +72,14 @@ notes actually look like before we design the pass that reads them.
 - Decision: Only the orchestrator takes notes in this round. Goal
   sessions are not included because they do not share the same
   conversational chain of thought. Source: confirmed in playback.
+- Decision: `.tinker/notes/notes.md` is read-private to the
+  orchestrator. Goal sessions cannot read it; only the orchestrator
+  reads and writes. Making the file readable to sessions would
+  leak orchestrator deliberation into session context that should
+  be guided only by goals, trigger reasons, and source. The
+  prohibition is enforced in `goal-sessions` through the session
+  prompt's injected rule block. Source: user confirmed "notes is
+  orchestrator private - should be clear in goals."
 
 """
 parent_id = "orchestrator"

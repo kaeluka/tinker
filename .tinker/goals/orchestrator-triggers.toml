@@ -67,6 +67,23 @@ orchestrator emitting more `/run` lines in its post-batch reply.
   goal-session dispatches that don't come from manual user
   input. Source: user said "(a)" to folding reactive scheduling
   into the orchestrator and retiring the scheduler component.
+- Decision: `/run` reasons emitted by the orchestrator are
+  declarative pointers to spec deltas — they describe what
+  changed in the goal text, or what changed in the environment
+  that the goal might react to, not what the session should do
+  about it. The session reads the updated goal, sees the delta,
+  and derives its work from the spec itself. Imperative reasons
+  ("add modulo support") would launder implementation intent
+  through the dispatch channel and bypass the spec process; the
+  spec is the only legitimate place for that intent to live.
+  User-typed reasons (TUI Enter modal, `/run` at the input
+  prompt) are exempt as a pragmatic escape hatch. Source: user
+  said "the commands you give the run slash command as
+  instructions should only mention what has changed in the goal
+  text, not give actual build instructions. otherwise, we're
+  bypassing the spec process"; user-typed exemption confirmed:
+  "user-typed reasons are ignored for now. as i said, it's an
+  escape hatch."
 
 """
 parent_id = "orchestrator"

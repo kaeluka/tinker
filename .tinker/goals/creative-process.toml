@@ -72,9 +72,10 @@ human in a dialectical process."
   defining goals as the bridge artifact between intuition and
   convention; defining the orchestrator's dual duty (faithfully
   execute conventions AND surface inflection points where
-  convention is insufficient); framing tone as the visible surface
-  of operating with these strengths properly, not as a principle of
-  its own.
+  convention is insufficient); defining the iteration loop as the
+  operational form of dialectic-after-spec-is-written; framing
+  tone as the visible surface of operating with these strengths
+  properly, not as a principle of its own.
 - Out of scope: the specific format and structural rules for goal
   files (handled by `goal-structure-standard`); the conversational
   mechanics of the interview protocol itself (handled by
@@ -181,6 +182,21 @@ human in a dialectical process."
   spawning two LLMs that have a dialog?" — the orchestrator's
   answer was confirmed by the user's continued engagement and
   recorded in the notes file.
+- Decision: The dialectic continues after a goal is written. The
+  operational form of this principle is the *iteration loop*: a
+  sparse goal is implemented by a goal session; the user tries the
+  result, or the orchestrator reviews it; observations feed back
+  into the goal; the goal updates; the session re-runs paying
+  extra attention to the delta. This loop is not optional or edge-
+  case — it is how a sparse goal converges toward implementation
+  correctness, because conventions encoded in the goal degrade as
+  situations drift, and the user's tacit judgment is what catches
+  the drift. Source: user described the loop as "a well oiled
+  machine would have the goal agent execute goals that are quite
+  sparse ... goal agent follows convention based on that. user
+  tries it/orchestrator reviews it. then the goal gets updated.
+  the goal agent runs again, updating the implementation with
+  extra attention to the new goal changes."
 
 """
 parent_id = "the-false-promise"
