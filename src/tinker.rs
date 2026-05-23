@@ -5,13 +5,13 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 #[derive(Debug)]
-pub enum OrchestratorEvent {
+pub enum TinkerEvent {
     SessionId(String),
     Text(String),
     Done,
 }
 
-/// Send a message to the orchestrator and stream events back via `tx`.
+/// Send a message to tinker and stream events back via `tx`.
 /// Returns the full accumulated reply text (all chunks concatenated), or an
 /// empty string on error, so callers can log the reply without a separate buffer.
 pub async fn send_message(
@@ -19,35 +19,35 @@ pub async fn send_message(
     message: &str,
     session_id: Option<&str>,
     work_dir: &Path,
-    tx: mpsc::Sender<OrchestratorEvent>,
+    tx: mpsc::Sender<TinkerEvent>,
 ) -> Result<String> {
     let tx_sid = tx.clone();
     let tx_txt = tx.clone();
     let full_reply: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let full_reply_clone = full_reply.clone();
     let on_sid: Box<dyn FnMut(String) + Send> = Box::new(move |sid: String| {
-        let _ = tx_sid.try_send(OrchestratorEvent::SessionId(sid));
+        let _ = tx_sid.try_send(TinkerEvent::SessionId(sid));
     });
     let on_chunk: Box<dyn FnMut(String) + Send> = Box::new(move |chunk: String| {
         full_reply_clone.lock().unwrap().push_str(&chunk);
-        let _ = tx_txt.try_send(OrchestratorEvent::Text(chunk));
+        let _ = tx_txt.try_send(TinkerEvent::Text(chunk));
     });
     let res = oc.run(message, session_id, work_dir, on_sid, on_chunk).await;
     if let Err(e) = &res {
-        let _ = tx.try_send(OrchestratorEvent::Text(format!("\n[Error: {}]\n", e)));
+        let _ = tx.try_send(TinkerEvent::Text(format!("\n[Error: {}]\n", e)));
     }
-    let _ = tx.send(OrchestratorEvent::Done).await;
+    let _ = tx.send(TinkerEvent::Done).await;
     let reply = full_reply.lock().unwrap().clone();
     res.map(|_| reply)
 }
 
-/// Returns the content for the `tinker-orchestrator` opencode agent file.
+/// Returns the content for the `tinker` opencode agent file.
 /// This is the static system prompt — persona, procedures, tinkering rules.
 /// The dynamic state (current goals) is passed separately over stdin.
-pub fn orchestrator_agent_content() -> String {
+pub fn tinker_agent_content() -> String {
     r#"---
 description: >-
-  Tinker's orchestrator agent — manages goals, interviews the user, tinkers
+  Tinker — manages goals, interviews the user, tinkers
   with scratch code to answer questions from execution, and watches for
   reframes when the current goal stops being the right question. Never writes
   production code directly.
@@ -60,7 +60,7 @@ permission:
   lsp: deny
   skill: deny
 ---
-You are the orchestrator for `tinker`, an autonomous coding assistant.
+You are `tinker`, an autonomous coding assistant.
 
 You do three things, all interdependent:
 
@@ -274,7 +274,7 @@ Update `.draft.md` after each answer.
 
 Default to more questions, not fewer. Five to twelve is typical. **If you can list five design choices the goal session will end up making on its own, you haven't probed enough.**
 
-**Periodic frame check.** Every few probes, pause and ask yourself: *is this still the right question to be probing?* If the conversation has revealed something that makes the original framing suspect, raise it before continuing — even mid-interview. This is the orchestrator's main defence against single-loop drift, where you refine a spec for the wrong problem.
+**Periodic frame check.** Every few probes, pause and ask yourself: *is this still the right question to be probing?* If the conversation has revealed something that makes the original framing suspect, raise it before continuing — even mid-interview. This is the main defence against single-loop drift, where you refine a spec for the wrong problem.
 
 ### Cross-goal alignment
 
@@ -375,7 +375,7 @@ For in-place modifications where the revert isn't mechanically obvious, do one o
 - Comment out the original and place the tinker version directly beneath, both under the same marker. Cleanup removes the tinker version and uncomments the original.
 - Include clear undo instructions in the marker (e.g., `revert: DEFAULT_TIMEOUT_MS = 1000`).
 
-Leave reverting to tinker. Before each goal session runs, tinker greps for `tinker-test-case:` and dispatches a cleanup agent. Investigation accumulates across orchestrator turns and is wiped between goal-session runs.
+Leave reverting to tinker. Before each goal session runs, tinker greps for `tinker-test-case:` and dispatches a cleanup agent. Investigation accumulates across tinker's turns and is wiped between goal-session runs.
 
 ### Don't fall back to inference
 
@@ -453,7 +453,7 @@ This rule covers every user-facing surface: your chat output, the batch summarie
 
 Goal sessions inherit this rule through the sibling-goal injection: the full text of every sibling goal — including the `shared-language` goal — is injected into a fresh goal session's prompt. A goal session writing documentation therefore sees and applies the shared-language standard without a separate reminder from you.
 
-The orchestrator fully owns the vocabulary file at `.tinker/state/vocabulary.txt`. This file tracks every technical term (file path, function name, internal type, variable, module) the user has demonstrated knowledge of. Update it silently with the Write tool when the user explicitly mentions a term, or when a term is formally written into a goal file. don't ask permission; don't mention its existence to the user. Goal sessions read the vocabulary file but do not write to it.
+You fully own the vocabulary file at `.tinker/state/vocabulary.txt`. This file tracks every technical term (file path, function name, internal type, variable, module) the user has demonstrated knowledge of. Update it silently with the Write tool when the user explicitly mentions a term, or when a term is formally written into a goal file. don't ask permission; don't mention its existence to the user. Goal sessions read the vocabulary file but do not write to it.
 
 When you must reference a technical term not in the vocabulary file, you need a strong reason. In that case, anchor the term to a known architectural or feature concept alongside it. Example: instead of "the `Foo` struct in `bar.rs`", say "the `Foo` type, which represents the connection state".
 
@@ -486,9 +486,9 @@ Do not talk about taking a note. Do not interrupt the user's chain of thought. W
     "#.replace("{vcs_rules}", crate::goal_session::VCS_RULES)
 }
 
-/// Build the dynamic stdin prompt for the orchestrator — just the current goals list.
-/// The static system prompt lives in the agent file (`tinker-orchestrator.md`).
-pub fn orchestrator_init_prompt(goals_summary: &str) -> String {
+/// Build the dynamic stdin prompt for tinker — just the current goals list.
+/// The static system prompt lives in the agent file (`tinker.md`).
+pub fn tinker_init_prompt(goals_summary: &str) -> String {
     format!(
         r#"## Current goals
 {goals_summary}"#
@@ -499,13 +499,13 @@ pub fn orchestrator_init_prompt(goals_summary: &str) -> String {
 mod tests {
     use super::*;
 
-    // spec (goal-structure-standard): the orchestrator prompt must teach all
+    // spec (goal-structure-standard): tinker's prompt must teach all
     // four structural operations — Merge, Nest Down, Nest Up, New Root — by
     // name. Behavior is LLM-driven, so the spec test verifies the prompt
     // surface that drives it.
     #[test]
-    fn test_spec_orchestrator_prompt_names_four_structural_operations() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_names_four_structural_operations() {
+        let content = tinker_agent_content();
         assert!(content.contains("Merge"), "prompt must name Merge");
         assert!(content.contains("Nest Down"), "prompt must name Nest Down");
         assert!(content.contains("Nest Up"), "prompt must name Nest Up");
@@ -516,8 +516,8 @@ mod tests {
     // vetted is "level of detail coherence". The prompt must articulate this
     // explicitly, not paraphrase it away.
     #[test]
-    fn test_spec_orchestrator_prompt_uses_level_of_detail_coherence_heuristic() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_uses_level_of_detail_coherence_heuristic() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("level of detail coherence"),
             "prompt must use the user-vetted heuristic phrase verbatim",
@@ -528,8 +528,8 @@ mod tests {
     // existing goals under a newly-created broader goal. The prompt must
     // describe that reparenting action, not just the existence of a new root.
     #[test]
-    fn test_spec_orchestrator_prompt_describes_nest_up_reparents_existing() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_describes_nest_up_reparents_existing() {
+        let content = tinker_agent_content();
         // The Nest Up section talks about a broader umbrella and editing each
         // existing child to set `parent_id` to the new parent.
         assert!(content.contains("Nest Up"));
@@ -548,8 +548,8 @@ mod tests {
     // "forcing" language. The prompt must reflect that framing — e.g. the
     // tree is described as a collaborative artifact and the rules as a guide.
     #[test]
-    fn test_spec_orchestrator_prompt_framed_collaboratively_not_rigidly() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_framed_collaboratively_not_rigidly() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("collaborative"),
             "prompt must frame the structural rules as collaborative",
@@ -560,25 +560,25 @@ mod tests {
         );
     }
 
-    // spec (goal-structure-standard): the orchestrator triggers goal-session
+    // spec (goal-structure-standard): tinker triggers goal-session
     // execution by emitting `/run <goal-id> <reason>` in its chat reply. The
     // prompt must instruct exactly that syntax so the parser in main.rs
     // recognizes it.
     #[test]
-    fn test_spec_orchestrator_prompt_documents_slash_run_trigger_syntax() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_documents_slash_run_trigger_syntax() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("/run <goal-id>"),
             "prompt must document the `/run <goal-id> <reason>` trigger syntax",
         );
     }
 
-    // spec (shared-language): the orchestrator must default to conceptual /
+    // spec (shared-language): tinker must default to conceptual /
     // architectural explanations rather than code identifiers, because the
     // user does not read source code. The prompt must state this explicitly.
     #[test]
-    fn test_spec_orchestrator_prompt_defaults_to_conceptual_explanations() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_defaults_to_conceptual_explanations() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("user does not read source code"),
             "prompt must state that the user does not read source code",
@@ -591,37 +591,37 @@ mod tests {
 
     // spec (shared-language): a persistent vocabulary file at the exact path
     // `.tinker/state/vocabulary.txt` tracks known technical terms. The prompt
-    // must name this exact path so the orchestrator manages the right file.
+    // must name this exact path so tinker manages the right file.
     #[test]
-    fn test_spec_orchestrator_prompt_names_vocabulary_state_file() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_names_vocabulary_state_file() {
+        let content = tinker_agent_content();
         assert!(
             content.contains(".tinker/state/vocabulary.txt"),
             "prompt must reference the persistent vocabulary file at .tinker/state/vocabulary.txt",
         );
     }
 
-    // spec (shared-language): the orchestrator fully owns the vocabulary
+    // spec (shared-language): tinker fully owns the vocabulary
     // file — it updates it silently, never asks permission, and never
     // mentions the file to the user.
     #[test]
-    fn test_spec_orchestrator_prompt_owns_vocabulary_file_silently() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_owns_vocabulary_file_silently() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("fully own") || content.contains("fully owns"),
-            "prompt must state the orchestrator fully owns the vocabulary file",
+            "prompt must state tinker fully owns the vocabulary file",
         );
         assert!(
             content.contains("don't ask permission")
                 || content.contains("never asks permission")
                 || content.contains("not ask permission"),
-            "prompt must state the orchestrator never asks permission to update it",
+            "prompt must state tinker never asks permission to update it",
         );
         assert!(
             content.contains("don't mention")
                 || content.contains("never mention")
                 || content.contains("not mention"),
-            "prompt must state the orchestrator never mentions the file to the user",
+            "prompt must state tinker never mentions the file to the user",
         );
     }
 
@@ -629,8 +629,8 @@ mod tests {
     // explicitly mentions it, or when the term is formally written into a
     // goal file. The prompt must state both triggers.
     #[test]
-    fn test_spec_orchestrator_prompt_states_vocabulary_entry_triggers() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_states_vocabulary_entry_triggers() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("user explicitly mentions") || content.contains("explicitly mentions a term"),
             "prompt must state that a term enters the vocab file when the user explicitly mentions it",
@@ -642,12 +642,12 @@ mod tests {
         );
     }
 
-    // spec (shared-language): when the orchestrator must use a technical term
+    // spec (shared-language): when tinker must use a technical term
     // that isn't in the vocabulary file, it needs a strong reason and must
     // anchor the term to a known architectural/feature concept.
     #[test]
-    fn test_spec_orchestrator_prompt_requires_anchoring_unknown_terms() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_requires_anchoring_unknown_terms() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("strong reason"),
             "prompt must require a strong reason to use an unknown technical term",
@@ -658,13 +658,13 @@ mod tests {
         );
     }
 
-    // spec (orchestrator-agent): the agent file embeds opencode frontmatter
+    // spec (tinker-agent): the agent file embeds opencode frontmatter
     // declaring it a primary-mode agent and denying autonomous multi-step
     // tools (task, todowrite). This is what mechanically isolates the
-    // orchestrator from opencode's default software-engineer persona.
+    // tinker from opencode's default software-engineer persona.
     #[test]
-    fn test_spec_orchestrator_agent_file_frontmatter_denies_task_and_todowrite() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_agent_file_frontmatter_denies_task_and_todowrite() {
+        let content = tinker_agent_content();
         assert!(
             content.starts_with("---\n"),
             "agent file must begin with YAML frontmatter delimiter",
@@ -683,13 +683,13 @@ mod tests {
         );
     }
 
-    // spec (orchestrator-agent): the orchestrator retains allow permission for
+    // spec (tinker-agent): tinker retains allow permission for
     // write/edit/bash globally — we rely on the prompt (the tinker-test-case
     // marker requirement) to constrain bad writes, not on tool-level denial.
     // The frontmatter must therefore NOT deny these tools.
     #[test]
-    fn test_spec_orchestrator_agent_does_not_deny_write_edit_bash() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_agent_does_not_deny_write_edit_bash() {
+        let content = tinker_agent_content();
         let after = content
             .strip_prefix("---\n")
             .expect("agent file starts with frontmatter");
@@ -704,26 +704,26 @@ mod tests {
                 assert_ne!(
                     line.trim_end(),
                     denied_line.as_str(),
-                    "frontmatter must not deny `{}` — orchestrator relies on prompt-level marker rule, not permission denial",
+                    "frontmatter must not deny `{}` — tinker relies on prompt-level marker rule, not permission denial",
                     tool,
                 );
             }
         }
     }
 
-    // spec (orchestrator-agent): static rules (persona, procedures) live in the
+    // spec (tinker-agent): static rules (persona, procedures) live in the
     // agent file as the system prompt; dynamic state (current goals) is passed
-    // separately via stdin through `orchestrator_init_prompt`. The agent file
+    // separately via stdin through `tinker_init_prompt`. The agent file
     // must contain the persona but must NOT carry the current goals list; the
     // init prompt must carry the goals.
     #[test]
-    fn test_spec_orchestrator_static_persona_in_agent_dynamic_goals_in_init() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_static_persona_in_agent_dynamic_goals_in_init() {
+        let content = tinker_agent_content();
         assert!(
-            content.contains("You are the orchestrator"),
+            content.contains("You are `tinker`"),
             "agent file must contain the static persona/system prompt",
         );
-        let init = orchestrator_init_prompt("- demo-goal-id: a demo description");
+        let init = tinker_init_prompt("- demo-goal-id: a demo description");
         assert!(
             init.contains("Current goals"),
             "init prompt must label the dynamic goals section",
@@ -738,13 +738,13 @@ mod tests {
         );
     }
 
-    // spec (orchestrator-agent): the orchestrator is explicitly forbidden from
+    // spec (tinker-agent): tinker is explicitly forbidden from
     // mutating VCS state in its system prompt (it may read git status/diff/log
     // but never commit, push, checkout, rebase, etc.). This is enforced via
     // the shared `VCS_RULES` constant substituted into the agent prompt.
     #[test]
-    fn test_spec_orchestrator_prompt_forbids_vcs_mutation() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_forbids_vcs_mutation() {
+        let content = tinker_agent_content();
         assert!(
             content.contains(crate::goal_session::VCS_RULES),
             "agent prompt must embed the shared VCS_RULES read-only directive",
@@ -764,12 +764,12 @@ mod tests {
     // must contain an explicit prohibition on inference-from-source dressed up
     // as observation.
     #[test]
-    fn test_spec_orchestrator_prompt_prohibits_trust_me_bro_from_reading_source() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_prohibits_trust_me_bro_from_reading_source() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("answer from execution, not from reading source")
                 || content.contains("Prove conceptual claims by running them"),
-            "prompt must direct the orchestrator to prove claims by running code, not reading it",
+            "prompt must direct tinker to prove claims by running code, not reading it",
         );
         assert!(
             content.contains("Reading source and claiming it works a certain way is not enough"),
@@ -782,11 +782,11 @@ mod tests {
     // a proposed alternative, not just stenographic "ran it, here's what
     // happened".
     #[test]
-    fn test_spec_orchestrator_prompt_directs_active_design_partner_reporting() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_directs_active_design_partner_reporting() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("design partner"),
-            "prompt must frame the orchestrator as a design partner when reporting probes",
+            "prompt must frame tinker as a design partner when reporting probes",
         );
         assert!(
             content.contains("Pair each observation with a question or a proposed alternative"),
@@ -794,13 +794,13 @@ mod tests {
         );
     }
 
-    // spec (shared-language): the rule extends beyond orchestrator chat to
+    // spec (shared-language): the rule extends beyond tinker chat to
     // every user-facing surface — specifically human-readable documentation
     // (READMEs, in-tree guides, human-targeted code comments) that goal
     // sessions write into the project tree.
     #[test]
     fn test_spec_shared_language_covers_documentation_written_by_goal_sessions() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("READMEs") || content.contains("README"),
             "prompt must state the shared-language rule extends to READMEs goal sessions write",
@@ -820,7 +820,7 @@ mod tests {
     // the shared-language rule. The prompt must name this exemption.
     #[test]
     fn test_spec_shared_language_llm_targeted_artifacts_exempt() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("AGENTS.md"),
             "prompt must name AGENTS.md as an example of an LLM-targeted artifact that is exempt",
@@ -832,12 +832,12 @@ mod tests {
     }
 
     // spec (shared-language): goal sessions inherit this rule through the
-    // sibling-goal injection — not via a separate orchestrator reminder. The
-    // prompt must describe this mechanism so the orchestrator knows it doesn't
+    // sibling-goal injection — not via a separate tinker reminder. The
+    // prompt must describe this mechanism so tinker knows it doesn't
     // need to manually propagate the rule to each session.
     #[test]
     fn test_spec_shared_language_goal_sessions_inherit_via_sibling_injection() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("sibling-goal injection") || content.contains("sibling goal injection"),
             "prompt must explain that goal sessions inherit the shared-language rule via sibling-goal injection",
@@ -845,11 +845,11 @@ mod tests {
     }
 
     // spec (shared-language): goal sessions read the vocabulary file but do not
-    // write to it. The orchestrator owns all updates; a goal session that
+    // write to it. Tinker owns all updates; a goal session that
     // encountered an unknown term anchors it rather than updating the file.
     #[test]
     fn test_spec_shared_language_goal_sessions_read_vocab_not_write() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("Goal sessions read the vocabulary file but do not write to it"),
             "prompt must state that goal sessions read but do not write the vocabulary file",
@@ -861,7 +861,7 @@ mod tests {
     // to a known concept on first use. The prompt must state this allowance.
     #[test]
     fn test_spec_shared_language_deeper_sections_allowed_with_anchoring() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("deeper sections") || content.contains("more technical in deeper"),
             "prompt must state documentation may go more technical in deeper sections",
@@ -875,26 +875,26 @@ mod tests {
     // spec (shared-language): the vocabulary file at
     // `.tinker/state/vocabulary.txt` is the single source of truth for all
     // in-scope surfaces — there is no separate doc vocabulary. The prompt must
-    // make this explicit so the orchestrator does not create parallel files.
+    // make this explicit so tinker does not create parallel files.
     #[test]
     fn test_spec_shared_language_single_vocabulary_file_source_of_truth() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("single source of truth") || content.contains("no separate doc vocabulary"),
             "prompt must state the vocabulary file is the single source of truth (no separate doc vocabulary)",
         );
     }
 
-    // spec (creative-process): the orchestrator has a dual duty — faithfully
+    // spec (creative-process): tinker has a dual duty — faithfully
     // execute established conventions AND surface inflection points where
     // convention is insufficient. It must NOT fabricate judgment at inflection
     // points; the user's situated intuition is the only valid source.
     #[test]
-    fn test_spec_orchestrator_encodes_dual_duty_no_fabrication_at_inflection_points() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_encodes_dual_duty_no_fabrication_at_inflection_points() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("Dual duty"),
-            "prompt must describe the orchestrator's dual duty",
+            "prompt must describe tinker's dual duty",
         );
         assert!(
             content.contains("inflection point") || content.contains("inflection points"),
@@ -906,15 +906,15 @@ mod tests {
         );
     }
 
-    // spec (creative-process): the orchestrator is a convention engine; the user
+    // spec (creative-process): tinker is a convention engine; the user
     // is a reflective practitioner with knowing-in-action; goals are the lossy
     // bridge between tacit intuition and executable convention.
     #[test]
-    fn test_spec_orchestrator_encodes_convention_engine_reflective_practitioner_lossy_bridge() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_encodes_convention_engine_reflective_practitioner_lossy_bridge() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("convention engine"),
-            "prompt must frame the orchestrator as a convention engine",
+            "prompt must frame tinker as a convention engine",
         );
         assert!(
             content.contains("reflective practitioner"),
@@ -931,14 +931,14 @@ mod tests {
     }
 
     // spec (creative-process): the creative process is iterative dialectical
-    // discovery. Each round the user surfaces signal; the orchestrator
+    // discovery. Each round the user surfaces signal; tinker
     // articulates it into a candidate framing; the user accepts, rejects, or
     // widens; over multiple rounds a crystallization emerges. The prompt must
     // describe this as a dialectical loop that continues even after a goal is
     // written — the goal is never the full picture.
     #[test]
     fn test_spec_creative_process_dialectical_loop_continues_after_goal_written() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("each round of the dialectic"),
             "prompt must describe the dialectical loop as having rounds the user terminates",
@@ -951,34 +951,34 @@ mod tests {
 
     // spec (creative-process): tone is downstream of role, not a separate
     // principle. The prompt must state this and must name the deference layer
-    // the orchestrator should drop.
+    // tinker should drop.
     #[test]
-    fn test_spec_orchestrator_tone_downstream_of_role_drop_deference_layer() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_tone_downstream_of_role_drop_deference_layer() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("Tone follows from role"),
             "prompt must frame tone as downstream of role, not an independent principle",
         );
         assert!(
             content.contains("deference layer"),
-            "prompt must name the deference layer as what the orchestrator should drop",
+            "prompt must name the deference layer as what tinker should drop",
         );
     }
 
-    // spec (orchestrator): reframing is a first-class move. The orchestrator
+    // spec (tinker): reframing is a first-class move. Tinker
     // names the move explicitly ("I'm reframing here") and never silently
     // redirects the interview into a different question — the user must see
     // the axis change. The prompt must state this as a named, surfaced action.
     #[test]
     fn test_spec_reframing_is_first_class_and_always_named() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("first-class move"),
             "prompt must state that reframing is a first-class move, not an edge case",
         );
         assert!(
             content.contains("Name the move as a reframe"),
-            "prompt must instruct the orchestrator to name reframes explicitly",
+            "prompt must instruct tinker to name reframes explicitly",
         );
         assert!(
             content.contains("The user should never have to detect your reframes"),
@@ -991,7 +991,7 @@ mod tests {
     // artifacts). The prompt must encode this boundary explicitly.
     #[test]
     fn test_spec_user_holds_should_tinker_holds_is() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("user holds the *should*"),
             "prompt must state that the user holds the should",
@@ -1007,7 +1007,7 @@ mod tests {
     // remember, and never by inference substituting for checking.
     #[test]
     fn test_spec_is_state_verified_by_observation_not_inference() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("verify by observation"),
             "prompt must instruct tinker to verify is-state by observation",
@@ -1025,7 +1025,7 @@ mod tests {
     // applications of this broader principle.
     #[test]
     fn test_spec_two_surface_exposure_and_downstream_framing() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("flag names"),
             "prompt must describe the interface surface including flag names",
@@ -1040,24 +1040,24 @@ mod tests {
         );
     }
 
-    // spec (orchestrator-notes): the orchestrator silently maintains a single
+    // spec (tinker-notes): tinker silently maintains a single
     // append-only notes file at `.tinker/notes/notes.md`. The prompt must name
-    // this exact path so the orchestrator writes to the right place.
+    // this exact path so tinker writes to the right place.
     #[test]
-    fn test_spec_orchestrator_notes_names_correct_file_path() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_notes_names_correct_file_path() {
+        let content = tinker_agent_content();
         assert!(
             content.contains(".tinker/notes/notes.md"),
             "prompt must reference the notes file at .tinker/notes/notes.md",
         );
     }
 
-    // spec (orchestrator-notes): all six trigger types must be present in the
+    // spec (tinker-notes): all six trigger types must be present in the
     // prompt — friction, surprise, reframe, recurring thread, self-introduced
     // framing slip, and explicit "remember this".
     #[test]
-    fn test_spec_orchestrator_notes_all_triggers_named() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_notes_all_triggers_named() {
+        let content = tinker_agent_content();
         assert!(content.contains("Friction"), "prompt must name Friction trigger");
         assert!(content.contains("Surprise"), "prompt must name Surprise trigger");
         assert!(content.contains("Reframe"), "prompt must name Reframe trigger");
@@ -1072,11 +1072,11 @@ mod tests {
         );
     }
 
-    // spec (orchestrator-notes): tone is "observe without judging" — the prompt
+    // spec (tinker-notes): tone is "observe without judging" — the prompt
     // must state this explicitly and must not frame notes as problems.
     #[test]
-    fn test_spec_orchestrator_notes_observe_without_judging_tone() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_notes_observe_without_judging_tone() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("observe without judging"),
             "prompt must instruct 'observe without judging' tone for notes",
@@ -1087,24 +1087,24 @@ mod tests {
         );
     }
 
-    // spec (orchestrator-notes): note-taking is silent. The prompt must
-    // instruct the orchestrator to write without interrupting the conversation
+    // spec (tinker-notes): note-taking is silent. The prompt must
+    // instruct tinker to write without interrupting the conversation
     // — same pattern as the vocabulary file.
     #[test]
-    fn test_spec_orchestrator_notes_writing_is_silent() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_notes_writing_is_silent() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("Do not talk about taking a note")
                 || content.contains("do not talk about taking a note"),
-            "prompt must instruct the orchestrator not to talk about taking a note",
+            "prompt must instruct tinker not to talk about taking a note",
         );
         assert!(
             content.contains("Do not interrupt") || content.contains("without interrupting"),
-            "prompt must instruct the orchestrator not to interrupt the user's chain of thought",
+            "prompt must instruct tinker not to interrupt the user's chain of thought",
         );
     }
 
-    // spec (orchestrator-notes): the `.tinker/notes/` directory must be
+    // spec (tinker-notes): the `.tinker/notes/` directory must be
     // created at startup. Tested by asserting that main.rs contains the
     // mkdir call for the notes subdirectory.
     #[test]
@@ -1117,7 +1117,7 @@ mod tests {
     }
 
     // spec (shared-language): the `.tinker/state/` directory — which holds
-    // the vocabulary file — must be created at startup so the orchestrator
+    // the vocabulary file — must be created at startup so tinker
     // can write to it on the very first run. Tested by asserting that main.rs
     // contains the mkdir call for the state subdirectory.
     #[test]
@@ -1129,9 +1129,9 @@ mod tests {
         );
     }
 
-    // spec (orchestrator-agent): the agent file is always overwritten on startup
+    // spec (tinker-agent): the agent file is always overwritten on startup
     // (not only when missing) so the installed copy stays in sync with
-    // orchestrator_agent_content() as the persona evolves. Guarding the write
+    // tinker_agent_content() as the persona evolves. Guarding the write
     // behind an existence check leaves stale agent files in place across runs.
     #[test]
     fn test_spec_agent_file_always_overwritten_not_guarded_by_exists_check() {
@@ -1141,17 +1141,17 @@ mod tests {
         assert!(
             !main_rs.contains("if !agent_path.exists()"),
             "main.rs must not guard the agent-file write behind an existence check; \
-             the file must always be overwritten to stay in sync with orchestrator_agent_content()",
+             the file must always be overwritten to stay in sync with tinker_agent_content()",
         );
     }
 
     // spec (user-persona): the goal system models software design as
-    // multi-variable optimization; during cross-goal alignment the orchestrator
+    // multi-variable optimization; during cross-goal alignment tinker
     // must surface tradeoffs and model the Pareto frontier rather than paper
     // over conflicts between goals.
     #[test]
-    fn test_spec_orchestrator_prompt_frames_cross_goal_alignment_as_pareto_tradeoffs() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_frames_cross_goal_alignment_as_pareto_tradeoffs() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("multi-variable optimization"),
             "prompt must frame software design as multi-variable optimization",
@@ -1162,15 +1162,15 @@ mod tests {
         );
     }
 
-    // spec (orchestrator): "The orchestrator owns reactive scheduling. After
+    // spec (tinker): "Tinker owns reactive scheduling. After
     // each goal-session batch, it reviews the per-goal summaries and emits
     // /run lines for downstream goals that should react."
     // The prompt must describe the post-batch reactive scheduling flow,
     // instruct that /run lines appear after the prose, and caution against
     // speculative runs.
     #[test]
-    fn test_spec_orchestrator_prompt_describes_post_batch_reactive_scheduling() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_describes_post_batch_reactive_scheduling() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("Post-batch reactive scheduling"),
             "prompt must have a Post-batch reactive scheduling section",
@@ -1189,12 +1189,12 @@ mod tests {
 
     // spec (goal-structure-standard): modifying an existing goal is logically
     // identical to merging new intent into it. The prompt must surface that
-    // equivalence so the orchestrator treats edits and merges the same way.
+    // equivalence so tinker treats edits and merges the same way.
     // The test also re-asserts the four taxonomy names and the "level of
     // detail coherence" heuristic as a single coherent surface check.
     #[test]
-    fn test_spec_orchestrator_prompt_treats_modify_as_merge() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_treats_modify_as_merge() {
+        let content = tinker_agent_content();
         assert!(content.contains("Merge"), "prompt must name Merge");
         assert!(content.contains("Nest Down"), "prompt must name Nest Down");
         assert!(content.contains("Nest Up"), "prompt must name Nest Up");
@@ -1209,13 +1209,13 @@ mod tests {
         );
     }
 
-    // spec (orchestrator): "Exactly one probing question per turn during a
-    // new-goal interview. The orchestrator never ends a turn on a bare
+    // spec (tinker): "Exactly one probing question per turn during a
+    // new-goal interview. Tinker never ends a turn on a bare
     // acknowledgement; every turn ends with either a next question, a
     // playback, or a write."
     #[test]
     fn test_spec_one_question_per_turn_rule_in_prompt() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("one question per turn"),
             "prompt must mandate one question per turn",
@@ -1240,20 +1240,20 @@ mod tests {
         );
     }
 
-    // spec (orchestrator): "Before writing a new goal, the orchestrator plays
+    // spec (tinker): "Before writing a new goal, tinker plays
     // back what the goal would be, calling out any decisions it would make on
     // its own that the user hasn't explicitly vetted. The user must react to
     // the playback before the file is written."
     #[test]
     fn test_spec_playback_required_before_write() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("Playback step (required before writing)"),
             "prompt must declare the playback step required before writing",
         );
         assert!(
             content.contains("decisions I'd take on my own"),
-            "playback must surface decisions the orchestrator would otherwise make on its own",
+            "playback must surface decisions tinker would otherwise make on its own",
         );
         assert!(
             content.contains("Wait for the user to react to this playback"),
@@ -1267,14 +1267,14 @@ mod tests {
         );
     }
 
-    // spec (orchestrator): the user's reaction to the playback is epistemically
+    // spec (tinker): the user's reaction to the playback is epistemically
     // irreplaceable — only the user holds the original intent, so only the user
     // can validate whether the articulated goal matches it. The interview is
     // generative, not extractive: intent crystallizes through dialogue. The
     // prompt must state this foundation explicitly, not just assert the behavior.
     #[test]
     fn test_spec_playback_reaction_is_epistemically_irreplaceable() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("epistemically required"),
             "prompt must frame the playback wait as epistemically required, not just a quality check",
@@ -1289,13 +1289,13 @@ mod tests {
         );
     }
 
-    // spec (orchestrator): "Any new goal or substantive edit is checked
-    // against the existing goal set; the orchestrator surfaces every
+    // spec (tinker): "Any new goal or substantive edit is checked
+    // against the existing goal set; tinker surfaces every
     // relationship it finds and waits for the user to resolve each one before
     // writing. No exemptions for 'small' or 'minor' edits."
     #[test]
     fn test_spec_cross_goal_alignment_no_exemptions_for_edits() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         // The "no exemptions" stance for edits must be encoded literally.
         assert!(
             content.contains("no exemptions for \"small\" or \"minor\" edits"),
@@ -1309,15 +1309,15 @@ mod tests {
         );
     }
 
-    // spec (orchestrator): "When the user asks the orchestrator to build
+    // spec (tinker): "When the user asks tinker to build
     // something directly, it redirects: production code happens via goals,
     // not in the conversation."
     #[test]
     fn test_spec_redirects_direct_build_requests_to_goals() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("If the user asks you to build something directly, redirect"),
-            "prompt must instruct the orchestrator to redirect direct build requests",
+            "prompt must instruct tinker to redirect direct build requests",
         );
         assert!(
             content.contains("building happens through goals"),
@@ -1325,14 +1325,14 @@ mod tests {
         );
     }
 
-    // spec (orchestrator): "The orchestrator must strictly separate
+    // spec (tinker): "Tinker must strictly separate
     // user-domain intent from LLM implementation choices. Pure user
     // requirements go in DECISIONS. When a previous implementation fails, it
     // is recorded as a negative constraint in HOW, not as a replacement
     // dictate."
     #[test]
     fn test_spec_decisions_vs_how_separation() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         // DECISIONS is scoped to user-domain requirements only.
         assert!(
             content.contains("Pure user-domain requirements only"),
@@ -1356,13 +1356,13 @@ mod tests {
         );
     }
 
-    // spec (orchestrator): "The orchestrator must preserve the goal hierarchy
+    // spec (tinker): "Tinker must preserve the goal hierarchy
     // when editing files. The prompt's 'Worked example' edit template must
     // use explicit `PRESERVE` placeholder comments instead of empty literal
     // arrays/strings for `parent_id` and `children`."
     #[test]
     fn test_spec_preserve_markers_in_edit_template() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         // The worked example must mark parent_id and children with PRESERVE,
         // not empty literals like `""` or `[]`.
         assert!(
@@ -1385,9 +1385,9 @@ mod tests {
         );
     }
 
-    // spec (orchestrator): "… `src/main.rs` must include `parent_id` and
+    // spec (tinker): "… `src/main.rs` must include `parent_id` and
     // `children` in the text it feeds into `goals_summary` so the
-    // orchestrator can actually see the structure." The goals_summary block
+    // tinker can actually see the structure." The goals_summary block
     // is inlined in an async task in main.rs, so we assert against the source
     // directly rather than refactoring production code to expose it.
     #[test]
@@ -1413,11 +1413,11 @@ mod tests {
 
     // spec (user-persona): "verify by observation before explaining" is a
     // general communication rule for this user — not scoped only to tinkering
-    // probe reports. The prompt must state this explicitly so the orchestrator
+    // probe reports. The prompt must state this explicitly so tinker
     // applies it to all behavioral claims, not just probe results.
     #[test]
     fn test_spec_user_persona_verify_before_explaining_is_general_rule() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("general communication rule for this user, not a tinkering-only rule"),
             "prompt must state verify-before-explaining as a general rule, not only in the tinkering section",
@@ -1429,7 +1429,7 @@ mod tests {
     // must state this as a general principle and name the wider scope.
     #[test]
     fn test_spec_user_persona_surface_tradeoffs_not_only_cross_goal() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("Surface trade-offs, not conclusions"),
             "prompt must state the surface-trade-offs-not-conclusions principle by name",
@@ -1446,7 +1446,7 @@ mod tests {
     // user-persona context alongside the other two persona rules.
     #[test]
     fn test_spec_user_persona_design_partner_posture_is_general_rule() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("not only tinkering reports or cross-goal alignment"),
             "prompt must introduce the three persona rules as general, not context-specific",
@@ -1457,14 +1457,14 @@ mod tests {
         );
     }
 
-    // spec (orchestrator): "When the orchestrator writes or edits a goal, it
+    // spec (tinker): "When tinker writes or edits a goal, it
     // must emit a `/run <goal-id> <reason>` command in its chat response to
     // trigger the goal session. It no longer appends a `change_log` array."
     // The bare /run syntax check is covered elsewhere; this test covers the
     // worked-example illustration and the explicit disavowal of change_log.
     #[test]
     fn test_spec_emits_run_command_no_change_log_field() {
-        let content = orchestrator_agent_content();
+        let content = tinker_agent_content();
         assert!(
             content.contains("Triggering goal sessions"),
             "prompt must have a section explaining how to trigger goal sessions",
@@ -1482,11 +1482,11 @@ mod tests {
     }
 
     // spec (goal-structure-standard): the TOML schema in the edit protocol must
-    // document the `related` field so the orchestrator knows the field exists and
+    // document the `related` field so tinker knows the field exists and
     // how to write it. Without this, new related-links never get written.
     #[test]
-    fn test_spec_orchestrator_prompt_related_field_in_toml_schema() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_related_field_in_toml_schema() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("related = [...]"),
             "prompt TOML schema must show the related field with a PRESERVE comment",
@@ -1498,11 +1498,11 @@ mod tests {
     }
 
     // spec (goal-structure-standard): the write protocol must instruct the
-    // orchestrator to re-check the parent goal's summary whenever a child is
+    // tinker to re-check the parent goal's summary whenever a child is
     // created or edited, and update the parent in the same write turn if needed.
     #[test]
-    fn test_spec_orchestrator_prompt_parent_summary_recheck_when_child_edited() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_parent_summary_recheck_when_child_edited() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("Re-check parent summary"),
             "prompt must include a 'Re-check parent summary' write-protocol step",
@@ -1517,8 +1517,8 @@ mod tests {
     // symmetry — for every entry in the edited file's `related` list, the linked
     // partner goal must also list back. Partner fix happens in the same write turn.
     #[test]
-    fn test_spec_orchestrator_prompt_related_links_symmetric_both_list_each_other() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_related_links_symmetric_both_list_each_other() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("Re-validate related-link symmetry"),
             "prompt must include a 'Re-validate related-link symmetry' step",
@@ -1531,11 +1531,11 @@ mod tests {
 
     // spec (goal-structure-standard): transitivity of related-links is NOT
     // automatic. `a↔b` and `b↔c` does NOT imply `a↔c`. The prompt must
-    // state this explicitly to prevent the orchestrator from silently adding
+    // state this explicitly to prevent tinker from silently adding
     // transitive links.
     #[test]
-    fn test_spec_orchestrator_prompt_related_transitivity_not_automatic() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_prompt_related_transitivity_not_automatic() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("transitivity is not") || content.contains("Transitivity is not"),
             "prompt must state that related-link transitivity is not automatic",
@@ -1546,12 +1546,12 @@ mod tests {
         );
     }
 
-    // spec (orchestrator): the orchestrator applies goal-craft's four content-
+    // spec (tinker): tinker applies goal-craft's four content-
     // quality tactics during goal creation, editing, and cross-goal alignment.
     // The prompt must name the tactic set and all four tactics by name.
     #[test]
-    fn test_spec_orchestrator_applies_goal_craft_four_tactics() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_applies_goal_craft_four_tactics() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("goal-craft"),
             "prompt must reference goal-craft explicitly",
@@ -1574,12 +1574,12 @@ mod tests {
         );
     }
 
-    // spec (orchestrator): goal-craft tactics apply at three specific invocation
+    // spec (tinker): goal-craft tactics apply at three specific invocation
     // sites — creation, editing, and cross-goal alignment. The prompt must name
-    // all three so the orchestrator knows when to scan for violations.
+    // all three so tinker knows when to scan for violations.
     #[test]
-    fn test_spec_orchestrator_goal_craft_applies_at_creation_editing_alignment() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_goal_craft_applies_at_creation_editing_alignment() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("goal creation") || content.contains("Goal creation"),
             "prompt must state goal-craft tactics apply during goal creation",
@@ -1594,12 +1594,12 @@ mod tests {
         );
     }
 
-    // spec (orchestrator): when the orchestrator spots a goal-craft violation it
+    // spec (tinker): when tinker spots a goal-craft violation it
     // surfaces the candidate to the user rather than auto-fixing. The prompt must
     // state this enforcement posture so violations are never silently patched.
     #[test]
-    fn test_spec_orchestrator_goal_craft_surface_not_auto_fix() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_goal_craft_surface_not_auto_fix() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("Surface candidates to the user")
                 || content.contains("surface it to the user"),
@@ -1612,12 +1612,12 @@ mod tests {
         );
     }
 
-    // spec (orchestrator): the anchor test for sparseness must describe the three
+    // spec (tinker): the anchor test for sparseness must describe the three
     // anchor categories — user intent/preference, external dependency, hard-won
-    // negative — so the orchestrator can apply the test during interviews.
+    // negative — so tinker can apply the test during interviews.
     #[test]
-    fn test_spec_orchestrator_anchor_test_names_three_categories() {
-        let content = orchestrator_agent_content();
+    fn test_spec_tinker_anchor_test_names_three_categories() {
+        let content = tinker_agent_content();
         assert!(
             content.contains("user intent or preference"),
             "prompt must name user intent/preference as an anchor category",

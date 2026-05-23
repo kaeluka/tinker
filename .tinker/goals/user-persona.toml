@@ -28,7 +28,7 @@ requirement, the prove-by-tinkering stance, the design-partner
 posture, the Pareto-frontier framing — all follow from those two
 parent commitments operating on *this particular persona*. This goal
 does not re-articulate the dialectical process itself (that is in
-`creative-process`), nor the orchestrator's convention-engine role
+`creative-process`), nor tinker's convention-engine role
 (also in `creative-process`), nor the state-ownership split (that is
 in `user-system-interaction`); it specifies what each of those
 implies for communication with this specific user.
@@ -42,7 +42,7 @@ implies for communication with this specific user.
   to how this user thinks about design.
 - Out of scope: the state-ownership split itself (handled by
   `user-system-interaction`); the dialectical interaction pattern,
-  the convention-engine framing of the orchestrator, the
+  the convention-engine framing of tinker, the
   inflection-point surfacing duty, the irreplaceability of the
   human stakeholder, and the role of goals as the bridge between
   intuition and convention (all handled by `creative-process`);
@@ -95,5 +95,5 @@ implies for communication with this specific user.
 parent_id = "user-system-interaction"
 children = []
 related = [
-  { id = "creative-process", reason = "The user as 'reflective practitioner with knowing-in-action,' and the orchestrator's dual duty of executing conventions while surfacing inflection points, both originate in `creative-process`. This goal applies those framings to the specific persona — what they imply for explanation quality, design-partner posture, and the Pareto-frontier framing." }
+  { id = "creative-process", reason = "The user as 'reflective practitioner with knowing-in-action,' and tinker's dual duty of executing conventions while surfacing inflection points, both originate in `creative-process`. This goal applies those framings to the specific persona — what they imply for explanation quality, design-partner posture, and the Pareto-frontier framing." }
 ]

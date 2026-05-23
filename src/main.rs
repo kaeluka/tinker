@@ -6,14 +6,15 @@ mod goal;
 mod goal_session;
 mod logger;
 mod opencode;
-mod orchestrator;
+mod rummage;
+mod tinker;
 mod realfs;
 mod tui;
 #[cfg(test)]
 mod test_utils;
 
 use anyhow::Result;
-use app::{App, Focus, LoopMode, Phase};
+use app::{ActiveAgent, App, Focus, LoopMode, Phase};
 use cap::{Filesystem, OpenCodeRunner};
 use realfs::RealFilesystem;
 use crossterm::{
@@ -26,9 +27,9 @@ use crossterm::{
 };
 use goal::{discover_tinker_dirs, load_all_goals};
 use goal_session::{run_goal, GoalEvent};
-use opencode::{RealOpenCodeRunner, GOAL_MODEL as OPENCODE_GOAL_MODEL, ORCHESTRATOR_MODEL as OPENCODE_ORCHESTRATOR_MODEL, SCHEDULER_MODEL as OPENCODE_SCHEDULER_MODEL};
-use claude::{ClaudeRunner, GOAL_MODEL as CLAUDE_GOAL_MODEL, ORCHESTRATOR_MODEL as CLAUDE_ORCHESTRATOR_MODEL, SCHEDULER_MODEL as CLAUDE_SCHEDULER_MODEL};
-use orchestrator::{orchestrator_agent_content, orchestrator_init_prompt, send_message, OrchestratorEvent};
+use opencode::{RealOpenCodeRunner, GOAL_MODEL as OPENCODE_GOAL_MODEL, TINKER_MODEL as OPENCODE_TINKER_MODEL, SCHEDULER_MODEL as OPENCODE_SCHEDULER_MODEL};
+use claude::{ClaudeRunner, GOAL_MODEL as CLAUDE_GOAL_MODEL, TINKER_MODEL as CLAUDE_TINKER_MODEL, SCHEDULER_MODEL as CLAUDE_SCHEDULER_MODEL};
+use tinker::{tinker_agent_content, tinker_init_prompt, send_message, TinkerEvent};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{io, path::PathBuf, sync::{Arc, Mutex}, time::Duration};
 use tokio::sync::mpsc;
@@ -42,30 +43,33 @@ async fn main() -> Result<()> {
     let use_default_model = std::env::args().any(|a| a == "--default-model");
     let use_claude = std::env::args().any(|a| a == "--claude");
 
-    // Three runner instances bound to different models — orchestrator for
+    // Three runner instances bound to different models — tinker for
     // interview + batch summary (smartest), goal sessions for code production,
     // cleanup for the pre-session tinker-test-case hook (cheapest).
     // With --default-model, all runners omit -m and let opencode pick its default.
     // With --claude, use ClaudeRunner with opus/sonnet/haiku tiers.
-    let (oc_orchestrator, oc_goal, oc_cleanup_runner): (Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>) = if use_claude {
-        // Claude backend: pass orchestrator persona via --system-prompt instead of agent file
-        let orchestrator_prompt = orchestrator_agent_content();
+    let (oc_tinker, oc_goal, oc_cleanup_runner, oc_rummage): (Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>) = if use_claude {
+        // Claude backend: pass tinker persona via --system-prompt instead of agent file
+        let tinker_prompt = tinker_agent_content();
         (
-            Arc::new(ClaudeRunner::with_system_prompt(CLAUDE_ORCHESTRATOR_MODEL, orchestrator_prompt)),
+            Arc::new(ClaudeRunner::with_system_prompt(CLAUDE_TINKER_MODEL, tinker_prompt)),
             Arc::new(ClaudeRunner::new(CLAUDE_GOAL_MODEL)),
             Arc::new(ClaudeRunner::new(CLAUDE_SCHEDULER_MODEL)),
+            Arc::new(ClaudeRunner::with_system_prompt(CLAUDE_SCHEDULER_MODEL, rummage::rummage_system_prompt())),
         )
     } else if use_default_model {
         (
-            Arc::new(RealOpenCodeRunner::default_with_agent("tinker-orchestrator")),
+            Arc::new(RealOpenCodeRunner::default_with_agent("tinker")),
             Arc::new(RealOpenCodeRunner::new_default()),
             Arc::new(RealOpenCodeRunner::new_default()),
+            Arc::new(RealOpenCodeRunner::default_with_agent("rummage")),
         )
     } else {
         (
-            Arc::new(RealOpenCodeRunner::with_agent(OPENCODE_ORCHESTRATOR_MODEL, "tinker-orchestrator")),
+            Arc::new(RealOpenCodeRunner::with_agent(OPENCODE_TINKER_MODEL, "tinker")),
             Arc::new(RealOpenCodeRunner::new(OPENCODE_GOAL_MODEL)),
             Arc::new(RealOpenCodeRunner::new(OPENCODE_SCHEDULER_MODEL)),
+            Arc::new(RealOpenCodeRunner::with_agent(OPENCODE_SCHEDULER_MODEL, "rummage")),
         )
     };
 
@@ -82,8 +86,8 @@ async fn main() -> Result<()> {
         primary_tinker_dir.join("state").join("runtime.json"),
     );
 
-    // Silently write the tinker-orchestrator agent file on every startup.
-    // This keeps the installed file in sync with orchestrator_agent_content()
+    // Silently write the tinker agent file on every startup.
+    // This keeps the installed file in sync with tinker_agent_content()
     // as the persona evolves, rather than leaving a stale copy from a previous
     // run. Skip when using Claude backend — the persona is passed via
     // --system-prompt instead of an agent file.
@@ -92,9 +96,9 @@ async fn main() -> Result<()> {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("~"));
         let agent_dir = home.join(".config/opencode/agents");
-        let agent_path = agent_dir.join("tinker-orchestrator.md");
         let _ = fs.mkdir_all(&agent_dir);
-        let _ = fs.write(&agent_path, &orchestrator_agent_content());
+        let _ = fs.write(&agent_dir.join("tinker.md"), &tinker_agent_content());
+        let _ = fs.write(&agent_dir.join("rummage.md"), &rummage::rummage_agent_content());
     }
 
     // Discover all .tinker dirs from cwd up. Nearest first.
@@ -107,9 +111,9 @@ async fn main() -> Result<()> {
         let mut a = app.lock().unwrap();
         a.goals = load.goals;
         a.tinker_dirs = tinker_dirs.clone();
-        a.orchestrator_tasks += 1;
-        a.push_system_message("Starting orchestrator…");
-        log.emit("harness", logger::LogEvent::OrchestratorSystemMessageReceived { content: "Starting orchestrator…".to_string() });
+        a.tinker_tasks += 1;
+        a.push_system_message("Starting tinker…");
+        log.emit("harness", logger::LogEvent::TinkerSystemMessageReceived { content: "Starting tinker…".to_string() });
         a.update_parse_errors(load.errors);
         if tinker_dirs.len() > 1 {
             let merged_msg = format!(
@@ -118,21 +122,23 @@ async fn main() -> Result<()> {
                 tinker_dirs.len() - 1,
             );
             a.push_system_message(&merged_msg);
-            log.emit("harness", logger::LogEvent::OrchestratorSystemMessageReceived { content: merged_msg });
+            log.emit("harness", logger::LogEvent::TinkerSystemMessageReceived { content: merged_msg });
         }
     }
 
-    let (orch_tx, mut orch_rx) = mpsc::channel::<OrchestratorEvent>(64);
+    let (orch_tx, mut orch_rx) = mpsc::channel::<TinkerEvent>(64);
     let (msg_tx, mut msg_rx) = mpsc::channel::<String>(16);
     let (goal_tx, mut goal_rx) = mpsc::channel::<GoalEvent>(128);
     let (run_tx, mut run_rx) = mpsc::channel::<(goal::Goal, Option<String>)>(4);
+    let (rummage_orch_tx, mut rummage_orch_rx) = mpsc::channel::<TinkerEvent>(64);
+    let (rummage_msg_tx, mut rummage_msg_rx) = mpsc::channel::<String>(16);
 
-    // Orchestrator task — forwards messages to opencode and streams events back
+    // Tinker task — forwards messages to opencode and streams events back
     {
         let app_ref = app.clone();
         let work_dir = work_dir.clone();
         let orch_tx = orch_tx.clone();
-        let oc = oc_orchestrator.clone();
+        let oc = oc_tinker.clone();
         let log_orch = log.clone();
         let backend_name_orch = backend_name.to_string();
         tokio::spawn(async move {
@@ -175,25 +181,25 @@ async fn main() -> Result<()> {
             };
 
             // Log the session start — goal-list hash lets us detect persona/goal drift.
-            log_orch.emit("orchestrator", logger::LogEvent::OrchestratorSessionStarted {
-                system_prompt_chars: orchestrator_agent_content().len(),
+            log_orch.emit("tinker", logger::LogEvent::TinkerSessionStarted {
+                system_prompt_chars: tinker_agent_content().len(),
                 goal_list_hash: logger::hash_string(&goals_summary),
                 backend: backend_name_orch.clone(),
             });
 
-            let init = orchestrator_init_prompt(&goals_summary);
-            log_orch.emit("orchestrator", logger::LogEvent::OrchestratorTurnStart);
-            log_orch.emit("orchestrator", logger::LogEvent::OrchestratorUserMessageReceived { text: init.clone() });
+            let init = tinker_init_prompt(&goals_summary);
+            log_orch.emit("tinker", logger::LogEvent::TinkerTurnStart);
+            log_orch.emit("tinker", logger::LogEvent::TinkerUserMessageReceived { text: init.clone() });
             let t0 = std::time::Instant::now();
             let full_reply = send_message(oc.clone(), &init, None, &work_dir, orch_tx.clone())
                 .await
                 .unwrap_or_default();
-            log_orch.emit("orchestrator", logger::LogEvent::OrchestratorTurnEnd {
+            log_orch.emit("tinker", logger::LogEvent::TinkerTurnEnd {
                 duration_ms: t0.elapsed().as_millis() as u64,
                 usage: logger::parse_usage_from_text(&full_reply),
                 backend: backend_name_orch.clone(),
             });
-            log_orch.emit("orchestrator", logger::LogEvent::OrchestratorReplyEmitted { text: full_reply.clone() });
+            log_orch.emit("tinker", logger::LogEvent::TinkerReplyEmitted { text: full_reply.clone() });
             // Emit run commands found in the reply
             for line in full_reply.lines() {
                 if let Some(rest) = line.trim().strip_prefix("/run ") {
@@ -203,14 +209,14 @@ async fn main() -> Result<()> {
                     } else {
                         (rest.to_string(), String::new())
                     };
-                    log_orch.emit("orchestrator", logger::LogEvent::RunCommandEmitted { goal_id: gid, reason });
+                    log_orch.emit("tinker", logger::LogEvent::RunCommandEmitted { goal_id: gid, reason });
                 }
             }
 
             while let Some(msg) = msg_rx.recv().await {
-                let sid = app_ref.lock().unwrap().orchestrator_session_id.clone();
-                log_orch.emit("orchestrator", logger::LogEvent::OrchestratorTurnStart);
-                log_orch.emit("orchestrator", logger::LogEvent::OrchestratorUserMessageReceived { text: msg.clone() });
+                let sid = app_ref.lock().unwrap().tinker_session_id.clone();
+                log_orch.emit("tinker", logger::LogEvent::TinkerTurnStart);
+                log_orch.emit("tinker", logger::LogEvent::TinkerUserMessageReceived { text: msg.clone() });
                 let t0 = std::time::Instant::now();
                 let full_reply = send_message(
                     oc.clone(),
@@ -221,12 +227,12 @@ async fn main() -> Result<()> {
                 )
                 .await
                 .unwrap_or_default();
-                log_orch.emit("orchestrator", logger::LogEvent::OrchestratorTurnEnd {
+                log_orch.emit("tinker", logger::LogEvent::TinkerTurnEnd {
                     duration_ms: t0.elapsed().as_millis() as u64,
                     usage: logger::parse_usage_from_text(&full_reply),
                     backend: backend_name_orch.clone(),
                 });
-                log_orch.emit("orchestrator", logger::LogEvent::OrchestratorReplyEmitted { text: full_reply.clone() });
+                log_orch.emit("tinker", logger::LogEvent::TinkerReplyEmitted { text: full_reply.clone() });
                 for line in full_reply.lines() {
                     if let Some(rest) = line.trim().strip_prefix("/run ") {
                         let rest = rest.trim();
@@ -235,7 +241,7 @@ async fn main() -> Result<()> {
                         } else {
                             (rest.to_string(), String::new())
                         };
-                        log_orch.emit("orchestrator", logger::LogEvent::RunCommandEmitted { goal_id: gid, reason });
+                        log_orch.emit("tinker", logger::LogEvent::RunCommandEmitted { goal_id: gid, reason });
                     }
                 }
             }
@@ -244,7 +250,7 @@ async fn main() -> Result<()> {
 
     // Goal runner task — one goal at a time. Updates go back to each goal's source file.
     // Before each goal session, runs the tinker-test-case cleanup hook (see
-    // `src/cleanup.rs` and `## Tinkering` in the orchestrator prompt).
+    // `src/cleanup.rs` and `## Tinkering` in the tinker prompt).
     // Per `goal-sessions` decision: every dispatch is a fresh session — no
     // in-process resumption across triggers.
     {
@@ -393,11 +399,11 @@ async fn main() -> Result<()> {
                     prev_goal_hash = new_hash;
 
                     let mut a = app_ref.lock().unwrap();
-                    // While the orchestrator is mid-turn, leave goals alone.
+                    // While tinker is mid-turn, leave goals alone.
                     // Otherwise the watcher can pre-populate a freshly-written
                     // goal before `handle_orch_event::Done` gets to snapshot,
                     // which silently kills the new-goal auto-fire.
-                    if a.orchestrator_tasks > 0 {
+                    if a.tinker_tasks > 0 {
                         continue;
                     }
                     a.goals = load.goals;
@@ -406,6 +412,22 @@ async fn main() -> Result<()> {
                         a.selected_goal = 0;
                     }
                 }
+            }
+        });
+    }
+
+    // Rummage task — sits idle until the user switches to rummage and sends a
+    // message. No init prompt; the first user message opens the session.
+    // Uses the cheapest model tier (haiku / scheduler model).
+    {
+        let app_ref = app.clone();
+        let work_dir = work_dir.clone();
+        let oc = oc_rummage.clone();
+        let tx = rummage_orch_tx.clone();
+        tokio::spawn(async move {
+            while let Some(msg) = rummage_msg_rx.recv().await {
+                let sid = app_ref.lock().unwrap().rummage_session_id.clone();
+                let _ = tinker::send_message(oc.clone(), &msg, sid.as_deref(), &work_dir, tx.clone()).await;
             }
         });
     }
@@ -426,6 +448,8 @@ async fn main() -> Result<()> {
         fs.clone(),
         work_dir.clone(),
         log,
+        &mut rummage_orch_rx,
+        rummage_msg_tx,
     )
     .await;
 
@@ -438,19 +462,21 @@ async fn main() -> Result<()> {
 async fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: Arc<Mutex<App>>,
-    orch_rx: &mut mpsc::Receiver<OrchestratorEvent>,
+    orch_rx: &mut mpsc::Receiver<TinkerEvent>,
     goal_rx: &mut mpsc::Receiver<GoalEvent>,
     msg_tx: mpsc::Sender<String>,
     run_tx: mpsc::Sender<(goal::Goal, Option<String>)>,
     fs: Arc<dyn Filesystem>,
     _work_dir: std::path::PathBuf,
     log: logger::LogSender,
+    rummage_orch_rx: &mut mpsc::Receiver<TinkerEvent>,
+    rummage_msg_tx: mpsc::Sender<String>,
 ) -> Result<()> {
     loop {
         // Draw
         terminal.draw(|f| tui::draw(f, &mut app.lock().unwrap()))?;
 
-        // Drain orchestrator events — capture queue state before for change detection
+        // Drain tinker events — capture queue state before for change detection
         {
             let (q_before, active_before) = {
                 let a = app.lock().unwrap();
@@ -490,6 +516,11 @@ async fn run_loop(
                     running_goal_id: active_after,
                 });
             }
+        }
+
+        // Drain rummage events
+        while let Ok(ev) = rummage_orch_rx.try_recv() {
+            handle_rummage_event(&mut app.lock().unwrap(), ev);
         }
 
         // Terminal events (50ms poll)
@@ -578,8 +609,11 @@ async fn run_loop(
             }
             match action {
                 KeyAction::Quit => break,
-                KeyAction::SendToOrchestrator(msg) => {
+                KeyAction::SendToTinker(msg) => {
                     let _ = msg_tx.send(msg).await;
+                }
+                KeyAction::SendToRummage(msg) => {
+                    let _ = rummage_msg_tx.send(msg).await;
                 }
                 KeyAction::RunGoal(id, reason) => {
                     let goal = {
@@ -590,7 +624,7 @@ async fn run_loop(
                         let mut a = app.lock().unwrap();
                         if matches!(a.phase, Phase::RunningGoal(_)) {
                             // Spec (goal-sessions): "when a user-typed /run lands behind a
-                            // pending orchestrator /run, each invocation is preserved as a
+                            // pending tinker /run, each invocation is preserved as a
                             // separate queue entry with its own reason."
                             a.goal_queue.push_back((goal.clone(), reason.clone()));
                             a.batch_had_goals = true;
@@ -600,7 +634,7 @@ async fn run_loop(
                                 reason.as_ref().map(|r| format!(": {}", r)).unwrap_or_default(),
                             );
                             a.push_system_message(&queued_msg);
-                            log.emit("dispatcher", logger::LogEvent::OrchestratorSystemMessageReceived { content: queued_msg });
+                            log.emit("dispatcher", logger::LogEvent::TinkerSystemMessageReceived { content: queued_msg });
                         } else {
                             start_or_confirm_goal(&mut a, goal, reason, &run_tx, &log);
                         }
@@ -649,7 +683,7 @@ async fn run_loop(
     Ok(())
 }
 
-/// Parse `/run <goal-id> <reason>` lines from an orchestrator reply.
+/// Parse `/run <goal-id> <reason>` lines from a tinker reply.
 /// Each matching line yields `(goal_id, reason)` where reason may be empty.
 /// Non-matching lines (prose, other slash commands) are silently skipped.
 fn parse_run_commands(text: &str) -> Vec<(String, String)> {
@@ -668,34 +702,51 @@ fn parse_run_commands(text: &str) -> Vec<(String, String)> {
     out
 }
 
+fn handle_rummage_event(app: &mut App, ev: TinkerEvent) {
+    match ev {
+        TinkerEvent::SessionId(id) => {
+            if app.rummage_session_id.is_none() {
+                app.rummage_session_id = Some(id);
+            }
+        }
+        TinkerEvent::Text(chunk) => {
+            app.append_rummage_chunk(&chunk);
+        }
+        TinkerEvent::Done => {
+            app.rummage_tasks = app.rummage_tasks.saturating_sub(1);
+            app.finalize_rummage_message();
+        }
+    }
+}
+
 fn handle_orch_event(
     app: &mut App,
-    ev: OrchestratorEvent,
+    ev: TinkerEvent,
     msg_tx: &mpsc::Sender<String>,
     run_tx: &mpsc::Sender<(goal::Goal, Option<String>)>,
     fs: &dyn Filesystem,
     log: &logger::LogSender,
 ) {
     match ev {
-        OrchestratorEvent::SessionId(id) => {
-            if app.orchestrator_session_id.is_none() {
-                app.orchestrator_session_id = Some(id);
+        TinkerEvent::SessionId(id) => {
+            if app.tinker_session_id.is_none() {
+                app.tinker_session_id = Some(id);
             }
         }
-        OrchestratorEvent::Text(chunk) => {
+        TinkerEvent::Text(chunk) => {
             app.append_assistant_chunk(&chunk);
         }
-        OrchestratorEvent::Done => {
-            app.orchestrator_tasks = app.orchestrator_tasks.saturating_sub(1);
+        TinkerEvent::Done => {
+            app.tinker_tasks = app.tinker_tasks.saturating_sub(1);
             // Snapshot prior state so we can detect what changed.
             let prev_errors = app.parse_errors.clone();
-            // Reload goals — the orchestrator may have just created/edited a TOML file.
+            // Reload goals — tinker may have just created/edited a TOML file.
             // Without this, scheduling races the 2s watcher and won't see the new goal.
             if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
                 app.goals = load.goals;
                 app.update_parse_errors(load.errors);
             }
-            // Detect new errors introduced by this orchestrator edit.
+            // Detect new errors introduced by this tinker edit.
             let new_errors: Vec<(std::path::PathBuf, String)> = app
                 .parse_errors
                 .iter()
@@ -727,26 +778,26 @@ fn handle_orch_event(
                     );
                     app.correction_attempts += 1;
                     let correction_msg = format!(
-                        "Goal file invalid; asking orchestrator to fix (attempt {}/2).",
+                        "Goal file invalid; asking tinker to fix (attempt {}/2).",
                         app.correction_attempts
                     );
                     app.push_system_message(&correction_msg);
-                    log.emit("correction-injector", logger::LogEvent::OrchestratorSystemMessageReceived { content: correction_msg });
+                    log.emit("correction-injector", logger::LogEvent::TinkerSystemMessageReceived { content: correction_msg });
                     if msg_tx.try_send(msg).is_ok() {
-                        app.orchestrator_tasks += 1;
+                        app.tinker_tasks += 1;
                     };
                     return;
                 } else {
                     let still_invalid_msg = "Goal file still invalid after 2 attempts; leaving as-is. Edit manually if needed.";
                     app.push_system_message(still_invalid_msg);
-                    log.emit("correction-injector", logger::LogEvent::OrchestratorSystemMessageReceived { content: still_invalid_msg.to_string() });
+                    log.emit("correction-injector", logger::LogEvent::TinkerSystemMessageReceived { content: still_invalid_msg.to_string() });
                     app.correction_attempts = 0;
                 }
             } else {
                 app.correction_attempts = 0;
             }
             
-            // Parse /run commands from the orchestrator's just-streamed reply.
+            // Parse /run commands from tinker's just-streamed reply.
             // The text is still in `current_assistant_text` at this point —
             // `finalize_assistant_message` only runs below after we've
             // collected triggers. Scanning `app.messages` here would look at
@@ -797,7 +848,7 @@ fn handle_orch_event(
                         app.goal_queue.push_back(entry);
                     }
                     app.push_system_message(&msg);
-                    log.emit("dispatcher", logger::LogEvent::OrchestratorSystemMessageReceived { content: msg });
+                    log.emit("dispatcher", logger::LogEvent::TinkerSystemMessageReceived { content: msg });
                     return;
                 }
 
@@ -830,18 +881,18 @@ fn handle_orch_event(
                     buf
                 };
                 app.push_system_message(&summary);
-                log.emit("dispatcher", logger::LogEvent::OrchestratorSystemMessageReceived { content: summary });
+                log.emit("dispatcher", logger::LogEvent::TinkerSystemMessageReceived { content: summary });
 
                 start_or_confirm_goal(app, first_goal, first_reason_opt, run_tx, log);
                 return;
             }
 
-            if app.orchestrator_tasks == 0 {
+            if app.tinker_tasks == 0 {
                 match app.phase.clone() {
                     Phase::Initializing => {
                         app.finalize_assistant_message();
-                        app.push_system_message("Orchestrator ready. Ask me to add a goal.");
-                        log.emit("harness", logger::LogEvent::OrchestratorSystemMessageReceived { content: "Orchestrator ready. Ask me to add a goal.".to_string() });
+                        app.push_system_message("Tinker ready. Ask me to add a goal.");
+                        log.emit("harness", logger::LogEvent::TinkerSystemMessageReceived { content: "Tinker ready. Ask me to add a goal.".to_string() });
                         app.phase = Phase::Idle;
                     }
                     Phase::SummarizingBatch => {
@@ -890,7 +941,7 @@ fn handle_goal_event(
                 )
             };
             app.push_system_message(&msg);
-            log.emit("cleanup", logger::LogEvent::OrchestratorSystemMessageReceived { content: msg });
+            log.emit("cleanup", logger::LogEvent::TinkerSystemMessageReceived { content: msg });
             // Roll back the phase set in start_or_confirm_goal so the UI
             // doesn't show this goal as running.
             if app.active_goal_id.as_deref() == Some(&goal_id) {
@@ -907,7 +958,7 @@ fn handle_goal_event(
             // Record the summary for the eventual batch summary.
             app.batch_summaries.push((goal_id.clone(), summary.clone()));
             // If more goals are queued, run the next one. Otherwise the batch
-            // is drained — ask the orchestrator to summarize and reactively schedule.
+            // is drained — ask tinker to summarize and reactively schedule.
             if let Some((next_goal, next_reason)) = app.goal_queue.pop_front() {
                 start_or_confirm_goal(app, next_goal, next_reason, run_tx, log);
             } else if app.batch_had_goals {
@@ -916,7 +967,7 @@ fn handle_goal_event(
                 app.batch_summaries.clear();
                 app.phase = Phase::SummarizingBatch;
                 if msg_tx.try_send(summary_msg).is_ok() {
-                    app.orchestrator_tasks += 1;
+                    app.tinker_tasks += 1;
                 }
             } else if app.phase != Phase::Initializing {
                 app.phase = Phase::Idle;
@@ -954,11 +1005,11 @@ fn start_or_confirm_goal(app: &mut App, goal: goal::Goal, reason: Option<String>
     app.active_goal_reason = reason.clone();
     app.batch_had_goals = true;
 
-    // Suppress duplicate if the orchestrator's /run summary already announced this goal.
+    // Suppress duplicate if tinker's /run summary already announced this goal.
     if !app.messages.iter().any(|m| m.text.contains("triggered: `") && m.text.contains(&goal.id)) {
         let msg = format!("triggered: `{}`{}", goal.id, reason.as_ref().map(|r| format!(": {}", r)).unwrap_or_default());
         app.push_system_message(&msg);
-        log.emit("dispatcher", logger::LogEvent::OrchestratorSystemMessageReceived { content: msg });
+        log.emit("dispatcher", logger::LogEvent::TinkerSystemMessageReceived { content: msg });
     }
 
     let _ = run_tx.try_send((goal, reason));
@@ -968,10 +1019,11 @@ fn start_or_confirm_goal(app: &mut App, goal: goal::Goal, reason: Option<String>
 enum KeyAction {
     None,
     Quit,
-    SendToOrchestrator(String),
+    SendToTinker(String),
+    SendToRummage(String),
     ApproveNextGoal,
     /// Run a specific goal immediately, bypassing the scheduler. The optional
-    /// reason mirrors the orchestrator's `/run <id> <reason>` syntax and the
+    /// reason mirrors tinker's `/run <id> <reason>` syntax and the
     /// modal's reason-prompt submit.
     RunGoal(String, Option<String>),
 }
@@ -1088,21 +1140,21 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                 if input == "/help" {
                     let help_msg = "Commands: /run <goal-id>, /pause, /resume, /skip, /quit, /help. Tab = goal tree.";
                     app.push_system_message(help_msg);
-                    log.emit("repl", logger::LogEvent::OrchestratorSystemMessageReceived { content: help_msg.to_string() });
+                    log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: help_msg.to_string() });
                     app.input.clear();
                     return KeyAction::None;
                 }
                 if input == "/pause" {
                     app.loop_mode = LoopMode::Manual;
                     app.push_system_message("Manual mode: press Enter to approve each goal run.");
-                    log.emit("repl", logger::LogEvent::OrchestratorSystemMessageReceived { content: "Manual mode: press Enter to approve each goal run.".to_string() });
+                    log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: "Manual mode: press Enter to approve each goal run.".to_string() });
                     app.input.clear();
                     return KeyAction::None;
                 }
                 if input == "/resume" {
                     app.loop_mode = LoopMode::Auto;
                     app.push_system_message("Auto mode: goals run automatically.");
-                    log.emit("repl", logger::LogEvent::OrchestratorSystemMessageReceived { content: "Auto mode: goals run automatically.".to_string() });
+                    log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: "Auto mode: goals run automatically.".to_string() });
                     app.input.clear();
                     return KeyAction::None;
                 }
@@ -1119,7 +1171,7 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                             });
                         } else {
                             app.push_system_message("No goal selected. Tab to the tree and pick one.");
-                            log.emit("repl", logger::LogEvent::OrchestratorSystemMessageReceived { content: "No goal selected. Tab to the tree and pick one.".to_string() });
+                            log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: "No goal selected. Tab to the tree and pick one.".to_string() });
                         }
                         return KeyAction::None;
                     }
@@ -1134,7 +1186,7 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                     }
                     let no_goal_msg = format!("No goal with id `{}`.", id);
                     app.push_system_message(&no_goal_msg);
-                    log.emit("repl", logger::LogEvent::OrchestratorSystemMessageReceived { content: no_goal_msg });
+                    log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: no_goal_msg });
                     return KeyAction::None;
                 }
                 if input == "/skip" {
@@ -1148,28 +1200,60 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                             let next_id = next_goal.id.clone();
                             let skip_msg = format!("Skipped. Next: `{}`.", next_id);
                             app.push_system_message(&skip_msg);
-                            log.emit("repl", logger::LogEvent::OrchestratorSystemMessageReceived { content: skip_msg });
+                            log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: skip_msg });
                             app.phase = Phase::AwaitingConfirm(next_id);
                         } else {
                             app.phase = Phase::Idle;
                             app.push_system_message("Skipped. Waiting for input.");
-                            log.emit("repl", logger::LogEvent::OrchestratorSystemMessageReceived { content: "Skipped. Waiting for input.".to_string() });
+                            log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: "Skipped. Waiting for input.".to_string() });
                         }
                     }
                     app.input.clear();
                     return KeyAction::None;
                 }
 
-                if app.orchestrator_tasks > 0 {
+                // Agent-switching slash commands (rummage goal).
+                if input == "/rummage" {
+                    app.active_agent = ActiveAgent::Rummage;
+                    let msg = "switched to rummage — type to chat, /tinker to switch back";
+                    app.push_system_message(msg);
+                    log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: msg.to_string() });
+                    app.input.clear();
+                    return KeyAction::None;
+                }
+                if input == "/tinker" {
+                    app.active_agent = ActiveAgent::Tinker;
+                    let msg = "switched to tinker — type to chat, /rummage to switch back";
+                    app.push_system_message(msg);
+                    log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: msg.to_string() });
+                    app.input.clear();
+                    return KeyAction::None;
+                }
+
+                // Lock input while the active agent is busy.
+                let active_busy = match app.active_agent {
+                    ActiveAgent::Tinker => app.tinker_tasks > 0,
+                    ActiveAgent::Rummage => app.rummage_tasks > 0,
+                };
+                if active_busy {
                     return KeyAction::None;
                 }
 
                 app.push_user_message(&input);
                 app.input.clear();
-                app.orchestrator_tasks += 1;
                 app.user_has_interacted = true;
-                app.correction_attempts = 0;
-                KeyAction::SendToOrchestrator(input)
+
+                match app.active_agent {
+                    ActiveAgent::Tinker => {
+                        app.tinker_tasks += 1;
+                        app.correction_attempts = 0;
+                        KeyAction::SendToTinker(input)
+                    }
+                    ActiveAgent::Rummage => {
+                        app.rummage_tasks += 1;
+                        KeyAction::SendToRummage(input)
+                    }
+                }
             }
             (_, KeyCode::Backspace) => {
                 app.input.pop();
@@ -1224,7 +1308,7 @@ mod tests {
     // spec: goal-sessions decision — "After a batch drains, [per-goal]
     // summaries are folded into a single user-facing message." The
     // fold prompt must reference each goal's summary content and instruct
-    // the orchestrator to produce a unified, try-it-now message.
+    // tinker to produce a unified, try-it-now message.
     #[test]
     fn test_spec_build_batch_summary_request_folds_per_goal_summaries() {
         let summaries = vec![
@@ -1237,14 +1321,14 @@ mod tests {
         assert!(prompt.contains("added add() and tests"));
         assert!(prompt.contains("docs"));
         assert!(prompt.contains("wrote README"));
-        // Must instruct the orchestrator to compose a single user-facing
+        // Must instruct tinker to compose a single user-facing
         // message with the "try it" / next-step invitation.
         assert!(prompt.to_lowercase().contains("try it"));
     }
 
-    // spec (orchestrator-triggers): the batch summary request must instruct
-    // the orchestrator to emit /run lines for downstream reactive goals,
-    // with them appearing after the prose — machine side of orchestrator-
+    // spec (tinker-triggers): the batch summary request must instruct
+    // tinker to emit /run lines for downstream reactive goals,
+    // with them appearing after the prose — machine side of tinker-
     // owned scheduling.
     #[test]
     fn test_spec_batch_summary_request_instructs_reactive_run_lines() {
@@ -1252,7 +1336,7 @@ mod tests {
         let prompt = build_batch_summary_request(&summaries);
         assert!(
             prompt.contains("/run"),
-            "batch summary request must instruct the orchestrator to emit /run lines",
+            "batch summary request must instruct tinker to emit /run lines",
         );
         assert!(
             prompt.to_lowercase().contains("after") && prompt.contains("prose"),
@@ -1388,7 +1472,7 @@ mod tests {
         );
     }
 
-    // spec (tui, orchestrator-triggers): system messages emitted when /run
+    // spec (tui, tinker-triggers): system messages emitted when /run
     // lines are parsed must use "triggered:" format, not the retired
     // "Scheduler:" naming from the old scheduler component. The message is
     // a Role::System entry (rendered grey in the TUI) and must contain both
@@ -1416,7 +1500,7 @@ mod tests {
         assert!(summary.contains(reason), "reason must appear in message");
     }
 
-    // spec: orchestrator-triggers — covers all four DECISIONS for the
+    // spec: tinker-triggers — covers all four DECISIONS for the
     // `/run <goal-id> <reason>` trigger syntax. Calls the production
     // `parse_run_commands` function directly (extracted from the inline
     // parser that previously lived in `handle_orch_event::Done`).
@@ -1438,7 +1522,7 @@ mod tests {
         assert!(app.messages.is_empty());
         assert!(app.current_assistant_text.is_empty());
 
-        // (Decisions 1, 3, 4) Build a realistic orchestrator turn:
+        // (Decisions 1, 3, 4) Build a realistic tinker turn:
         //   - prose preamble (must not yield a trigger)
         //   - three `/run` lines with reasons (must each yield a trigger)
         //   - prose interleaved (must not yield a trigger)
@@ -1512,7 +1596,7 @@ mod tests {
     // the input prompt ...), the reason is collected from the user. This
     // reason must be passed explicitly into the agent's prompt/context."
     // Covers the REPL-input parse path, which is distinct from the
-    // orchestrator-driven `parse_run_commands` path used for created /
+    // tinker-driven `parse_run_commands` path used for created /
     // edited / reactive goals.
     #[test]
     fn test_spec_repl_manual_run_with_reason_dispatches_correctly() {
@@ -1577,14 +1661,6 @@ mod tests {
         let (run_tx, mut run_rx) = mpsc::channel::<(goal::Goal, Option<String>)>(4);
         let (msg_tx, _msg_rx) = mpsc::channel::<String>(4);
 
-        let first = goal::Goal {
-            id: "first".into(),
-            description: "first goal".into(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            source_path: None,
-        };
         let second = goal::Goal {
             id: "second".into(),
             description: "second goal".into(),
@@ -1711,12 +1787,12 @@ mod tests {
         assert!(matches!(&app.phase, Phase::RunningGoal(id) if id == "alpha"));
     }
 
-    // spec (goal-sessions): "When the orchestrator emits several /run lines for one goal
+    // spec (goal-sessions): "When tinker emits several /run lines for one goal
     // across turns… each invocation is preserved as a separate queue entry." When a session
-    // is already running and the orchestrator emits a new /run, the new invocation must go
+    // is already running and tinker emits a new /run, the new invocation must go
     // into app.goal_queue — not be dispatched directly to run_tx.
     #[test]
-    fn test_spec_orchestrator_run_while_running_goes_to_queue_not_run_tx() {
+    fn test_spec_tinker_run_while_running_goes_to_queue_not_run_tx() {
         use crate::test_utils::MockFs;
         use std::path::PathBuf;
 
@@ -1740,7 +1816,7 @@ mod tests {
 
         handle_orch_event(
             &mut app,
-            OrchestratorEvent::Done,
+            TinkerEvent::Done,
             &msg_tx,
             &run_tx,
             &mock_fs,
@@ -1855,8 +1931,8 @@ mod tests {
             "goal_text_scroll must not move when cursor is in log pane");
     }
 
-    // spec (goal-structure-standard): the goals_summary injected into the
-    // orchestrator's context must surface related-link data so cross-goal
+    // spec (goal-structure-standard): the goals_summary injected into
+    // tinker's context must surface related-link data so cross-goal
     // alignment can act on it. Verified via source inspection — the summary
     // is built in an async task, so we assert on the source text directly.
     #[test]
@@ -1872,7 +1948,93 @@ mod tests {
         );
     }
 
-    // spec (orchestrator-introspection): ".tinker/logs/" directory is pre-created
+    // spec (rummage): "Agent switching is via explicit slash commands only —
+    // `/rummage` to switch to rummage, `/tinker` to switch back."
+    // `/rummage` must set active_agent to Rummage and emit a system message;
+    // the input buffer must be cleared so the command doesn't appear as chat.
+    #[test]
+    fn test_spec_slash_rummage_switches_active_agent() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use crate::app::Role;
+        let mut app = App::new();
+        assert_eq!(app.active_agent, ActiveAgent::Tinker, "starts as Tinker");
+        app.input = "/rummage".into();
+        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender());
+        assert!(
+            matches!(action, KeyAction::None),
+            "/rummage must not dispatch a chat message; returns None",
+        );
+        assert_eq!(
+            app.active_agent,
+            ActiveAgent::Rummage,
+            "/rummage must switch active_agent to Rummage",
+        );
+        assert!(app.input.is_empty(), "input must be cleared after /rummage");
+        assert!(
+            app.messages.iter().any(|m| m.role == Role::System && m.text.contains("rummage")),
+            "/rummage must emit a system message naming rummage",
+        );
+    }
+
+    // spec (rummage): `/tinker` switches back from rummage to tinker.
+    #[test]
+    fn test_spec_slash_tinker_switches_back_to_tinker() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use crate::app::Role;
+        let mut app = App::new();
+        app.active_agent = ActiveAgent::Rummage;
+        app.input = "/tinker".into();
+        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender());
+        assert!(
+            matches!(action, KeyAction::None),
+            "/tinker must not dispatch a chat message; returns None",
+        );
+        assert_eq!(
+            app.active_agent,
+            ActiveAgent::Tinker,
+            "/tinker must switch active_agent back to Tinker",
+        );
+        assert!(app.input.is_empty(), "input must be cleared after /tinker");
+        assert!(
+            app.messages.iter().any(|m| m.role == Role::System && m.text.contains("tinker")),
+            "/tinker must emit a system message naming tinker",
+        );
+    }
+
+    // spec (rummage / tui): "One agent is active at a time. User messages go to
+    // whoever is active." When active_agent is Rummage, Enter on a non-slash
+    // message must return SendToRummage (not SendToTinker). When Tinker, must
+    // return SendToTinker.
+    #[test]
+    fn test_spec_message_routes_to_active_agent() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        // Route to Tinker when active.
+        let mut app = App::new();
+        app.phase = Phase::Idle;
+        app.active_agent = ActiveAgent::Tinker;
+        app.input = "hello tinker".into();
+        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender());
+        assert!(
+            matches!(action, KeyAction::SendToTinker(_)),
+            "message must route to Tinker when active_agent is Tinker; got {:?}",
+            std::mem::discriminant(&action),
+        );
+
+        // Route to Rummage when active.
+        let mut app2 = App::new();
+        app2.phase = Phase::Idle;
+        app2.active_agent = ActiveAgent::Rummage;
+        app2.input = "hello rummage".into();
+        let action2 = handle_key(&mut app2, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender());
+        assert!(
+            matches!(action2, KeyAction::SendToRummage(_)),
+            "message must route to Rummage when active_agent is Rummage; got {:?}",
+            std::mem::discriminant(&action2),
+        );
+    }
+
+    // spec (tinker-introspection): ".tinker/logs/" directory is pre-created
     // at startup alongside ".tinker/goals/", ".tinker/state/", and ".tinker/notes/".
     // Verified via source inspection since startup logic is in main().
     #[test]
@@ -1886,5 +2048,26 @@ mod tests {
         // other directories created at startup.
         let logs_mkdir = main_rs.contains("mkdir_all") && main_rs.contains("\"logs\"");
         assert!(logs_mkdir, "main.rs must call mkdir_all for the logs subdir");
+    }
+
+    // spec (rummage): "Rummage runs on the cheapest model tier (haiku on the
+    // Claude backend)." The composition root in main.rs must wire the rummage
+    // runner to SCHEDULER_MODEL (the cheapest tier), not to TINKER_MODEL or
+    // GOAL_MODEL. Verified via source inspection since the wiring is inside main().
+    #[test]
+    fn test_spec_rummage_wired_to_cheapest_model_tier() {
+        let main_rs = include_str!("main.rs");
+        // The rummage runner must be constructed with CLAUDE_SCHEDULER_MODEL /
+        // OPENCODE_SCHEDULER_MODEL — the same constants as the cleanup runner.
+        assert!(
+            main_rs.contains("CLAUDE_SCHEDULER_MODEL, rummage::rummage_system_prompt()")
+                || main_rs.contains("SCHEDULER_MODEL, rummage::"),
+            "rummage runner must be constructed with the scheduler (cheapest) model constant",
+        );
+        assert!(
+            main_rs.contains("OPENCODE_SCHEDULER_MODEL, \"rummage\"")
+                || main_rs.contains("SCHEDULER_MODEL, \"rummage\""),
+            "opencode rummage runner must be constructed with the scheduler (cheapest) model constant",
+        );
     }
 }

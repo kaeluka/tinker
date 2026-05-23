@@ -12,7 +12,7 @@ use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
-pub const ORCHESTRATOR_MODEL: &str = "openrouter/google/gemini-3.1-pro-preview";
+pub const TINKER_MODEL: &str = "openrouter/google/gemini-3.1-pro-preview";
 pub const GOAL_MODEL: &str = "openrouter/deepseek/deepseek-v4-flash";
 /// Used for the scheduling decision (which goal(s) should react next).
 /// Each call is a FRESH opencode session given only the relevant transcript
@@ -96,11 +96,11 @@ struct RawTokenCounts {
 }
 
 /// Real `OpenCodeRunner` impl bound to a specific opencode model id.
-/// Construct one per role (orchestrator vs goal session) at the composition root.
+/// Construct one per role (tinker vs goal session) at the composition root.
 pub struct RealOpenCodeRunner {
     /// When `None`, the `-m` flag is omitted and opencode uses its configured default.
     pub model: Option<String>,
-    /// Optional opencode agent profile name (e.g. "tinker-orchestrator").
+    /// Optional opencode agent profile name (e.g. "tinker").
     /// When set, `--agent <name>` is passed to the opencode CLI.
     pub agent: Option<String>,
 }
@@ -376,9 +376,9 @@ mod tests {
 
     #[test]
     fn test_spec_agent_flag_passed_when_set() {
-        let args = opencode_args(Some("m"), Some("tinker-orchestrator"), None);
+        let args = opencode_args(Some("m"), Some("tinker"), None);
         assert!(args.iter().any(|a| a == "--agent"));
-        assert!(args.iter().any(|a| a == "tinker-orchestrator"));
+        assert!(args.iter().any(|a| a == "tinker"));
     }
 
     #[test]

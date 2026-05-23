@@ -2,13 +2,15 @@ id = "tui"
 description = """
 ## WHAT
 Tinker presents a terminal interface with three regions visible at
-once. One region carries the live conversation with the
-orchestrator — typed input, streamed replies. Another lists the
-current goals and, beneath that list, shows the full text of
-whichever goal is currently selected. The third shows the output
-of whatever goal session is currently running. Any text region can
-be scrolled with the mouse wheel; new content keeps the view at
-the bottom unless the user has scrolled away manually.
+once. One region carries the live conversation with the currently
+active agent (tinker or rummage) — typed input, streamed replies,
+and a prompt-line tag naming whichever agent will receive the next
+message. Another lists the current goals and, beneath that list,
+shows the full text of whichever goal is currently selected. The
+third shows the output of whatever goal session is currently
+running. Any text region can be scrolled with the mouse wheel; new
+content keeps the view at the bottom unless the user has scrolled
+away manually.
 
 ## WHY
 Tinker is meant to be watched while it works. A single REPL would
@@ -29,7 +31,10 @@ all at the same time.
   integer indices for queued entries) next to goal names in the
   goal-list region; rendering each marked goal's pending
   invocations with their queue indices and reasons in the
-  goal-text region beneath the description.
+  goal-text region beneath the description; an active-agent tag
+  in the conversation pane's input prompt; routing input to the
+  active agent; recognizing the agent-switching slash commands
+  defined in `rummage`.
 - Out of scope: themes, syntax highlighting, layout
   configurability, syncing the interface to a remote viewer;
   any interactive manipulation of the queue (cancel, reorder,
@@ -56,7 +61,7 @@ all at the same time.
   scrolls all the way back to the bottom, at which point follow
   re-engages. Source: matches how every chat-style interface
   handles streaming text; built this way without contention.
-- Decision: All orchestrator tool calls (bash, read, edit, etc.)
+- Decision: All tinker tool calls (bash, read, edit, etc.)
   shown in the conversation pane are rendered in a grey/dim style
   to reduce visual noise. Their payloads are summarized (cropped
   to the first line) to prevent multi-line strings from flooding
@@ -71,10 +76,10 @@ all at the same time.
   "3. i hit enter in the goal pane... 3: modal dialog". The old
   YAGNI constraint against modals is explicitly removed.
 - Decision: The system message that lists the goals the
-  orchestrator triggered (via `/run` lines in its last reply)
+  tinker triggered (via `/run` lines in its last reply)
   and their reasons must be rendered in grey to reduce visual
   noise. Source: user said "in grey"; producer changed from the
-  retired scheduler to the orchestrator without changing the
+  retired scheduler to tinker without changing the
   rendering rule.
 - Decision: Goals in the goal-list region carry a marker next to
   their name when they have a running or pending session. The
@@ -102,7 +107,7 @@ all at the same time.
   Source: user picked option (A) for multi-queueing.
 - Decision: Markers in the goal-list region are rendered in a
   dim/grey style so they don't visually dominate the goal name.
-  Source: confirmed in playback as an orchestrator default.
+  Source: confirmed in playback as an tinker default.
 - Decision: When the queue is empty and no session is running,
   no markers appear in the goal-list region, and the goal-text
   region shows only the description. The queue surface is not
@@ -120,7 +125,19 @@ all at the same time.
   the interface. Source: user said "lets not cancel yet - just a
   queue concept that i can't 'mess with'", walking back from
   earlier "b sounds fantastic" on first-class queue control.
+- Decision: The conversation pane's input prompt carries a tag
+  naming the currently active agent (e.g. `tinker> ` or
+  `rummage> `), so the user always sees which agent will receive
+  their input. Slash commands that switch the active agent are
+  defined in `rummage` (`/rummage` and `/tinker` in v1); this
+  goal renders the prompt tag and routes the message. Source:
+  user said "when i type a message in the left pane - how do i
+  as the user know who it's going to?"
 
 """
 parent_id = ""
 children = []
+
+[[related]]
+id = "rummage"
+reason = "Rummage's existence drives the multi-agent UX in the conversation pane. The agent-switching slash commands and the active-agent tag are defined in rummage; this goal renders them."

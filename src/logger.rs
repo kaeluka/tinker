@@ -75,24 +75,24 @@ impl Default for StateSnapshot {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LogEvent {
-    OrchestratorSessionStarted {
+    TinkerSessionStarted {
         system_prompt_chars: usize,
         goal_list_hash: String,
         backend: String,
     },
-    OrchestratorTurnStart,
-    OrchestratorTurnEnd {
+    TinkerTurnStart,
+    TinkerTurnEnd {
         duration_ms: u64,
         usage: Option<UsageInfo>,
         backend: String,
     },
-    OrchestratorUserMessageReceived {
+    TinkerUserMessageReceived {
         text: String,
     },
-    OrchestratorReplyEmitted {
+    TinkerReplyEmitted {
         text: String,
     },
-    OrchestratorSystemMessageReceived {
+    TinkerSystemMessageReceived {
         content: String,
     },
     GoalSessionDispatched {
@@ -444,15 +444,15 @@ pub fn extract_modified_files(output: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    // spec (orchestrator-introspection): every log line must carry the required
+    // spec (tinker-introspection): every log line must carry the required
     // ts, kind, and source fields (DECISIONS: "required ts (ISO 8601 UTC),
     // kind, and source fields per line, plus event-specific payload").
     #[test]
     fn test_spec_log_line_has_required_ts_kind_source_fields() {
         let entry = LogEntry {
             ts: "2026-05-20T10:00:00Z".to_string(),
-            source: "orchestrator".to_string(),
-            event: LogEvent::OrchestratorTurnStart,
+            source: "tinker".to_string(),
+            event: LogEvent::TinkerTurnStart,
         };
         let json = serde_json::to_string(&entry).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -460,18 +460,18 @@ mod tests {
         assert!(val.get("kind").is_some(), "log line must have 'kind' field");
         assert!(val.get("source").is_some(), "log line must have 'source' field");
         assert_eq!(val["ts"], "2026-05-20T10:00:00Z");
-        assert_eq!(val["source"], "orchestrator");
-        assert_eq!(val["kind"], "orchestrator_turn_start");
+        assert_eq!(val["source"], "tinker");
+        assert_eq!(val["kind"], "tinker_turn_start");
     }
 
-    // spec (orchestrator-introspection): event kinds serialize as snake_case
+    // spec (tinker-introspection): event kinds serialize as snake_case
     // matching the DECISIONS enumeration.
     #[test]
     fn test_spec_event_kinds_are_snake_case() {
         let cases: &[(&str, LogEvent)] = &[
             (
-                "orchestrator_session_started",
-                LogEvent::OrchestratorSessionStarted {
+                "tinker_session_started",
+                LogEvent::TinkerSessionStarted {
                     system_prompt_chars: 100,
                     goal_list_hash: "abc".to_string(),
                     backend: "claude".to_string(),
@@ -516,7 +516,7 @@ mod tests {
         }
     }
 
-    // spec (orchestrator-introspection): goal_session_finished carries the
+    // spec (tinker-introspection): goal_session_finished carries the
     // observable set — exit_status, duration_ms, files_modified, tool_calls,
     // summary_chars, full_output, usage, backend. No session-declared outcome.
     #[test]
@@ -563,7 +563,7 @@ mod tests {
         assert_eq!(val["usage"]["output_tokens"], 200);
     }
 
-    // spec (orchestrator-introspection): backend-agnostic — opencode events
+    // spec (tinker-introspection): backend-agnostic — opencode events
     // carry null for usage (field present, value null) not a missing field.
     #[test]
     fn test_spec_opencode_backend_has_null_usage() {
@@ -594,14 +594,14 @@ mod tests {
         assert_eq!(val["backend"], "opencode");
     }
 
-    // spec (orchestrator-introspection): message-level events carry full text.
+    // spec (tinker-introspection): message-level events carry full text.
     #[test]
     fn test_spec_message_events_carry_full_text() {
         let text = "Complete user message content.".to_string();
-        let event = LogEvent::OrchestratorUserMessageReceived { text: text.clone() };
+        let event = LogEvent::TinkerUserMessageReceived { text: text.clone() };
         let entry = LogEntry {
             ts: "2026-05-20T00:00:00Z".to_string(),
-            source: "orchestrator".to_string(),
+            source: "tinker".to_string(),
             event,
         };
         let json = serde_json::to_string(&entry).unwrap();
@@ -609,10 +609,10 @@ mod tests {
         assert_eq!(val["text"], text);
 
         let reply = "Full assistant reply.".to_string();
-        let event2 = LogEvent::OrchestratorReplyEmitted { text: reply.clone() };
+        let event2 = LogEvent::TinkerReplyEmitted { text: reply.clone() };
         let entry2 = LogEntry {
             ts: "2026-05-20T00:00:00Z".to_string(),
-            source: "orchestrator".to_string(),
+            source: "tinker".to_string(),
             event: event2,
         };
         let json2 = serde_json::to_string(&entry2).unwrap();
@@ -620,12 +620,12 @@ mod tests {
         assert_eq!(val2["text"], reply);
     }
 
-    // spec (orchestrator-introspection): orchestrator_system_message_received
+    // spec (tinker-introspection): tinker_system_message_received
     // logs the injecting component via LogEntry.source and the full message text
     // in the content field. It is not state-changing — apply_to_state returns false.
     #[test]
-    fn test_spec_orchestrator_system_message_received_logs_source_and_content() {
-        let event = LogEvent::OrchestratorSystemMessageReceived {
+    fn test_spec_tinker_system_message_received_logs_source_and_content() {
+        let event = LogEvent::TinkerSystemMessageReceived {
             content: "triggered: `tui`: implement the modal".to_string(),
         };
         let entry = LogEntry {
@@ -635,17 +635,17 @@ mod tests {
         };
         let json = serde_json::to_string(&entry).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(val["kind"], "orchestrator_system_message_received");
+        assert_eq!(val["kind"], "tinker_system_message_received");
         assert_eq!(val["source"], "dispatcher", "source names the injecting component");
         assert_eq!(val["content"], "triggered: `tui`: implement the modal");
 
         // Not a state-changing event — must not trigger state snapshot writes.
         let mut state = StateSnapshot::default();
         let changed = apply_to_state(&entry, &mut state);
-        assert!(!changed, "OrchestratorSystemMessageReceived must not mark state dirty");
+        assert!(!changed, "TinkerSystemMessageReceived must not mark state dirty");
     }
 
-    // spec (orchestrator-introspection): no log rotation — the log grows
+    // spec (tinker-introspection): no log rotation — the log grows
     // unboundedly. Mechanically verified: flush_batch must open in append mode,
     // never with truncate.
     #[test]
@@ -668,7 +668,7 @@ mod tests {
         );
     }
 
-    // spec (orchestrator-introspection): state is updated only for events that
+    // spec (tinker-introspection): state is updated only for events that
     // carry semantic UI information — apply_to_state returns true for those and
     // false for non-state events (the caller uses this to gate the debounce timer).
     #[test]
@@ -699,8 +699,8 @@ mod tests {
         assert_eq!(state.focus, "tree");
 
         // Non-state events return false
-        let changed3 = apply_to_state(&entry(LogEvent::OrchestratorTurnStart), &mut state);
-        assert!(!changed3, "OrchestratorTurnStart must not mark state dirty");
+        let changed3 = apply_to_state(&entry(LogEvent::TinkerTurnStart), &mut state);
+        assert!(!changed3, "TinkerTurnStart must not mark state dirty");
     }
 
     // spec: session usage totals accumulate across finished sessions.
@@ -764,7 +764,7 @@ mod tests {
         );
     }
 
-    // spec (orchestrator-introspection): count_tool_calls counts lines starting
+    // spec (tinker-introspection): count_tool_calls counts lines starting
     // with the → arrow, matching the format emitted by format_tool_use in
     // claude.rs and opencode.rs.
     #[test]
@@ -777,7 +777,7 @@ mod tests {
         assert_eq!(count_tool_calls(indented), 1, "indented → must count");
     }
 
-    // spec (orchestrator-introspection): extract_modified_files identifies Write
+    // spec (tinker-introspection): extract_modified_files identifies Write
     // and Edit tool-call paths from streamed output. This is an approximation of
     // "files modified" used when a filesystem watcher is unavailable; it relies
     // on the compact one-liner format from format_tool_use. Deduplicates via
@@ -798,7 +798,7 @@ mod tests {
         assert_eq!(files.len(), 2, "BTreeSet must deduplicate repeated paths");
     }
 
-    // spec (orchestrator-introspection): TuiScrollChanged updates the correct
+    // spec (tinker-introspection): TuiScrollChanged updates the correct
     // pane in the state snapshot's scroll_offsets. All four pane names are handled;
     // unknown pane names are silently ignored (open extension point).
     #[test]
@@ -839,7 +839,7 @@ mod tests {
         assert_eq!(state.scroll_offsets.repl, 42);
     }
 
-    // spec (orchestrator-introspection): the goal_file_changed event is emitted
+    // spec (tinker-introspection): the goal_file_changed event is emitted
     // when the content hash of the loaded goals changes between polling cycles.
     // The implementation uses a content hash rather than inotify; the path field
     // carries the directory, not the specific file. Verified via source inspection.

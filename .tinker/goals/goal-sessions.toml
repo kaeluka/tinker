@@ -14,17 +14,17 @@ git, and the spec. When a session is dispatched, it is given
 an explicit "reason" string that points at what's new
 (typically what changed in the goal text since the previous
 run). Before each one starts, investigation code from the
-previous orchestrator turn (see `cleanup-hook`) is removed.
+previous tinker turn (see `cleanup-hook`) is removed.
 After each one finishes, the session reports a structured
 summary of what it did and what it decided beyond what the goal
 explicitly stated. When a batch of sessions has all finished,
-the orchestrator composes a single message for the user
+tinker composes a single message for the user
 covering the whole batch and a "try it now" invitation.
 
 ## WHY
 Goals would be useless without something that acts on them.
-Splitting the actor from the orchestrator lets the actor use a
-cheaper model focused on execution while the orchestrator stays
+Splitting the actor from tinker lets the actor use a
+cheaper model focused on execution while tinker stays
 on a smarter model for judgment. One-at-a-time keeps the user's
 mental model simple: they always know which goal is the current
 one and what it's doing. Passing an explicit reason gives the agent
@@ -53,21 +53,21 @@ in a huge goal file.
   scope.
 - Decision: Every goal session dispatch must be accompanied by a
   reason string. For created/edited goals AND for reactive runs
-  after a goal-session batch, the orchestrator provides the
+  after a goal-session batch, tinker provides the
   reason via `/run` lines in its chat output. For manual runs
   (user typing `/run` at the input prompt, or pressing Enter in
   the TUI), the reason is collected from the user. This reason
   must be passed explicitly into the agent's prompt/context.
   Source: user requested "whenever a goal agent is triggered,
   it needs to be passed a reason"; updated when the user folded
-  reactive scheduling into the orchestrator and retired the
+  reactive scheduling into tinker and retired the
   scheduler component.
 - Decision: On a fresh start, the goal session receives the
   full text of every sibling goal too — so coding standards
   and other standing concerns are part of its context without
-  the user or orchestrator copying snippets. Source: built
+  the user or tinker copying snippets. Source: built
   this way to avoid spec drift across sessions.
-- Decision: After each goal session finishes, the orchestrator
+- Decision: After each goal session finishes, tinker
   produces a structured summary covering what was done, design
   decisions made beyond the goal, and how to try the result.
   After a batch drains, those summaries are folded into a
@@ -104,9 +104,9 @@ in a huge goal file.
   correctly inferred it but the spec hadn't named the
   distinction.
 - Decision: The same goal can appear in the pending-session queue
-  multiple times. When the orchestrator emits several `/run`
+  multiple times. When tinker emits several `/run`
   lines for one goal across turns, or when a user-typed `/run`
-  lands behind a pending orchestrator `/run`, each invocation is
+  lands behind a pending tinker `/run`, each invocation is
   preserved as a separate queue entry with its own reason. The
   queue does not deduplicate by goal-id; sessions run in FIFO
   order regardless of repetition. Source: user picked option (A)
@@ -117,11 +117,11 @@ in a huge goal file.
   playback.
 - Decision: Goal sessions must not write to `.tinker/goals/`,
   `.tinker/notes/`, or `.tinker/state/`. These directories are
-  owned by the orchestrator; goal sessions read them at startup
+  owned by tinker; goal sessions read them at startup
   (through sibling-goal injection) but must never modify them.
   Writing to goals would let a session silently mutate the spec
   it is executing under; writing to notes or state would bypass
-  the orchestrator's exclusive ownership of those surfaces.
+  tinker's exclusive ownership of those surfaces.
   Source: two consecutive batches saw goal sessions modify
   `.tinker/goals/*.toml` files when dispatched with narrow scope
   — a constraint violation that stretched beyond the trigger reason.
@@ -146,12 +146,12 @@ in a huge goal file.
   that'd be ok. but the system as a whole should optimize to
   basically never bring a goal session in that situation."
 - Decision: Goal sessions cannot read `.tinker/notes/notes.md`.
-  That file is the orchestrator's private chain-of-thought log;
-  making it readable would leak orchestrator deliberation into
+  That file is tinker's private chain-of-thought log;
+  making it readable would leak tinker deliberation into
   session context that should be guided only by goals, trigger
   reasons, and source. The prohibition is enforced through the
   session prompt's injected rule block, alongside the existing
-  write prohibition. Source: user confirmed "notes is orchestrator
+  write prohibition. Source: user confirmed "notes is tinker
   private - should be clear in goals."
 
 """
@@ -159,6 +159,6 @@ parent_id = ""
 children = ["cleanup-hook"]
 related = [
   { id = "coding-standards", reason = "Goal sessions write code, so they're subject to this standard. In particular, the decision that the structured summary must list `test_spec_*` functions exists specifically to enforce coding-standards' 'Tests as guardrails' requirement." },
-  { id = "orchestrator-triggers", reason = "Goal sessions are dispatched by `/run` lines defined in `orchestrator-triggers`. The per-entry reason string, the multi-queueing semantics, and the manual-vs-orchestrator dispatch distinction all originate in the trigger syntax." },
+  { id = "tinker-triggers", reason = "Goal sessions are dispatched by `/run` lines defined in `tinker-triggers`. The per-entry reason string, the multi-queueing semantics, and the manual-vs-tinker dispatch distinction all originate in the trigger syntax." },
   { id = "goal-craft", reason = "The 'mechanism is goal sparseness' phrase in the 'Pushback is exceptional' decision refers to the sparseness tactic defined in `goal-craft`. Sparse goals are what make the tractable-optimization-target assumption hold." }
 ]

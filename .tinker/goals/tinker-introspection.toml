@@ -1,22 +1,22 @@
-id = "orchestrator-introspection"
+id = "tinker-introspection"
 description = """
 ## WHAT
-A runtime introspection substrate that lets the orchestrator inspect
+A runtime introspection substrate that lets tinker inspect
 its own state — token usage per turn, the goal-session queue, the
 current UI snapshot, message history — instead of estimating from
 inference or asking the user to read numbers off. Two artifacts: an
 append-only log of runtime events and a state file holding the
-current semantic UI snapshot, both under `.tinker/`. The orchestrator
+current semantic UI snapshot, both under `.tinker/`. Tinker
 reads both with its existing file-access tools when it needs them;
 it never writes to either, and goal sessions don't touch them at all.
 
 ## WHY
-The orchestrator has been operating on inferred state — estimating
+Tinker has been operating on inferred state — estimating
 its own cost, asking the user "what's running?", reconstructing turn
 counts from memory. That's silly: tinker itself knows. The
 user-system-interaction principle says tinker holds the *is*, but the
-*is* never reaches the orchestrator's reasoning — only the user's
-view. This goal closes that asymmetry. The orchestrator is part of
+*is* never reaches tinker's reasoning — only the user's
+view. This goal closes that asymmetry. Tinker is part of
 tinker, and the *is* should be available to it the same way it's
 available to the user.
 
@@ -28,7 +28,7 @@ produce real work?", and "how does cost compare across goals?" turn
 into structured queries instead of fading memory.
 
 ## SCOPE
-- In scope: an append-only event log capturing orchestrator turn
+- In scope: an append-only event log capturing tinker turn
   boundaries (with token usage), goal-session lifecycle and
   observables, message-level conversation including every
   tinker-injected system message (full user input, full assistant
@@ -40,27 +40,27 @@ into structured queries instead of fading memory.
   and start/queue timestamps), and rolling session usage totals;
   async non-blocking writes; backend-agnostic structure with
   best-effort cost capture for every Claude and opencode call;
-  passive read-only access for the orchestrator via existing file
+  passive read-only access for tinker via existing file
   tools.
 - Out of scope: pane content beyond message-level — the conversation
   pane's verbatim rendered text per line, the session-log pane's
   streaming line-by-line capture (subsumed by the message-level
   events for the conversation pane, and by the transcript content
   carried on each finished-session event for the session-log
-  pane); orchestrator-self-emitted structured events for its own
+  pane); tinker-self-emitted structured events for its own
   dialectic moves (reframe, frame-check, playback-sent,
   playback-confirmed) — those remain in pane content and
   `notes.md` for now, and may become a follow-up goal if
   reframe-frequency analysis turns out to matter; goal sessions
   reading the log or state file (they retain their narrow focused
-  scope); orchestrator control over runtime state (cancelling
+  scope); tinker control over runtime state (cancelling
   queued sessions, manipulating queue) — that is a separate
-  parked goal framed as "orchestrator-controls-itself-like-the-
+  parked goal framed as "tinker-controls-itself-like-the-
   user-can"; log rotation, retention, or compression (the log
   grows; the user clears it manually if it ever bothers them);
   redaction of sensitive content surfaced by tool outputs (user-
   managed cleanup for now); making the log or state file
-  available to anything beyond the orchestrator's own reading.
+  available to anything beyond tinker's own reading.
 
 ## DECISIONS (vetted)
 - Decision: The mechanism is hybrid — a log file for sequence and
@@ -72,9 +72,9 @@ into structured queries instead of fading memory.
   took 35s'" then "perhaps there should be a separate file that
   shows a snapshot of the current UI + a log file."
 - Decision: Log format must satisfy three constraints — a `kind`
-  discriminator that lets the orchestrator filter by event type;
+  discriminator that lets tinker filter by event type;
   shape suitable for `jq`-style aggregation queries; and
-  individual events retrievable by the orchestrator at low token
+  individual events retrievable by tinker at low token
   cost (the surrounding-event context does not have to be paid
   for). Implementation picks the specific shape and retrieval
   tooling within those constraints. Source: user said either a
@@ -93,7 +93,7 @@ into structured queries instead of fading memory.
 - Decision: There is a log file and a state file, both under
   `.tinker/`. Required directories are pre-created at startup if
   missing. Implementation chooses the specific paths and
-  filenames. Source: orchestrator default; user-anchored facts
+  filenames. Source: tinker default; user-anchored facts
   are findability under `.tinker/` and auto-creation of
   directories.
 - Decision: No log rotation. The log appends forever; the user
@@ -111,17 +111,17 @@ into structured queries instead of fading memory.
   must always be supported equally well" and "have you made sure
   any claude/opencode call is logging its cost?"
 - Decision: Writes are async and non-blocking. The introspection
-  substrate does not slow the orchestrator's main loop. Source:
+  substrate does not slow tinker's main loop. Source:
   user flagged performance concerns and proposed "fire off async
   tasks or something like that."
 - Decision: The substrate is passive observability, read-only, and
-  orchestrator-only. Goal sessions do not read the log or state
-  file. The orchestrator cannot mutate runtime state through this
+  tinker-only. Goal sessions do not read the log or state
+  file. Tinker cannot mutate runtime state through this
   primitive — no cancelling queued sessions, no UI manipulation.
   Source: user said "a for now. definitely out of reach for goal
   agents. maybe you should be able to cancel later. but even i
   can't do that. if we ever get to that that should be framed as
-  a 'orchestrator can control itself like the user can' goal."
+  a 'tinker can control itself like the user can' goal."
 - Decision: Each finished-session event carries observable facts
   only — what tinker sees from outside the session — and no
   session-declared outcome field. The session is an unreliable
@@ -134,7 +134,7 @@ into structured queries instead of fading memory.
   introspection to use. it's an everyday occurrence that it does
   something that goes beyond what was asked, or doesn't do enough,
   or does something else."
-- Decision: Every message in the orchestrator session is logged in
+- Decision: Every message in tinker session is logged in
   three categories — user input, assistant reply, and
   tinker-injected system message. Payload semantics: the
   session-start event captures the system prompt text plus a
@@ -151,10 +151,10 @@ into structured queries instead of fading memory.
   and "what triggered this /run?" become queryable instead of
   fading. Implementation picks the specific event-kind names.
   Source: user said "what if we logged every message in the
-  orchestrator session, too? that would contain the information
+  tinker session, too? that would contain the information
   about why a restart was necessary for instance" and "have you
   also added the ability to read sys messages?"
-- Decision: Event categories include orchestrator turn boundaries
+- Decision: Event categories include tinker turn boundaries
   (with token usage), message-level events (user input, assistant
   reply, system message), goal-session lifecycle (dispatched,
   started, finished) with observables, cleanup-hook results,
@@ -162,12 +162,12 @@ into structured queries instead of fading memory.
   changes (selection, focus, scroll, queue). New categories can
   be added additively. Implementation picks the specific
   event-kind names within these categories. Source: categories
-  vetted during the orchestrator-introspection interview;
+  vetted during the tinker-introspection interview;
   specific names within them are implementation's call.
 
 """
-parent_id = "orchestrator"
+parent_id = "tinker"
 children = []
 related = [
-  { id = "user-system-interaction", reason = "The orchestrator is part of tinker; 'tinker holds the *is*' is only half-true if the *is* never reaches the orchestrator's reasoning. This goal closes that gap by giving the orchestrator structured access to the *is* that tinker already holds." }
+  { id = "user-system-interaction", reason = "Tinker is part of tinker; 'tinker holds the *is*' is only half-true if the *is* never reaches tinker's reasoning. This goal closes that gap by giving tinker structured access to the *is* that tinker already holds." }
 ]

@@ -5,8 +5,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// The order of top-level keys in a goal TOML file. Referenced by the
-/// orchestrator prompt (so it follows the schema) and by the
-/// parse-error correction message (so the orchestrator is told the
+/// tinker prompt (so it follows the schema) and by the
+/// parse-error correction message (so tinker is told the
 /// schema when fixing). Single source of truth.
 pub const GOAL_SCHEMA_KEYS_ORDER: &str = "id, description, parent_id, children, related (optional)";
 
