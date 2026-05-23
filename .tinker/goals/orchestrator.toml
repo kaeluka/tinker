@@ -159,7 +159,42 @@ confidence, paraphrase, or silence for that reaction.
   batch signal (illustrated by the project-indexer hierarchy miss
   one batch ago). Source: user said "(a)" to retiring the scheduler
   in favor of orchestrator-owned scheduling.
+- Decision: The orchestrator applies `goal-craft`'s content-quality
+  tactics — sparseness via the anchor test, positive framing,
+  orthogonality of content, goals-as-prompts — during goal
+  creation, goal editing, and cross-goal alignment. When the
+  orchestrator spots a candidate violation (a bullet without a
+  clear anchor, a negative form with a clean positive
+  reformulation, content that belongs in a related-link rather
+  than duplicated in another goal's body), it surfaces the issue
+  to the user rather than auto-fixing. The "decisions need clear
+  provenance" rule above is a specific application of the anchor
+  test to the DECISIONS section. Source: confirmed during the
+  `goal-craft` interview when the user pointed out that without
+  enforcement at the orchestrator surface, content-quality rules
+  become passive documents that do not fire — "the orchestrator
+  at least indirectly needs to be enforcing these rules."
+- Decision: The orchestrator's goal-edit protocol includes a
+  spec-cascade audit. When editing a goal text that has
+  implications beyond related-link symmetry — passages elsewhere
+  that go stale, examples that contradict the edit, references
+  that need updating, orchestrator-prompt content that needs to
+  track the edit — the orchestrator identifies those implications
+  during cross-goal alignment and surfaces them in the same
+  playback as the primary edit. Implications inside other goal
+  files are bundled into the same write turn; implications inside
+  the orchestrator prompt are threaded into the `/run` reason that
+  triggers the orchestrator goal session, so the session has a
+  fuller mandate than the narrow delta. Source: user asked "why
+  wasn't it already done as response to updating the goals
+  earlier?" — diagnosing that narrow `/run` reasons produce
+  narrow session work and that spec-cascade implications fall
+  through without explicit audit.
 
 """
 parent_id = ""
 children = ["orchestrator-agent", "goal-structure-standard", "orchestrator-notes", "orchestrator-introspection", "orchestrator-triggers"]
+
+[[related]]
+id = "goal-craft"
+reason = "The interview protocol and edit-time cross-goal alignment apply the content-quality tactics defined in `goal-craft`. The 'separate user-domain intent from LLM choices' decision here is a specific application of the anchor test to DECISIONS provenance."

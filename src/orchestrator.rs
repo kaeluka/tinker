@@ -153,6 +153,20 @@ The `description` triple-quoted string must be closed with its own `"""` line be
 
 6. **Re-validate related-link symmetry.** For every entry in the new file's `related` list, open the linked partner goal and confirm it also lists this goal back in its own `related` field. If a back-link is missing or has the wrong reason, add or fix it in the same write turn. Surface both the primary edit and the partner fix together in the playback so the user can confirm or override the bundle. Related-link symmetry is enforced; transitivity is not — `a↔b` and `b↔c` does NOT imply `a↔c`. Do not add `a↔c` automatically.
 
+### Goal content quality — goal-craft tactics
+
+During goal creation (each phase), goal editing (before step 4), and cross-goal alignment, apply `goal-craft`'s four content-quality tactics. When you spot a candidate violation, surface it to the user before writing — do not silently auto-fix.
+
+**Tactic 1 — Sparseness (anchor test).** A bullet belongs in a goal only if something outside the implementation anchors it: (a) user intent or preference, (b) an external dependency (facts about the world outside the codebase — existing systems, vendor contracts, regulation, hardware), or (c) a hard-won negative constraint kept only when no positive form captures the same constraint. A bullet that is pure implementation opinion has no anchor and is a candidate for removal. The "decisions need clear provenance" rule is this test applied to DECISIONS provenance.
+
+**Tactic 2 — Positive framing.** Goals state WHAT not whatn't; WHY not whyn't. Hard-won negatives are acceptable only when no positive reformulation captures the same constraint. When a negative form has a clean positive reformulation, surface that candidate rewrite to the user.
+
+**Tactic 3 — Orthogonality.** Goals are free-standing in content. Cross-cutting concerns go in the `related` link graph, not duplicated inside goal bodies. When content in one goal duplicates a constraint that belongs as a related-link to another goal, surface that as a candidate extraction.
+
+**Tactic 4 — Goals are prompts.** Every goal also functions as the prompt that goal sessions read. Five rules: (i) define terms before first use; (ii) use the same word for the same thing throughout and across sibling goals; (iii) reference other goals by id (e.g. `goal-craft`, not "the content-quality goal"); (iv) concrete examples earn their keep only when anchoring an abstract claim — decorative examples add density; (v) lead with the load-bearing point.
+
+Surface candidates to the user — a bullet without a clear anchor, a negative with a clean positive reformulation, content that belongs in a related-link rather than duplicated in another goal's body — rather than rewriting silently.
+
 ### Triggering goal sessions — /run
 
 After editing or creating a goal, when you want the goal session to act on it, emit a line `/run <goal-id> <reason>` somewhere in your reply. The reason is a focused one-line description of what the session should do now. Multiple `/run` lines are allowed. There is no separate "log" or "changelog" field on the file — the trigger happens in the chat, not in the TOML.
@@ -314,15 +328,14 @@ out-of-scope item.
 
 DECISIONS (vetted)
 
-Pure user-domain requirements only. One bullet per concrete decision
-the user actively confirmed. Keep LLM implementation choices out of DECISIONS — those go in HOW.
+Pure user-domain requirements only — each bullet must pass `goal-craft`'s anchor test: (a) user intent or preference, (b) external dependency, or (c) hard-won negative with no clean positive reformulation. One bullet per concrete decision the user actively confirmed. Keep LLM implementation choices out of DECISIONS — those go in HOW.
 Format: Decision: <what>. Source: user said "<quote>" or
 Source: confirmed in playback.
 
 HOW
 Language, framework, style, dependency constraints. When a previous
 implementation attempt failed, record the failure as a negative
-constraint here (e.g. "Don't use library X — it caused Y"), not as
+constraint here (e.g. "Use library Y (library X caused Z)"), not as
 a replacement dictate in DECISIONS.
 
 DECISIONS is load-bearing. If it's empty or generic, the interview wasn't deep enough — go back to Phase 2.
@@ -1530,6 +1543,92 @@ mod tests {
         assert!(
             content.contains("does NOT imply"),
             "prompt must explicitly state the non-transitivity invariant",
+        );
+    }
+
+    // spec (orchestrator): the orchestrator applies goal-craft's four content-
+    // quality tactics during goal creation, editing, and cross-goal alignment.
+    // The prompt must name the tactic set and all four tactics by name.
+    #[test]
+    fn test_spec_orchestrator_applies_goal_craft_four_tactics() {
+        let content = orchestrator_agent_content();
+        assert!(
+            content.contains("goal-craft"),
+            "prompt must reference goal-craft explicitly",
+        );
+        assert!(
+            content.contains("anchor test") || content.contains("Sparseness"),
+            "prompt must name the sparseness anchor test tactic",
+        );
+        assert!(
+            content.contains("Positive framing") || content.contains("positive framing"),
+            "prompt must name positive framing as a tactic",
+        );
+        assert!(
+            content.contains("Orthogonality") || content.contains("orthogonality"),
+            "prompt must name orthogonality of content as a tactic",
+        );
+        assert!(
+            content.contains("Goals are prompts") || content.contains("goals are prompts"),
+            "prompt must name goals-as-prompts as a tactic",
+        );
+    }
+
+    // spec (orchestrator): goal-craft tactics apply at three specific invocation
+    // sites — creation, editing, and cross-goal alignment. The prompt must name
+    // all three so the orchestrator knows when to scan for violations.
+    #[test]
+    fn test_spec_orchestrator_goal_craft_applies_at_creation_editing_alignment() {
+        let content = orchestrator_agent_content();
+        assert!(
+            content.contains("goal creation") || content.contains("Goal creation"),
+            "prompt must state goal-craft tactics apply during goal creation",
+        );
+        assert!(
+            content.contains("goal editing") || content.contains("Goal editing"),
+            "prompt must state goal-craft tactics apply during goal editing",
+        );
+        assert!(
+            content.contains("cross-goal alignment"),
+            "prompt must state goal-craft tactics apply during cross-goal alignment",
+        );
+    }
+
+    // spec (orchestrator): when the orchestrator spots a goal-craft violation it
+    // surfaces the candidate to the user rather than auto-fixing. The prompt must
+    // state this enforcement posture so violations are never silently patched.
+    #[test]
+    fn test_spec_orchestrator_goal_craft_surface_not_auto_fix() {
+        let content = orchestrator_agent_content();
+        assert!(
+            content.contains("Surface candidates to the user")
+                || content.contains("surface it to the user"),
+            "prompt must instruct surfacing candidate violations to the user",
+        );
+        assert!(
+            content.contains("rather than rewriting silently")
+                || content.contains("do not silently auto-fix"),
+            "prompt must prohibit silently auto-fixing goal-craft violations",
+        );
+    }
+
+    // spec (orchestrator): the anchor test for sparseness must describe the three
+    // anchor categories — user intent/preference, external dependency, hard-won
+    // negative — so the orchestrator can apply the test during interviews.
+    #[test]
+    fn test_spec_orchestrator_anchor_test_names_three_categories() {
+        let content = orchestrator_agent_content();
+        assert!(
+            content.contains("user intent or preference"),
+            "prompt must name user intent/preference as an anchor category",
+        );
+        assert!(
+            content.contains("external dependency"),
+            "prompt must name external dependency as an anchor category",
+        );
+        assert!(
+            content.contains("hard-won negative"),
+            "prompt must name hard-won negative as an anchor category",
         );
     }
 }

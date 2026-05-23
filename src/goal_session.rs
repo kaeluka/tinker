@@ -370,6 +370,74 @@ mod tests {
         assert_eq!(stripped, reason, "strip_prefix must recover the raw reason string");
     }
 
+    // spec: goal-sessions decision — "Every goal session starts fresh —
+    // there is no in-process resumption across triggers." run_goal must
+    // always pass None as the session_id for the main call (i.e. always
+    // start a brand-new LLM conversation), never carrying over a session_id
+    // from a previous dispatch. Intra-dispatch continuity (the summary call
+    // reusing the same session) is allowed and tested separately.
+    #[tokio::test]
+    async fn test_spec_goal_session_always_starts_fresh_no_resumption() {
+        use crate::cap::Chunk;
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use crate::test_utils::MockFs;
+
+        struct RecordingRunner {
+            calls: AtomicUsize,
+            // first call's session_id arg; second call is the summary continuation
+            first_session_id: Mutex<Option<Option<String>>>,
+        }
+
+        #[async_trait]
+        impl OpenCodeRunner for RecordingRunner {
+            async fn run(
+                &self,
+                _message: &str,
+                session_id: Option<&str>,
+                _work_dir: &Path,
+                _on_session_id: Chunk,
+                _on_chunk: Chunk,
+            ) -> Result<String> {
+                let n = self.calls.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    *self.first_session_id.lock().unwrap() =
+                        Some(session_id.map(String::from));
+                }
+                Ok("mock-session".into())
+            }
+        }
+
+        let runner = Arc::new(RecordingRunner {
+            calls: AtomicUsize::new(0),
+            first_session_id: Mutex::new(None),
+        });
+        let fs = Arc::new(MockFs::new());
+        fs.add_dir(std::path::Path::new("/work"));
+        fs.add_dir(std::path::Path::new("/work/.tinker"));
+        fs.add_dir(std::path::Path::new("/work/.tinker/goals"));
+        let (tx, _rx) = mpsc::channel(8);
+        let goal = make_goal("widget", "build a widget");
+
+        let _ = run_goal(
+            goal,
+            Some("reason".into()),
+            "/work/.tinker".into(),
+            "/work".into(),
+            tx,
+            runner.clone(),
+            fs,
+        )
+        .await;
+
+        let first_sid = runner.first_session_id.lock().unwrap().clone();
+        assert_eq!(
+            first_sid,
+            Some(None),
+            "run_goal must pass None as session_id for the main call (fresh session, no resumption)"
+        );
+    }
+
     // spec: design notes — "each goal session's init message includes the
     // full content of every other (sibling) goal." This lets a goal session
     // apply shared concerns (standards, security) without relying on the
