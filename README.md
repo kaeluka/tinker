@@ -49,10 +49,15 @@ you meant. When it cannot figure something out from the rules alone, it stops
 and asks you. It does not make things up.
 
 A second agent, **rummage**, lives in the same conversation pane. Where
-tinker manages intent and drives code, rummage is a separate character you
-can bring in for a different perspective. You switch between them with
-`/rummage` and `/tinker`. The prompt line always shows which agent is
-currently listening.
+tinker is forward-facing — building from intent toward code — rummage
+faces the other direction. When something needs explaining — a bug,
+surprising output, behavior you do not trust, code you are about to change
+and want to understand first — you bring in rummage. It investigates: reads
+what is there, writes scratch tests, and traces the problem from its symptom
+backward to the conditions that caused it. The deliverable is a document: an
+explanation, an assessment, or groundwork for the next step. You switch
+between them with `/rummage` and `/tinker`. The prompt line always shows
+which agent is active.
 
 The two of you work in rounds. You say what you want. Tinker writes it
 down as a goal and reads it back to you. You correct it. It reads it back

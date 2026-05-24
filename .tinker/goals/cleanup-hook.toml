@@ -24,7 +24,8 @@ not running at all.
   each goal session; dispatching a cheap cleanup agent;
   retrying a few times before giving up; surfacing
   unrecoverable failures to the user; correctly distinguishing
-  real markers from prose mentions of the marker name.
+  real markers from both prose mentions and format-example
+  mentions of the marker name.
 - Out of scope: enforcing the marker at write time (the
   tinker self-enforces; this hook only cleans up after);
   recovering across project boundaries.
@@ -38,6 +39,21 @@ not running at all.
   treated as real markers. Source: required so the cleanup
   agent doesn't damage the system itself when run on its own
   source.
+- Decision: Markers whose reason text is an angle-bracket
+  placeholder (e.g., `tinker-test-case: <one-line reason>`,
+  `tinker-test-case: <reason>`) are treated as format examples —
+  documentation showing the marker shape — and are exempt from
+  cleanup. Real investigation markers always carry a concrete
+  reason describing what the marked code probes. This
+  complements the start-of-comment-line rule, which protected
+  string-literal and prose mentions but did not protect
+  comment-line examples that show the marker FORMAT to teach
+  future agents the convention. Source: incident with rummage v2
+  rewrite — the new prompt contained `// tinker-test-case: <one-
+  line reason>` as a code-fence example inside the prompt's raw
+  string literal; cleanup could not remove it without breaking
+  the prompt and a test asserting the prompt contains the marker;
+  user confirmed "(b) spec fix" as the resolution.
 - Decision: Three shapes of marker are supported. An "inline
   addition" labels a new region to remove. An "in-place
   modification" labels a change to existing code; the marker
@@ -65,5 +81,6 @@ not running at all.
 parent_id = "goal-sessions"
 children = []
 related = [
-  { id = "coding-standards", reason = "The `tinker-test-case:` marker this hook detects and cleans is defined by section 5 ('Tinkerability') of `coding-standards`. The marker syntax, semantics, and three shapes (inline / in-place / file-level) come from there." }
+  { id = "coding-standards", reason = "The `tinker-test-case:` marker this hook detects and cleans is defined by section 5 ('Tinkerability') of `coding-standards`. The marker syntax, semantics, and three shapes (inline / in-place / file-level) come from there." },
+  { id = "rummage", reason = "Rummage is an active investigator that writes scratch tests, fuzz harnesses, and instrumentation marked with `tinker-test-case:`. This hook removes those traces alongside tinker's own investigation code, so a goal session never sees residue from either agent." }
 ]

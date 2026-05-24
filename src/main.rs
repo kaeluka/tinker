@@ -55,21 +55,21 @@ async fn main() -> Result<()> {
             Arc::new(ClaudeRunner::with_system_prompt(CLAUDE_TINKER_MODEL, tinker_prompt)),
             Arc::new(ClaudeRunner::new(CLAUDE_GOAL_MODEL)),
             Arc::new(ClaudeRunner::new(CLAUDE_SCHEDULER_MODEL)),
-            Arc::new(ClaudeRunner::with_system_prompt(CLAUDE_SCHEDULER_MODEL, rummage::rummage_system_prompt())),
+            Arc::new(ClaudeRunner::with_system_prompt(CLAUDE_TINKER_MODEL, rummage::rummage_system_prompt())),
         )
     } else if use_default_model {
         (
             Arc::new(RealOpenCodeRunner::default_with_agent("tinker")),
             Arc::new(RealOpenCodeRunner::new_default()),
             Arc::new(RealOpenCodeRunner::new_default()),
-            Arc::new(RealOpenCodeRunner::default_with_agent("rummage")),
+            Arc::new(RealOpenCodeRunner::default_with_agent("rummage")), // smartest tier
         )
     } else {
         (
             Arc::new(RealOpenCodeRunner::with_agent(OPENCODE_TINKER_MODEL, "tinker")),
             Arc::new(RealOpenCodeRunner::new(OPENCODE_GOAL_MODEL)),
             Arc::new(RealOpenCodeRunner::new(OPENCODE_SCHEDULER_MODEL)),
-            Arc::new(RealOpenCodeRunner::with_agent(OPENCODE_SCHEDULER_MODEL, "rummage")),
+            Arc::new(RealOpenCodeRunner::with_agent(OPENCODE_TINKER_MODEL, "rummage")),
         )
     };
 
@@ -418,7 +418,7 @@ async fn main() -> Result<()> {
 
     // Rummage task — sits idle until the user switches to rummage and sends a
     // message. No init prompt; the first user message opens the session.
-    // Uses the cheapest model tier (haiku / scheduler model).
+    // Uses the strongest model tier (same as tinker) per the rummage goal decision.
     {
         let app_ref = app.clone();
         let work_dir = work_dir.clone();
@@ -2050,24 +2050,22 @@ mod tests {
         assert!(logs_mkdir, "main.rs must call mkdir_all for the logs subdir");
     }
 
-    // spec (rummage): "Rummage runs on the cheapest model tier (haiku on the
-    // Claude backend)." The composition root in main.rs must wire the rummage
-    // runner to SCHEDULER_MODEL (the cheapest tier), not to TINKER_MODEL or
-    // GOAL_MODEL. Verified via source inspection since the wiring is inside main().
+    // spec (rummage): "Rummage uses the strongest model available for the chosen
+    // backend." The composition root in main.rs must wire the rummage runner to
+    // TINKER_MODEL (the smartest tier), not SCHEDULER_MODEL or GOAL_MODEL.
+    // Verified via source inspection since the wiring is inside main().
     #[test]
-    fn test_spec_rummage_wired_to_cheapest_model_tier() {
+    fn test_spec_rummage_wired_to_strongest_model_tier() {
         let main_rs = include_str!("main.rs");
-        // The rummage runner must be constructed with CLAUDE_SCHEDULER_MODEL /
-        // OPENCODE_SCHEDULER_MODEL — the same constants as the cleanup runner.
+        // The rummage runner must use CLAUDE_TINKER_MODEL on the Claude backend.
         assert!(
-            main_rs.contains("CLAUDE_SCHEDULER_MODEL, rummage::rummage_system_prompt()")
-                || main_rs.contains("SCHEDULER_MODEL, rummage::"),
-            "rummage runner must be constructed with the scheduler (cheapest) model constant",
+            main_rs.contains("CLAUDE_TINKER_MODEL, rummage::rummage_system_prompt()"),
+            "rummage claude runner must use CLAUDE_TINKER_MODEL (strongest tier)",
         );
+        // The rummage runner must use OPENCODE_TINKER_MODEL on the opencode backend.
         assert!(
-            main_rs.contains("OPENCODE_SCHEDULER_MODEL, \"rummage\"")
-                || main_rs.contains("SCHEDULER_MODEL, \"rummage\""),
-            "opencode rummage runner must be constructed with the scheduler (cheapest) model constant",
+            main_rs.contains("OPENCODE_TINKER_MODEL, \"rummage\""),
+            "rummage opencode runner must use OPENCODE_TINKER_MODEL (strongest tier)",
         );
     }
 }
