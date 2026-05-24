@@ -58,5 +58,9 @@ parent_id = "tinker"
 children = []
 
 [[related]]
-id = "claude-backend"
-reason = "Tool denials defined in this goal's opencode agent file (in particular `task`/`todowrite`) live in YAML frontmatter that the Claude path bypasses — on the Claude path the persona is passed via `--system-prompt` instead. Any mechanical tool restriction defined here must be re-imposed on the Claude path to hold on both backends; `claude-backend` owns that parity."
+id = "backends"
+reason = "Tool denials defined in this goal's opencode agent file (in particular `task`/`todowrite`) live in YAML frontmatter that the claude backend bypasses — there the persona is passed via `--system-prompt` instead. Any mechanical tool restriction defined here must be re-imposed on the claude path to hold on both backends; `backends` owns that parity."
+
+[[related]]
+id = "coding-standards"
+reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."

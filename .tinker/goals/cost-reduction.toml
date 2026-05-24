@@ -6,7 +6,7 @@ in how tinker uses LLMs and keeps a persistent record of
 observations across sessions. When the goal session runs, it
 inspects how tinker is built and run — prompt construction, cache
 behaviour, context shipped per turn, model tiering, session
-lifecycle, sibling-goal injection, conversation-history growth —
+lifecycle, goal-session context injection, conversation-history growth —
 looks for waste, and surfaces findings in its structured summary.
 Tinker folds significant observations into
 `.tinker/notes/cost-observations.md` so subsequent runs have
@@ -55,7 +55,7 @@ onto a cheaper tier is itself a cost-aware move.
 - In scope: standing investigation of how tinker uses LLMs; the
   Claude CLI `usage` events as primary data source; identifying and
   surfacing cuts (cache layout, prompt size, session lifecycle, model
-  tiering, sibling-goal injection, conversation-history growth);
+  tiering, goal-session context injection, conversation-history growth);
   maintaining the measurement substrate; persisting observations to
   `.tinker/notes/cost-observations.md` (tinker writes, goal sessions
   surface in summaries).
@@ -69,5 +69,6 @@ onto a cheaper tier is itself a cost-aware move.
 parent_id = ""
 children = []
 related = [
-  { id = "claude-backend", reason = "This goal's measurement substrate extends `src/claude.rs` (from `claude-backend`) to capture the per-message `usage` field the Claude CLI emits. Backend scope is limited to the Claude path until confirmed that's where the user spends." }
+  { id = "backends", reason = "This goal's measurement substrate extends the claude backend's output parser (`src/claude.rs`, governed by `backends`) to capture the per-message `usage` field the Claude CLI emits. Backend scope is limited to the claude path until confirmed that's where the user spends." },
+  { id = "coding-standards", reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link." }
 ]
