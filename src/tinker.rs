@@ -155,9 +155,9 @@ The `description` triple-quoted string must be closed with its own `"""` line be
 
 ### Goal content quality — goal-craft tactics
 
-During goal creation (each phase), goal editing (before step 4), and cross-goal alignment, apply `goal-craft`'s four content-quality tactics. When you spot a candidate violation, surface it to the user before writing — do not silently auto-fix.
+During goal creation (each phase), goal editing (before step 4), and cross-goal alignment, apply `goal-craft`'s five content-quality tactics. When you spot a candidate violation, surface it to the user before writing — do not silently auto-fix.
 
-**Tactic 1 — Sparseness (anchor test).** A bullet belongs in a goal only if something outside the implementation anchors it: (a) user intent or preference, (b) an external dependency (facts about the world outside the codebase — existing systems, vendor contracts, regulation, hardware), or (c) a hard-won negative constraint kept only when no positive form captures the same constraint. A bullet that is pure implementation opinion has no anchor and is a candidate for removal. The "decisions need clear provenance" rule is this test applied to DECISIONS provenance.
+**Tactic 1 — Sparseness (anchor test).** A claim belongs in a goal only if something outside the implementation anchors it: (a) user intent or preference, (b) an external dependency (facts about the world outside the codebase — existing systems, vendor contracts, regulation, hardware), or (c) a hard-won negative constraint kept only when no positive form captures the same constraint. A claim that is pure implementation opinion has no anchor and is a candidate for removal.
 
 **Tactic 2 — Positive framing.** Goals state WHAT not whatn't; WHY not whyn't. Hard-won negatives are acceptable only when no positive reformulation captures the same constraint. When a negative form has a clean positive reformulation, surface that candidate rewrite to the user.
 
@@ -165,7 +165,9 @@ During goal creation (each phase), goal editing (before step 4), and cross-goal 
 
 **Tactic 4 — Goals are prompts.** Every goal also functions as the prompt that goal sessions read. Five rules: (i) define terms before first use; (ii) use the same word for the same thing throughout and across sibling goals; (iii) reference other goals by id (e.g. `goal-craft`, not "the content-quality goal"); (iv) concrete examples earn their keep only when anchoring an abstract claim — decorative examples add density; (v) lead with the load-bearing point.
 
-Surface candidates to the user — a bullet without a clear anchor, a negative with a clean positive reformulation, content that belongs in a related-link rather than duplicated in another goal's body — rather than rewriting silently.
+**Tactic 5 — Synthesis over enumeration.** User-vetted intent is integrated into WHAT/WHY/SCOPE prose, never accumulated as a list of decisions. A decision list accumulates (each turn appends a bullet, nobody re-integrates), reads as a changelog rather than intent, lets contradictions coexist silently, and triggers list-scanning instead of reading comprehension. Synthesis forces integration — if claims don't fit together, the prose fails and the contradiction surfaces where a list would have hidden it.
+
+Surface candidates to the user — a claim without a clear anchor, a negative with a clean positive reformulation, content that belongs in a related-link rather than in a goal's body, decision bullets accumulating where synthesis belongs — rather than rewriting silently.
 
 ### Triggering goal sessions — /run
 
@@ -294,17 +296,17 @@ Acknowledging an answer ("got it", "perfect") without immediately doing one of t
 
 Before writing the TOML, send the user a concrete picture:
 
-> "Here's what the goal session will produce, based on what we agreed:
-> - It will …
-> - The output will look like …
-> - On invalid input it will …
-> - It will NOT support …
+> "Here's what I'd write for this goal:
 >
-> decisions I'd take on my own if you don't override them:
+> WHAT: [synthesized description — what the goal session will produce]
+> WHY: [the motivation]
+> SCOPE: In — [what's covered]. Out — [at least one explicit exclusion].
+>
+> Assumptions I'm baking in that you haven't explicitly confirmed:
 > - For X I'd assume …
 > - For Y I'd default to …
 >
-> Confirm or override each before I write the goal."
+> Push back on any of this before I write the file."
 
 Wait for the user to react to this playback. Write the file only after every flagged assumption has been confirmed or overridden.
 
@@ -312,33 +314,20 @@ This wait is not a quality check — it is epistemically required. The interview
 
 ### Phase 4 — Write the TOML
 
-The `description` field uses these sections in this order:
+The `description` field has three sections — WHAT, WHY, SCOPE — written as synthesized prose, not as a list of decisions.
 
 WHAT
-One paragraph. Concrete enough that the user would recognize the deliverable.
+Integrated prose. What the goal session will build, concrete enough that the user would recognize the deliverable. Weave in every piece of user-vetted intent; no implementation choices.
+
 WHY
-The user's stated motivation. If the user didn't articulate one, write
-exactly "User did not articulate a specific motivation beyond personal use."
-Use only what the user actually said; don't invent rationale.
+The user's motivation synthesized into prose. Use only what the user actually said; don't invent rationale. If the user didn't articulate a motivation, write exactly "User did not articulate a specific motivation beyond personal use."
+
 SCOPE
+Two passages: what this goal covers (in scope) and what it explicitly excludes (out of scope). Hard-won negative constraints that survive synthesis live here as carve-outs. Every goal has at least one out-of-scope item.
 
-In scope: bulleted list
-Out of scope: bulleted list. Every goal has at least one explicit
-out-of-scope item.
+No DECISIONS section. No HOW section. Implementation choices belong to the goal session, not to the goal. A previous failed implementation approach becomes a SCOPE carve-out only when it is a hard-won negative with no positive reformulation — never a replacement dictate. Provenance (who said what, when) stays in `.tinker/notes/notes.md`.
 
-DECISIONS (vetted)
-
-Pure user-domain requirements only — each bullet must pass `goal-craft`'s anchor test: (a) user intent or preference, (b) external dependency, or (c) hard-won negative with no clean positive reformulation. One bullet per concrete decision the user actively confirmed. Keep LLM implementation choices out of DECISIONS — those go in HOW.
-Format: Decision: <what>. Source: user said "<quote>" or
-Source: confirmed in playback.
-
-HOW
-Language, framework, style, dependency constraints. When a previous
-implementation attempt failed, record the failure as a negative
-constraint here (e.g. "Use library Y (library X caused Z)"), not as
-a replacement dictate in DECISIONS.
-
-DECISIONS is load-bearing. If it's empty or generic, the interview wasn't deep enough — go back to Phase 2.
+If the synthesized WHAT/WHY read as generic or empty, the interview wasn't deep enough — go back to Phase 2.
 
 After writing the TOML, delete `.tinker/goals/.draft.md` and confirm briefly.
 
@@ -1275,8 +1264,8 @@ mod tests {
             "prompt must declare the playback step required before writing",
         );
         assert!(
-            content.contains("decisions I'd take on my own"),
-            "playback must surface decisions tinker would otherwise make on its own",
+            content.contains("Assumptions I'm baking in"),
+            "playback must surface assumptions tinker is making that the user hasn't explicitly confirmed",
         );
         assert!(
             content.contains("Wait for the user to react to this playback"),
@@ -1348,34 +1337,33 @@ mod tests {
         );
     }
 
-    // spec (tinker): "Tinker must strictly separate
-    // user-domain intent from LLM implementation choices. Pure user
-    // requirements go in DECISIONS. When a previous implementation fails, it
-    // is recorded as a negative constraint in HOW, not as a replacement
-    // dictate."
+    // spec (tinker): user-vetted intent is synthesized into WHAT/WHY/SCOPE
+    // prose — there is no DECISIONS section and no HOW section. Implementation
+    // choices belong to the goal session. A failed implementation approach
+    // becomes a SCOPE carve-out only when it is a hard-won negative with no
+    // positive reformulation — never a replacement dictate.
     #[test]
     fn test_spec_decisions_vs_how_separation() {
         let content = tinker_agent_content();
-        // DECISIONS is scoped to user-domain requirements only.
+        // Phase 4 must not describe a DECISIONS or HOW section.
         assert!(
-            content.contains("Pure user-domain requirements only"),
-            "DECISIONS section must be limited to pure user-domain requirements",
+            !content.contains("DECISIONS (vetted)"),
+            "Phase 4 must not describe a DECISIONS section — intent is synthesized into WHAT/WHY prose",
         );
         assert!(
-            content.contains("Keep LLM implementation choices out of"),
-            "prompt must keep LLM implementation choices out of DECISIONS",
+            !content.contains("DECISIONS is load-bearing"),
+            "prompt must not gate write on DECISIONS completeness — synthesis is the criterion",
         );
-        // Failed implementations become negative constraints in HOW. The
-        // prompt is a raw multi-line string literal, so normalize newlines
-        // before checking for the phrase.
+        // Implementation choices belong to the session, not the goal.
+        assert!(
+            content.contains("Implementation choices belong to the goal session"),
+            "prompt must state implementation choices belong to the goal session",
+        );
+        // Failed implementations become SCOPE carve-outs.
         let normalized = content.replace('\n', " ");
         assert!(
-            normalized.contains("record the failure as a negative constraint here"),
-            "HOW must record prior failed implementations as a negative constraint",
-        );
-        assert!(
-            normalized.contains("not as a replacement dictate in DECISIONS"),
-            "prompt must forbid recording failures as replacement dictates in DECISIONS",
+            normalized.contains("failed implementation") && normalized.contains("SCOPE carve-out"),
+            "prompt must direct failed implementations to become SCOPE carve-outs",
         );
     }
 
@@ -1569,11 +1557,11 @@ mod tests {
         );
     }
 
-    // spec (tinker): tinker applies goal-craft's four content-
+    // spec (tinker): tinker applies goal-craft's five content-
     // quality tactics during goal creation, editing, and cross-goal alignment.
-    // The prompt must name the tactic set and all four tactics by name.
+    // The prompt must name the tactic set and all five tactics by name.
     #[test]
-    fn test_spec_tinker_applies_goal_craft_four_tactics() {
+    fn test_spec_tinker_applies_goal_craft_five_tactics() {
         let content = tinker_agent_content();
         assert!(
             content.contains("goal-craft"),
@@ -1594,6 +1582,10 @@ mod tests {
         assert!(
             content.contains("Goals are prompts") || content.contains("goals are prompts"),
             "prompt must name goals-as-prompts as a tactic",
+        );
+        assert!(
+            content.contains("Synthesis over enumeration") || content.contains("synthesis over enumeration"),
+            "prompt must name synthesis over enumeration as the fifth tactic",
         );
     }
 

@@ -96,3 +96,11 @@ children = []
 [[related]]
 id = "goal-craft"
 reason = "Content-quality counterpart to this goal's structural rules, and owner of the WHAT/WHY/SCOPE section schema. Structure ensures tree integrity (parent-summary coherence, symmetric related-links, merge/nest operations); content ensures each file is a clean prompt (anchored claims, positive framing, orthogonality, goals-as-prompts, synthesis over enumeration). Both apply on every edit."
+
+[[related]]
+id = "coding-standards"
+reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
+
+[[related]]
+id = "goal-sessions"
+reason = "Goal sessions consume this goal's link graph as their context model: a session is handed its own goal plus a neighborhood table (parents/children/related, each with its reason) and pulls full text on demand, traversing the graph instead of receiving every goal. The reason-per-link is the session's navigation index."

@@ -12,8 +12,9 @@ out-of-scope items under SCOPE. There is no DECISIONS section and no
 HOW section: user-vetted intent is woven into WHAT and WHY, and
 provenance (who said what, when) lives in `.tinker/notes/notes.md`,
 not in the goal. These rules apply to every goal file and are
-consumed by tinker (during interviews, edits, and cross-goal
-alignment) and by goal sessions (through sibling-goal injection).
+consumed by tinker during interviews, edits, and cross-goal
+alignment. (Goal sessions don't apply these rules — they don't write
+goals — they only read the well-formed goals these rules produce.)
 
 Five tactics govern the content:
 

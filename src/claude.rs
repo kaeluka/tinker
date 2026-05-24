@@ -331,7 +331,7 @@ mod tests {
         assert!(args.iter().any(|a| a == "--verbose"));
     }
 
-    // spec (claude-backend): model tier mapping is opus (tinker),
+    // spec (backends): model tier mapping is opus (tinker),
     // sonnet (goal sessions), haiku (scheduler). The constants must use
     // Claude's short aliases.
     #[test]
@@ -341,7 +341,7 @@ mod tests {
         assert_eq!(SCHEDULER_MODEL, "haiku");
     }
 
-    // spec (claude-backend): the orchestrator persona is passed via
+    // spec (backends): the orchestrator persona is passed via
     // --system-prompt when using Claude, not via agent file installation.
     // ClaudeRunner::with_system_prompt constructs a runner with the prompt.
     #[test]
@@ -351,7 +351,7 @@ mod tests {
         assert_eq!(runner.system_prompt, Some("test prompt".to_string()));
     }
 
-    // spec (claude-backend): session resumption uses --resume <session-id>,
+    // spec (backends): session resumption uses --resume <session-id>,
     // the Claude equivalent of opencode's -s.
     #[test]
     fn test_spec_resume_flag_for_session_resumption() {
@@ -366,7 +366,7 @@ mod tests {
         );
     }
 
-    // spec (claude-backend): Claude output format requires
+    // spec (backends): Claude output format requires
     // --output-format stream-json --verbose.
     #[test]
     fn test_spec_verbose_required_for_stream_json() {
@@ -376,7 +376,7 @@ mod tests {
         assert!(args.contains(&"stream-json".to_string()));
     }
 
-    // spec (claude-backend): the Claude path must mechanically enforce the same
+    // spec (backends): the Claude path must mechanically enforce the same
     // identity-level tool denials (task, todowrite) as the opencode agent files
     // do for tinker-agent and rummage. When disallowed_tools is set, the
     // --disallowedTools flag must appear in the args, followed by each denied tool.
@@ -391,7 +391,7 @@ mod tests {
         assert_eq!(args.get(flag_idx + 2).map(|s| s.as_str()), Some("todowrite"));
     }
 
-    // spec (claude-backend): when no tools are denied, --disallowedTools must
+    // spec (backends): when no tools are denied, --disallowedTools must
     // not appear — avoid injecting unnecessary flags.
     #[test]
     fn test_spec_disallowed_tools_absent_when_empty() {
@@ -399,7 +399,7 @@ mod tests {
         assert!(!args.iter().any(|a| a == "--disallowedTools"), "--disallowedTools must not appear when list is empty");
     }
 
-    // spec (claude-backend): ClaudeRunner::with_denied_tools stores the denied
+    // spec (backends): ClaudeRunner::with_denied_tools stores the denied
     // tool list so it can be threaded into claude_args at invocation time.
     #[test]
     fn test_spec_with_denied_tools_stores_list() {
@@ -407,7 +407,7 @@ mod tests {
         assert_eq!(runner.disallowed_tools, vec!["task", "todowrite"]);
     }
 
-    // spec (claude-backend): tool calls in the TUI are rendered as compact
+    // spec (backends): tool calls in the TUI are rendered as compact
     // one-liners, similar to opencode style (e.g., `→ bash echo hello`).
     // format_tool_use must produce this format.
     #[test]

@@ -157,3 +157,11 @@ reason = "The interview protocol and edit-time cross-goal alignment apply the co
 [[related]]
 id = "creative-process"
 reason = "The hardness principle and the dual-duty sharpening (surface inflection AND refuse the easy path) defined in `creative-process`'s WHY are operationalized here as two concrete interview behaviors: menu-avoidance and bare-assertion anchor-probing. Principle lives there; operational form lives here."
+
+[[related]]
+id = "coding-standards"
+reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
+
+[[related]]
+id = "shared-language"
+reason = "tinker's conversation and the batch messages it composes are user-facing prose; `shared-language` governs the vocabulary of every user-facing surface. Pull it when composing anything the user reads."

@@ -1,14 +1,14 @@
-use crate::cap::{Filesystem, OpenCodeRunner};
+use crate::cap::OpenCodeRunner;
 use crate::goal::Goal;
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
-/// Shared VCS-mutation rule, used by the orchestrator prompt and by the
-/// goal-session init message. The orchestrator and goal sessions alike may
+/// Shared VCS-mutation rule, used by the tinker prompt and by the
+/// goal-session init message. Tinker and goal sessions alike may
 /// read VCS state but never mutate it — version control is the user's job
-/// (per `orchestrator-agent` and `goal-sessions` goals).
+/// (per `tinker-agent` and `goal-sessions` goals).
 pub const VCS_RULES: &str = "Treat version control as read-only. \
 You may read state (`git status`, `git diff`, `git log`) to orient yourself, \
 but don't mutate it — no commits, pushes, checkouts, branch operations, \
@@ -16,12 +16,10 @@ rebases, or stashing. Writing files is fine; the user handles commits.";
 
 /// Directory-write restriction injected into every goal-session prompt.
 /// Goal sessions must not write to the tinker-owned directories listed here;
-/// those are the orchestrator's exclusive domain (per `goal-sessions` decision:
-/// "Goal sessions must not write to `.tinker/goals/`, `.tinker/notes/`, or
-/// `.tinker/state/`"). Reading them is fine; writing is not.
+/// those are tinker's exclusive domain (per `goal-sessions`).
 pub const TINKER_DIR_WRITE_RULES: &str = "Do not write to `.tinker/goals/`, \
-`.tinker/notes/`, or `.tinker/state/`. Those directories are owned by the \
-orchestrator. You may read them (e.g. to understand sibling goals or state), \
+`.tinker/notes/`, or `.tinker/state/`. Those directories are owned by \
+tinker. You may read them (e.g. to understand sibling goals or state), \
 but must not create, modify, or delete any file inside them.";
 
 /// Implementation-ownership mandate injected into every goal-session prompt.
@@ -65,57 +63,83 @@ pub enum GoalEvent {
     },
 }
 
-fn goal_init_message(goal: &Goal, reason: Option<&str>, sibling_goals: &[Goal]) -> String {
-    let siblings_section = if sibling_goals.is_empty() {
+/// Builds a Markdown table of the goal's neighboring goals in the graph —
+/// its parent (if any), its declared children, and its related links. Each
+/// row carries the neighbor's id and a reason explaining why it might be
+/// relevant to pull. Returns an empty string when the goal has no neighbors.
+fn build_neighborhood_table(goal: &Goal) -> String {
+    let mut rows: Vec<(String, String)> = vec![];
+
+    if !goal.parent_id.is_empty() {
+        rows.push((
+            goal.parent_id.clone(),
+            "parent goal (read for broader context and framing)".to_string(),
+        ));
+    }
+
+    for child_id in &goal.children {
+        rows.push((
+            child_id.clone(),
+            "child goal (read for sub-aspect details)".to_string(),
+        ));
+    }
+
+    for related in &goal.related {
+        rows.push((related.id.clone(), related.reason.clone()));
+    }
+
+    if rows.is_empty() {
+        return String::new();
+    }
+
+    let mut table = String::from("| goal-id | reason |\n|---------|--------|\n");
+    for (id, reason) in &rows {
+        table.push_str(&format!("| `{}` | {} |\n", id, reason));
+    }
+    table
+}
+
+fn goal_init_message(goal: &Goal, reason: Option<&str>) -> String {
+    let table = build_neighborhood_table(goal);
+    let neighbors_section = if table.is_empty() {
         String::new()
     } else {
-        let body = sibling_goals
-            .iter()
-            .filter(|g| g.id != goal.id)
-            .map(|g| format!("### Goal `{}`\n\n{}\n", g.id, g.description))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if body.trim().is_empty() {
-            String::new()
-        } else {
-            format!(
-                "\n## Other goals in this project — apply where relevant\n\n{body}\n"
-            )
-        }
+        format!(
+            "\n## Neighbor goals\n\n\
+             Pull any neighbor's full text on demand by reading \
+             `.tinker/goals/<goal-id>.toml`. Use the reason column to decide \
+             what to pull.\n\n\
+             {table}\n"
+        )
     };
+
     let mut prompt = format!(
-        r#"You are a goal session for `tinker`, an autonomous coding assistant.
-
-## Your goal
-
-Goal ID: {id}
-Goal:
-{description}
-
-This goal is ongoing — there is no definition of done. You will be resumed periodically when it makes sense to make further progress on it.
-
-Take action only when there is something concrete to do right now. If the current codebase doesn't call for any work on this goal at this moment, briefly say so and stop. Never create files speculatively.
-
-## Rules
-
-- {vcs_rules}
-- {tinker_dir_write_rules}
-- {ownership_mandate}
-{siblings_section}
-## Subgoals
-
-You may create subgoals by writing TOML files to `.tinker/goals/<subgoal-id>.toml`:
-```toml
-id = "<subgoal-id>"
-description = "What this subgoal accomplishes"
-parent_id = "{id}"
-children = []
-```
-
-When you have made meaningful progress (or decided no action is warranted), stop."#,
+        "You are a goal session for `tinker`, an autonomous coding assistant.\n\
+         \n\
+         ## Your goal\n\
+         \n\
+         Goal ID: {id}\n\
+         Goal:\n\
+         {description}\n\
+         \n\
+         This goal is ongoing — there is no definition of done. You will be \
+         resumed periodically when it makes sense to make further progress on it.\n\
+         \n\
+         Take action only when there is something concrete to do right now. If \
+         the current codebase doesn't call for any work on this goal at this \
+         moment, briefly say so and stop. Never create files speculatively.\n\
+         \n\
+         ## Rules\n\
+         \n\
+         - {vcs_rules}\n\
+         - {tinker_dir_write_rules}\n\
+         - {ownership_mandate}\n\
+         {neighbors_section}\
+         When you have made meaningful progress (or decided no action is \
+         warranted), stop.",
         id = goal.id,
         description = goal.description,
-        siblings_section = siblings_section,
+        neighbors_section = neighbors_section,
         vcs_rules = VCS_RULES,
         tinker_dir_write_rules = TINKER_DIR_WRITE_RULES,
         ownership_mandate = IMPLEMENTATION_OWNERSHIP_MANDATE,
@@ -151,23 +175,15 @@ pub async fn run_silent(
 pub async fn run_goal(
     goal: Goal,
     reason: Option<String>,
-    _tinker_dir: PathBuf,
     work_dir: PathBuf,
     tx: mpsc::Sender<GoalEvent>,
     oc: Arc<dyn OpenCodeRunner>,
-    fs: Arc<dyn Filesystem>,
 ) -> Result<(String, String)> {
     let goal_id = goal.id.clone();
-    // Every dispatch is a fresh session — per `goal-sessions` decision, there
-    // is no in-process resumption across triggers. Give the session the FULL
-    // CONTENT of every sibling goal so coding-standards and other standing
-    // concerns are in its context without the orchestrator copying snippets
-    // into the description.
-    let dirs = crate::goal::discover_tinker_dirs(fs.as_ref(), &work_dir);
-    let siblings: Vec<Goal> = crate::goal::load_all_goals(fs.as_ref(), &dirs)
-        .map(|l| l.goals)
-        .unwrap_or_default();
-    let message = goal_init_message(&goal, reason.as_deref(), &siblings);
+    // Every dispatch is a fresh session — per `goal-sessions`, there is no
+    // in-process resumption across triggers. The session receives its own
+    // goal in full plus a neighborhood table for on-demand traversal.
+    let message = goal_init_message(&goal, reason.as_deref());
 
     // Emit the trigger reason as the very first log line, marked for bold
     // rendering by the TUI (tui-goal decision: "the specific 'reason' it was
@@ -239,7 +255,7 @@ mod tests {
     fn test_spec_goal_init_message_includes_reason() {
         let calc = make_goal("calc", "build calc");
         let reason = "user edited the description to mention rounding";
-        let init = goal_init_message(&calc, Some(reason), &[]);
+        let init = goal_init_message(&calc, Some(reason));
         assert!(
             init.contains(reason),
             "init message must surface the trigger reason"
@@ -253,7 +269,7 @@ mod tests {
     #[test]
     fn test_spec_goal_messages_carry_vcs_read_only_rule() {
         let calc = make_goal("calc", "build calc");
-        let init = goal_init_message(&calc, None, &[]);
+        let init = goal_init_message(&calc, None);
         assert!(
             init.contains(VCS_RULES),
             "init message must carry VCS read-only rule verbatim"
@@ -268,12 +284,12 @@ mod tests {
     // spec: goal-sessions decision — "Goal sessions must not write to
     // `.tinker/goals/`, `.tinker/notes/`, or `.tinker/state/`." The init
     // prompt must carry the directory write restriction into the agent's
-    // context so it cannot silently mutate the orchestrator-owned
-    // directories when dispatched with a narrow scope.
+    // context so it cannot silently mutate the tinker-owned directories when
+    // dispatched with a narrow scope.
     #[test]
     fn test_spec_goal_messages_carry_tinker_dir_write_restriction() {
         let calc = make_goal("calc", "build calc");
-        let init = goal_init_message(&calc, None, &[]);
+        let init = goal_init_message(&calc, None);
         assert!(
             init.contains(TINKER_DIR_WRITE_RULES),
             "init message must carry tinker-dir write restriction verbatim"
@@ -291,7 +307,7 @@ mod tests {
     #[test]
     fn test_spec_goal_messages_carry_ownership_mandate() {
         let calc = make_goal("calc", "build calc");
-        let init = goal_init_message(&calc, None, &[]);
+        let init = goal_init_message(&calc, None);
         assert!(
             init.contains(IMPLEMENTATION_OWNERSHIP_MANDATE),
             "init message must carry ownership mandate verbatim"
@@ -309,10 +325,9 @@ mod tests {
         );
     }
 
-    // spec: goal-sessions decision — "After each goal session finishes, the
-    // orchestrator produces a structured summary covering what was done,
-    // design decisions made beyond the goal, and how to try the result."
-    // The session-end prompt must request all four structured parts.
+    // spec: goal-sessions — "After each goal session finishes, tinker folds
+    // per-session summaries into a single user-facing message." The session-end
+    // prompt must request all four structured parts.
     #[test]
     fn test_spec_summary_request_has_structured_parts() {
         let s = SUMMARY_REQUEST;
@@ -381,7 +396,6 @@ mod tests {
         use crate::cap::Chunk;
         use async_trait::async_trait;
         use std::sync::atomic::{AtomicUsize, Ordering};
-        use crate::test_utils::MockFs;
 
         struct RecordingRunner {
             calls: AtomicUsize,
@@ -412,21 +426,15 @@ mod tests {
             calls: AtomicUsize::new(0),
             first_session_id: Mutex::new(None),
         });
-        let fs = Arc::new(MockFs::new());
-        fs.add_dir(std::path::Path::new("/work"));
-        fs.add_dir(std::path::Path::new("/work/.tinker"));
-        fs.add_dir(std::path::Path::new("/work/.tinker/goals"));
         let (tx, _rx) = mpsc::channel(8);
         let goal = make_goal("widget", "build a widget");
 
         let _ = run_goal(
             goal,
             Some("reason".into()),
-            "/work/.tinker".into(),
             "/work".into(),
             tx,
             runner.clone(),
-            fs,
         )
         .await;
 
@@ -438,26 +446,94 @@ mod tests {
         );
     }
 
-    // spec: design notes — "each goal session's init message includes the
-    // full content of every other (sibling) goal." This lets a goal session
-    // apply shared concerns (standards, security) without relying on the
-    // orchestrator copying snippets into the description.
+    // spec: goal-sessions — "On a fresh start the session receives its own
+    // goal in full plus a neighborhood table — its parents, children, and
+    // `related` goals, each as a `{goal-id, reason}` row." The init message
+    // must include a Markdown table with the neighbor ids and reasons so the
+    // session can decide what to pull on demand.
     #[test]
-    fn test_spec_goal_init_includes_sibling_goal_content() {
-        let calc = make_goal("calc", "build calc");
-        let standards = make_goal("coding-standards", "MUST use DI everywhere.");
-        let msg = goal_init_message(&calc, None, &[standards.clone(), calc.clone()]);
+    fn test_spec_goal_init_has_neighborhood_table() {
+        use crate::goal::RelatedLink;
+
+        let mut goal = make_goal("calc", "build calc");
+        goal.parent_id = "math".into();
+        goal.children = vec!["rounding".into()];
+        goal.related = vec![RelatedLink {
+            id: "coding-standards".into(),
+            reason: "apply these standards to all source code".into(),
+        }];
+
+        let msg = goal_init_message(&goal, None);
+
+        // Own goal text must be present
         assert!(msg.contains("build calc"));
-        assert!(msg.contains("coding-standards"));
-        assert!(msg.contains("MUST use DI everywhere."));
-        // own goal must not appear in the siblings section (filtered out)
-        let after_siblings = msg.split("Other goals in this project").nth(1);
-        if let Some(rest) = after_siblings {
-            // Make sure `### Goal `calc`` doesn't appear in the siblings block
-            assert!(
-                !rest.contains("### Goal `calc`"),
-                "current goal must not be listed among its own siblings"
-            );
-        }
+
+        // Neighborhood table must name all three relationship categories
+        assert!(msg.contains("`math`"), "parent must appear in table");
+        assert!(msg.contains("`rounding`"), "child must appear in table");
+        assert!(msg.contains("`coding-standards`"), "related must appear in table");
+
+        // Related reason must appear verbatim (it's the navigation index)
+        assert!(
+            msg.contains("apply these standards to all source code"),
+            "related reason must appear verbatim so session can judge relevance"
+        );
+
+        // Table header must be present
+        assert!(msg.contains("| goal-id | reason |"));
+    }
+
+    // spec: goal-sessions — "The session reads the reasons and pulls a
+    // neighbor's full text on demand (it can read `.tinker/goals/`)." The
+    // init message must explicitly tell the session how to pull neighbor text.
+    #[test]
+    fn test_spec_goal_init_neighbors_pullable_on_demand() {
+        let mut goal = make_goal("calc", "build calc");
+        goal.parent_id = "math".into();
+
+        let msg = goal_init_message(&goal, None);
+
+        assert!(
+            msg.contains(".tinker/goals/"),
+            "init message must name the path sessions use to pull neighbor full text"
+        );
+    }
+
+    // spec: goal-sessions SCOPE — sessions must not write to `.tinker/goals/`.
+    // The Subgoals section that previously invited writing TOML files there
+    // contradicted this rule and has been removed.
+    #[test]
+    fn test_spec_goal_init_no_subgoals_section() {
+        let goal = make_goal("calc", "build calc");
+        let msg = goal_init_message(&goal, None);
+
+        assert!(
+            !msg.contains("## Subgoals"),
+            "Subgoals section must not appear — it invited writing to .tinker/goals/ \
+             which violates the tinker-dir write prohibition"
+        );
+        // The write prohibition in the Rules section is what blocks this, not a
+        // section that both invites and then forbids.
+        assert!(
+            msg.contains(TINKER_DIR_WRITE_RULES),
+            "write prohibition must still be present in Rules"
+        );
+    }
+
+    // spec: goal-sessions — a goal with no parent, no children, and no related
+    // links produces no neighborhood table (no noise for isolated goals).
+    #[test]
+    fn test_spec_goal_init_no_neighborhood_table_when_isolated() {
+        let goal = make_goal("standalone", "a standalone goal");
+        let msg = goal_init_message(&goal, None);
+
+        assert!(
+            !msg.contains("| goal-id | reason |"),
+            "isolated goal must produce no neighborhood table"
+        );
+        assert!(
+            !msg.contains("## Neighbor goals"),
+            "isolated goal must produce no neighbor section header"
+        );
     }
 }

@@ -258,7 +258,6 @@ async fn main() -> Result<()> {
     // Per `goal-sessions` decision: every dispatch is a fresh session — no
     // in-process resumption across triggers.
     {
-        let primary_tinker_dir = primary_tinker_dir.clone();
         let work_dir = work_dir.clone();
         let goal_tx = goal_tx.clone();
         let oc = oc_goal.clone();
@@ -331,11 +330,9 @@ async fn main() -> Result<()> {
                 let result = run_goal(
                     goal.clone(),
                     reason,
-                    primary_tinker_dir.clone(),
                     work_dir.clone(),
                     goal_tx.clone(),
                     oc.clone(),
-                    fs.clone(),
                 )
                 .await;
                 let session_ms = session_t0.elapsed().as_millis() as u64;

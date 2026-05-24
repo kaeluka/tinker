@@ -183,9 +183,13 @@ id = "cleanup-hook"
 reason = "Rummage is an active investigator that writes scratch tests, fuzz harnesses, and instrumentation marked with `tinker-test-case:`. The cleanup-hook removes those traces alongside tinker's own investigation code, so a goal session never sees residue from either agent."
 
 [[related]]
-id = "claude-backend"
-reason = "Tool denials in rummage's opencode agent file (e.g. `task`/`todowrite`) live in YAML frontmatter that the Claude path bypasses — on the Claude path the persona is passed via `--system-prompt` instead. Any mechanical tool restriction defined for rummage must be re-imposed on the Claude path to hold on both backends; `claude-backend` owns that parity."
+id = "backends"
+reason = "Tool denials in rummage's opencode agent file (e.g. `task`/`todowrite`) live in YAML frontmatter that the claude backend bypasses — there the persona is passed via `--system-prompt` instead. Any mechanical tool restriction defined for rummage must be re-imposed on the claude path to hold on both backends; `backends` owns that parity."
 
 [[related]]
 id = "coding-standards"
 reason = "Rummage's investigation surface presumes the target codebase implements `coding-standards`: capability-based DI makes effects mockable, observable internals make state inspectable, and the `tinker-test-case:` marker convention makes cleanup mechanical. Multiple techniques in rummage's inventory (backward causal reasoning especially, but also instrumentation and scratch-test experiments) lean directly on these affordances. Asymmetric link: `coding-standards` is a packaged-style goal at ancestor scope and does not carry back-links to project-local goals."
+
+[[related]]
+id = "shared-language"
+reason = "rummage produces documents and chat for the user; `shared-language` governs their vocabulary, including its rule that pasted logs and jargon get translated rather than echoed. Pull it when writing for the user."

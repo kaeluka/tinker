@@ -55,5 +55,6 @@ where it has full batch context.
 parent_id = "tinker"
 children = []
 related = [
-  { id = "goal-sessions", reason = "Each `/run` line tinker emits becomes a dispatch into `goal-sessions`'s pending queue, with the parsed reason threaded into the session context. The trigger syntax has no effect without the dispatch mechanism on the other end." }
+  { id = "goal-sessions", reason = "Each `/run` line tinker emits becomes a dispatch into `goal-sessions`'s pending queue, with the parsed reason threaded into the session context. The trigger syntax has no effect without the dispatch mechanism on the other end." },
+  { id = "coding-standards", reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link." }
 ]

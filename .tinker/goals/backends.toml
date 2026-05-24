@@ -1,0 +1,73 @@
+id = "backends"
+description = """
+## WHAT
+Tinker runs against a **pluggable backend** — the LLM CLI it shells
+out to — chosen at startup. Two backends exist today: **opencode**
+(the default) and **claude** (selected with the `--claude` flag).
+Both are co-equal implementations of the same runner trait, wired to
+real instances only at the composition root; business logic depends
+on the trait, not on any vendor's CLI. Adding a third backend (e.g.
+codex) means implementing that trait, not threading vendor specifics
+through the system.
+
+Each backend maps tinker's roles to its own models and delivers the
+tinker persona its own way:
+
+- **opencode** (default): runs its own configured model defaults, and
+  installs the tinker and rummage personas as `opencode` agent files
+  (see `tinker-agent`), whose YAML frontmatter also carries the
+  `task`/`todowrite` tool denials.
+- **claude** (`--claude`): maps roles to Opus (tinker) and Sonnet
+  (goal sessions); passes the persona via `--system-prompt` instead
+  of an agent file; resumes sessions with `--resume <session-id>`;
+  parses streaming JSON (`--output-format stream-json --verbose`);
+  and, because it bypasses the agent file, must re-impose the same
+  `task`/`todowrite` denials mechanically via `--disallowedTools` —
+  the parity `tinker-agent` and `rummage` rely on. It is a boolean
+  startup flag with no config persistence.
+
+Tool calls from either backend render in the TUI as compact
+one-liners.
+
+## WHY
+Tinker's business logic should depend on a backend abstraction, not
+on one vendor's CLI: the user picks the models they prefer at
+startup, and a new backend slots in by implementing the runner rather
+than by editing the system around it. Capturing the abstraction as
+intent also keeps both backends legible — before this goal only the
+claude path was written down, so the opencode backend kept going
+invisible as the silent default. Naming opencode and claude as
+co-equal implementations fixes that and makes the cost of a third
+backend explicit and small.
+
+## SCOPE
+- In scope: the runner-trait abstraction with real implementations
+  wired only at the composition root; the two current backends
+  (opencode default, claude via `--claude`); per-backend model-tier
+  mapping and persona delivery; `--resume` session resumption and
+  streaming-JSON parsing on the claude path; compact one-liner
+  tool-call rendering; mechanical `task`/`todowrite` denial parity on
+  the claude path, which bypasses the opencode agent file.
+- Out of scope: persisting the backend choice in config (it's a
+  startup flag); auto-detecting which CLI is installed; backends
+  beyond opencode and claude until one is actually added.
+
+"""
+parent_id = ""
+children = []
+
+[[related]]
+id = "tinker-agent"
+reason = "`tinker-agent` defines how the opencode backend delivers the tinker persona — a custom agent file whose YAML frontmatter carries the `task`/`todowrite` denials. The claude backend bypasses that file (persona via `--system-prompt`), so this goal owns re-imposing those denials mechanically via `--disallowedTools` to keep the boundary identical on both backends."
+
+[[related]]
+id = "rummage"
+reason = "Same parity concern as `tinker-agent`: rummage's opencode agent file carries `task`/`todowrite` denials in frontmatter that the claude backend bypasses; this goal owns re-imposing them via `--disallowedTools` on the claude path."
+
+[[related]]
+id = "cost-reduction"
+reason = "`cost-reduction`'s measurement substrate extends the claude backend's output parser (`src/claude.rs`) to capture the per-message `usage` field the Claude CLI emits. Cost work is scoped to the claude backend until it's confirmed that's where the user spends."
+
+[[related]]
+id = "coding-standards"
+reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
