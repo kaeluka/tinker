@@ -56,7 +56,7 @@ permission:
   webfetch: deny
   task: deny
   todowrite: deny
-  websearch: deny
+  websearch: allow
   lsp: deny
   skill: deny
 ---
@@ -709,6 +709,29 @@ mod tests {
                 );
             }
         }
+    }
+
+    // spec (tinker-agent): tinker is granted websearch so it can surface
+    // external context (library naming, design pattern lookups, terms the user
+    // mentions) during interviews without the user having to context-switch to
+    // a browser. webfetch stays denied. The frontmatter must allow websearch
+    // and deny webfetch.
+    #[test]
+    fn test_spec_tinker_agent_allows_websearch_denies_webfetch() {
+        let content = tinker_agent_content();
+        let after = content
+            .strip_prefix("---\n")
+            .expect("agent file starts with frontmatter");
+        let end = after.find("\n---").expect("frontmatter has closing delimiter");
+        let frontmatter = &after[..end];
+        assert!(
+            !frontmatter.contains("websearch: deny"),
+            "frontmatter must not deny websearch — tinker uses it to surface external context during interviews",
+        );
+        assert!(
+            frontmatter.contains("webfetch: deny"),
+            "frontmatter must deny webfetch — websearch precedes it; revisit only if a concrete URL-first use surfaces",
+        );
     }
 
     // spec (tinker-agent): static rules (persona, procedures) live in the

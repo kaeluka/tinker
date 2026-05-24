@@ -49,13 +49,17 @@ async fn main() -> Result<()> {
     // With --default-model, all runners omit -m and let opencode pick its default.
     // With --claude, use ClaudeRunner with opus/sonnet/haiku tiers.
     let (oc_tinker, oc_goal, oc_cleanup_runner, oc_rummage): (Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>) = if use_claude {
-        // Claude backend: pass tinker persona via --system-prompt instead of agent file
+        // Claude backend: pass tinker persona via --system-prompt instead of agent file.
+        // task/todowrite are denied mechanically via --disallowedTools to match the
+        // identity-level enforcement in the opencode agent files for tinker and rummage.
         let tinker_prompt = tinker_agent_content();
         (
-            Arc::new(ClaudeRunner::with_system_prompt(CLAUDE_TINKER_MODEL, tinker_prompt)),
+            Arc::new(ClaudeRunner::with_system_prompt(CLAUDE_TINKER_MODEL, tinker_prompt)
+                .with_denied_tools(["task", "todowrite"])),
             Arc::new(ClaudeRunner::new(CLAUDE_GOAL_MODEL)),
             Arc::new(ClaudeRunner::new(CLAUDE_SCHEDULER_MODEL)),
-            Arc::new(ClaudeRunner::with_system_prompt(CLAUDE_TINKER_MODEL, rummage::rummage_system_prompt())),
+            Arc::new(ClaudeRunner::with_system_prompt(CLAUDE_TINKER_MODEL, rummage::rummage_system_prompt())
+                .with_denied_tools(["task", "todowrite"])),
         )
     } else if use_default_model {
         (

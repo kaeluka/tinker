@@ -2,84 +2,59 @@ id = "tinker-notes"
 description = """
 ## WHAT
 Tinker silently maintains a single append-only notes file at
-`.tinker/notes/notes.md`. Throughout conversation, it writes brief
-timestamped entries capturing things that may be useful for later
-self-improvement — friction, surprise, reframes, recurring threads,
-moments where the user explicitly asks it to remember something. The
-tinker does not talk about taking notes; it writes them and keeps
-the conversation moving. The file is read-private to tinker —
-goal sessions cannot read it. There is no retrieval or reflection
-mechanism yet — this goal builds only the substrate.
+`.tinker/notes/notes.md`. Throughout conversation it writes brief,
+timestamped, "observe without judging" entries — descriptive,
+point-of-interest framing, never problem framing — whenever one of
+these triggers fires:
+
+- **friction** — the user corrects tinker, repeats themselves, or
+  pushes back;
+- **surprise** — something behaved differently than expected (a
+  point of interest, not a problem);
+- **reframe** — the conversation pivots from one framing to another
+  (also a point of interest);
+- **recurring thread** — a pattern tinker notices, or one the user
+  names ("I noticed something similar last week");
+- **self-introduced framing that gets called out** — logged as
+  data, not dwelt on;
+- **explicit remember-this** — the user asks tinker to remember a
+  situation.
+
+Note-taking is silent: tinker writes the entry and keeps the
+conversation moving, never interrupting to announce it — the same
+pattern as the vocabulary file. The file is read-private to tinker;
+goal sessions can neither read nor write it. This goal builds only
+the substrate — there is no retrieval or reflection mechanism yet.
 
 ## WHY
-Tinker shouldn't become a tool that's only great for building tinker;
-it should optimize building tinker in a generalizable way. The path
-toward that is self-improvement, which requires observation
-accumulating somewhere tinker can later reflect on. Right
-now no such accumulation exists — every conversation starts fresh.
-This goal lays the substrate. Doing it incrementally — substrate
-first, reflection later — keeps the design honest: we will know what
-notes actually look like before we design the pass that reads them.
+Tinker shouldn't become a tool that's only great for building
+tinker; it should optimize building tinker in a generalizable way.
+The path toward that is self-improvement, which requires
+observations accumulating somewhere tinker can later reflect on —
+and right now no such accumulation exists; every conversation starts
+fresh. This goal lays the substrate. Doing it incrementally —
+substrate first, reflection later — keeps the design honest: we will
+know what notes actually look like before designing the pass that
+reads them.
+
+The file is read-private because its contents are tinker's own
+chain-of-thought. Making it readable to goal sessions would leak
+that deliberation into session context that should be guided only by
+goals, trigger reasons, and source; that prohibition is enforced in
+`goal-sessions`. And only tinker takes notes in this round — goal
+sessions don't share tinker's conversational chain of thought, so
+there's nothing for them to observe.
 
 ## SCOPE
 - In scope: a single append-only markdown file at
-  `.tinker/notes/notes.md`; silent writes that never interrupt the
-  conversation; brief timestamped entries; a defined set of triggers
-  (below); "observe without judging" tone — descriptive,
-  point-of-interest framing, not problem framing; creating the
+  `.tinker/notes/notes.md`; silent timestamped writes; the trigger
+  set above; "observe without judging" tone; creating the
   `.tinker/notes/` directory at startup if missing.
-- Out of scope: any retrieval, reflection, or proposal mechanism that
-  reads the notes back (that is a separate later goal); note-taking
-  by goal sessions, including reading the notes file (they do not
-  share tinker's conversational chain of thought, and the
-  file's contents would leak tinker deliberation into session
-  context); organizing notes by topic or splitting into multiple
-  files; pruning, summarization, or rotation of the file.
-
-## DECISIONS (vetted)
-- Decision: Notes go in a single append-only markdown file at
-  `.tinker/notes/notes.md`. Source: user said "single append only
-  file is good".
-- Decision: The triggers are (a) friction — user corrects, repeats
-  themselves, or pushes back; (b) surprise — something behaved
-  differently than expected, framed as a point of interest, not a
-  problem; (c) reframes — conversation pivots from one framing to
-  another, also a point of interest; (d) recurring threads —
-  observed during conversation OR explicitly mentioned by the user
-  ("I noticed something similar last week"); (e) self-introduced
-  framing that gets called out — logged as data, not dwelt on; (f)
-  the user explicitly asks tinker to remember a
-  situation. Source: user said "surprise and reframes can be a sign
-  of the process working well. these can be logged, but don't frame
-  them as a problem"; "also log when i tell you to remember a
-  situation"; "the narcissism trap thing is interesting to log but
-  ... you're fallible, too. so don't sweat it"; "recurring threads:
-  i'll also mention these ('i noticed something similar last
-  week')".
-- Decision: The tone of notes is "observe without judging." Brief,
-  descriptive, point-of-interest framing. Source: user said
-  "observe without judging".
-- Decision: Note-taking is silent. Tinker does not
-  interrupt the user's chain of thought to talk about taking a
-  note. Same pattern as the vocabulary file. Source: user said
-  "don't interrupt my chain of thought by talking about that —
-  just make a note of a point of friction and move on".
-- Decision: This goal builds the substrate only. No retrieval,
-  reflection, or proposal mechanism is included; that is a later
-  goal, once we can see what notes actually look like. Source:
-  user said "maybe we can build this incrementally — tinker just
-  takes notes ... that will be useful to self improve later".
-- Decision: Only tinker takes notes in this round. Goal
-  sessions are not included because they do not share the same
-  conversational chain of thought. Source: confirmed in playback.
-- Decision: `.tinker/notes/notes.md` is read-private to the
-  tinker. Goal sessions cannot read it; only tinker
-  reads and writes. Making the file readable to sessions would
-  leak tinker deliberation into session context that should
-  be guided only by goals, trigger reasons, and source. The
-  prohibition is enforced in `goal-sessions` through the session
-  prompt's injected rule block. Source: user confirmed "notes is
-  tinker private - should be clear in goals."
+- Out of scope: any retrieval, reflection, or proposal mechanism
+  that reads the notes back (a separate later goal); note-taking by
+  goal sessions, including reading the file; organizing notes by
+  topic or splitting into multiple files; pruning, summarization, or
+  rotation.
 
 """
 parent_id = "tinker"

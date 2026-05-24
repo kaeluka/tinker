@@ -1,114 +1,76 @@
 id = "shared-language"
 description = """
 ## WHAT
-Tinker uses shared vocabulary in every user-facing surface it produces —
-tinker's conversation, structured summaries goal sessions emit
-to the user, and any human-readable documentation tinker writes into the
-tree (READMEs, in-tree docs, human-targeted code comments). All of these
-default to conceptual descriptions — business logic, architectural
-concepts, external systems, active goals — rather than file paths,
-function names, or internal state variables. Documentation may go more
-technical in deeper sections, but every technical term is anchored to a
-known concept on first use. The rule assumes the user does not read
+Tinker uses shared vocabulary in every user-facing surface it
+produces — its own conversation, the batch messages it composes
+from goal-session summaries, and any human-readable documentation
+goal sessions write into the tree (READMEs, in-tree guides,
+human-targeted code comments). All of these default to conceptual
+descriptions — business logic, architectural concepts, external
+systems, active goals — rather than file paths, function names, or
+internal state variables. The rule assumes the user does not read
 source code.
 
-The rule does not apply to artifacts explicitly authored for LLM
-consumption — for example, `AGENTS.md` produced by `project-indexer`.
-Those keep full technical fidelity because their audience is another
-agent, not the user.
+Documentation may go more technical in deeper sections (reference
+material, edge cases), but every technical term is anchored to a
+known concept on first use. The same applies in chat: if tinker
+*must* use a technical term that isn't already shared vocabulary,
+it needs a strong reason and must anchor the term to a known
+architectural or feature concept right beside it.
+
+The rule does **not** apply to artifacts explicitly authored for
+LLM consumption — `AGENTS.md` from `project-indexer` is the
+canonical example. Those keep full technical fidelity because their
+audience is another agent, not the user.
+
+What counts as "known" is tracked in a persistent vocabulary file
+at `.tinker/state/vocabulary.txt` (the directory is created at
+startup). Tinker fully owns this file: it updates the file silently
+via its file tools, never asks permission, and never mentions the
+file to the user. A term enters the file when the user explicitly
+mentions it, or when it is formally written into a goal. Goal
+sessions read the vocabulary file but never write to it; a session
+needing a term not yet in the file anchors it to a known concept on
+first use, same rule as tinker chat. There is one vocabulary file,
+shared across all surfaces — no separate "doc vocabulary."
 
 ## WHY
-If tinker assumes the user knows the internal codebase layout, it sounds
-condescending ("obviously this is in app.rs"). If it over-explains
-things the user explicitly created, it sounds obtuse. Applying the rule
-only to tinker's chat would leave documentation as a side
-channel where code-identifier soup slips through. By covering every
-user-facing surface, tinker stays legible to a user who does not read
-source. LLM-targeted artifacts are deliberately excluded because LLMs
-benefit from full technical fidelity.
+If tinker assumes the user knows the internal codebase layout, it
+sounds condescending ("obviously this is in app.rs"). If it
+over-explains things the user explicitly created, it sounds obtuse.
+Applying the rule only to tinker's chat would leave documentation
+as a side channel where code-identifier soup slips through — so the
+rule covers every user-facing surface, keeping tinker legible to a
+user who does not read source. LLM-targeted artifacts are excluded
+because another agent benefits from full technical fidelity.
 
 This goal is the operational mechanism for one of the two exposure
-surfaces defined by its parent, `user-system-interaction`. The parent
-says the user may be exposed to internals only when filtered through
-shared language; this goal defines what that filtering looks like —
-the vocabulary file, the anchoring rule, the per-surface application.
+surfaces defined by its parent, `user-system-interaction`. The
+parent says the user may be exposed to internals only when filtered
+through shared language; this goal defines what that filtering
+looks like — the vocabulary file, the anchoring rule, the
+per-surface application. Its parent is `user-system-interaction`
+rather than `tinker` because the rule binds both tinker (chat) and
+goal sessions (documentation), and the principle that justifies it
+lives in the parent.
 
 ## SCOPE
-- In scope: tinker chat; user-facing batch messages the
-  tinker composes from goal session summaries; READMEs, guides,
-  and other human-readable documentation goal sessions write into the
-  project tree; code comments written for a human audience; tracking
-  user knowledge in a persistent `.tinker/state/vocabulary.txt` file;
-  ensuring `.tinker/state/` is created on startup; allowing deeper-
-  technical sections inside a document provided each technical term is
-  anchored to a known concept on first use.
-- Out of scope: artifacts explicitly authored for LLM consumption
-  (e.g. `AGENTS.md`); implementation comments aimed at future LLM
-  agents; goal file contents themselves (those are LLM-consumed by
-  goal sessions); background processes or automated hooks to manage
-  the vocabulary file (tinker manages it manually); per-
-  session internal summaries before tinker composes them
-  into a user-facing batch message.
-
-## DECISIONS (vetted)
-- Decision: The shared-language rule applies to every user-facing
-  surface tinker produces — tinker chat, user-facing batch
-  messages, and human-readable documentation written by goal sessions.
-  Source: user said "when tinker writes documentation, it should follow
-  the shared language approach - use shared language, or at least
-  connect technical concepts to shared language."
-- Decision: Artifacts explicitly authored for LLM consumption (e.g.
-  `AGENTS.md` from `project-indexer`) are exempt from the rule. They
-  retain full technical fidelity because their audience is another
-  agent, not the user. Source: confirmed in playback as the AGENTS.md
-  carve-out.
-- Decision: This goal is a downstream application of
-  `user-system-interaction` — specifically, the filtering mechanism
-  for the second exposure surface defined there (internals filtered
-  through what the user is known to know). Its parent is
-  `user-system-interaction`, not tinker, because it applies
-  to both tinker (chat) and goal sessions (documentation),
-  and because the broader principle that justifies it is articulated
-  in the parent goal. Source: user confirmed "ii feels right"
-  selecting the structural option that creates a new root above this
-  goal and `user-persona`.
-- Decision: Tinker defaults to conceptual/architectural explanations
-  rather than code identifiers. Source: user said "the user never looks
-  at the code - it makes no sense using function names, file names, etc..."
-- Decision: A persistent state file (`.tinker/state/vocabulary.txt`)
-  tracks known files and concepts. Source: agreed in playback.
-- Decision: Tinker fully owns this file, silently updating it
-  manually via `Read`/`Write` tools when the user demonstrates knowledge
-  of a new technical term. It never asks permission to update it and
-  never mentions the file to the user. Source: user said "tinker
-  fully owns ./tinker/state/vocabulary.txt. it never asks permission to
-  update it, it never mentions it."
-- Decision: A technical term goes into the file if the user explicitly
-  mentions it, or if it is formally written into a goal file. Source:
-  user said "if i ask you to use sqlite -> doesn't go in there. but
-  once you write the goal: goes in there immediately".
-- Decision: Goal sessions writing documentation read the vocabulary file
-  but do not write to it. If a goal session needs a term not in the
-  vocabulary, it anchors that term to a known concept on first use,
-  same rule as tinker chat. Source: confirmed in playback.
-- Decision: If tinker *must* use a technical term that isn't in the
-  vocabulary file, it must have a strong reason, and it must explicitly
-  anchor it to a known concept. Source: user said "when using a
-  technical code term in conversation there must be a reference to the
-  architectural/feature/whatever known concept alongside it."
-- Decision: Documentation may go more technical in deeper sections,
-  provided every technical term is anchored to a known concept on first
-  use. Source: user said "documentation that tinker writes should use
-  the same shared language standard as tinker by default.
-  it's ok to go more technical eventually, but always connect to shared
-  language."
-- Decision: The same vocabulary file is the source of truth across all
-  in-scope surfaces. There is no separate "doc vocabulary." Source:
-  tinker default in playback; no second file warranted.
+- In scope: tinker chat; user-facing batch messages; READMEs,
+  guides, and other human-readable documentation goal sessions
+  write into the tree; human-targeted code comments; the persistent
+  `.tinker/state/vocabulary.txt` file and its startup-created
+  directory; deeper-technical documentation sections provided each
+  technical term is anchored on first use.
+- Out of scope: artifacts authored for LLM consumption (e.g.
+  `AGENTS.md`); implementation comments aimed at future LLM agents;
+  goal file contents themselves (LLM-consumed by goal sessions);
+  automated hooks to manage the vocabulary file (tinker manages it
+  by hand); per-session internal summaries before tinker composes
+  them into a user-facing batch message.
 
 """
 parent_id = "user-system-interaction"
 children = []
 related = [
-  { id = "project-indexer", reason = "`AGENTS.md` produced by `project-indexer` is the canonical example of an LLM-targeted artifact this goal carves out of the shared-vocabulary rule. The exemption is named explicitly because project-indexer's output looks like documentation but isn't aimed at the user." }
+  { id = "project-indexer", reason = "`AGENTS.md` produced by `project-indexer` is the canonical example of an LLM-targeted artifact this goal carves out of the shared-vocabulary rule. The exemption is named explicitly because project-indexer's output looks like documentation but isn't aimed at the user. Asymmetric link: `project-indexer` is a packaged goal at ancestor scope and carries no back-link to this project-local goal." }
 ]

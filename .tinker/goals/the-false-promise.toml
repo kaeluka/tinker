@@ -1,37 +1,28 @@
 id = "the-false-promise"
 description = """
 ## WHAT
-The foundational diagnosis that justifies Tinker's architecture. Current
-coding assistants promise developers they no longer have to write code,
-but their architecture forces developers to keep reading it.
+The foundational diagnosis that justifies tinker's architecture.
+Current coding assistants promise developers they no longer have to
+write code, but their architecture forces developers to keep reading
+it.
 
 ## WHY
-Because traditional assistants only output source code, they launder their
-own ad-hoc implementation guesses into a "quasi-specification." Once a
-session restarts, human intent is indistinguishable from AI scaffolding.
-This forces a fatal choice on the user: either vet every line and lose the
-speedup, or trust blindly and accumulate paralyzing cognitive debt. Tinker
-is built to reject this choice by separating Intent from Implementation.
+Because traditional assistants only output source code, they launder
+their own ad-hoc implementation guesses into a "quasi-specification."
+Source code conflates human intent with AI scaffolding, and once a
+session restarts the two are indistinguishable. This forces a fatal
+choice on the user: either vet every line and lose the speedup, or
+trust blindly and accumulate paralyzing cognitive debt. Tinker
+rejects the choice by extracting intent into a separate, durable
+layer — Goals — kept distinct from implementation.
 
 ## SCOPE
-- In scope: the diagnosis of cognitive debt; the concept of quasi-
-  specification laundering; the necessity of extracting intent into a
-  durable layer (Goals).
+- In scope: the diagnosis of cognitive debt; the concept of
+  quasi-specification laundering; the necessity of extracting intent
+  into a durable layer (Goals).
 - Out of scope: the mechanics of the dialectic (handled by
   `creative-process`); the specific boundary of who holds what state
   (handled by `user-system-interaction`).
-
-## DECISIONS (vetted)
-- Decision: Source code conflates human intent with AI implementation guesses.
-  Source: user introduced the core thesis that current assistants "launder
-  ad-hoc decisions into quasi-specification every step of the way."
-- Decision: Handing full control to an AI while relying on source code as the
-  artifact forces a fatal choice: read all the generated code (losing the AI
-  speedup) or ignore it (accumulating fatal cognitive debt). Source: user
-  identified this as the unfair burden of the false promise.
-- Decision: To fix this, Intent must be extracted into a separate, durable
-  layer (Goals). Source: synthesized from the conversation defining Tinker's
-  antidote to the quasi-specification problem.
 
 """
 parent_id = ""

@@ -160,14 +160,9 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     let cursor = if !input_locked { "█" } else { "" };
 
-    let inner_width = inner.width.max(1) as usize;
-    let prompt_chars = prompt.chars().count();
-    let input_chars = app.input.chars().count();
-    let cursor_chars = cursor.chars().count();
-    let total_chars = prompt_chars + input_chars + cursor_chars;
-    let needed = ((total_chars + inner_width - 1) / inner_width).max(1) as u16;
     let max_input = (inner.height / 2).max(1);
-    let input_height = needed.min(max_input);
+    let (input_height, input_scroll) =
+        input_pane_layout(prompt, &app.input, cursor, inner.width, max_input);
 
     let msg_area = Rect {
         height: inner.height.saturating_sub(input_height),
@@ -201,9 +196,30 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
         Span::styled(cursor, Style::default().fg(Color::Cyan)),
     ]);
     frame.render_widget(
-        Paragraph::new(input_line).wrap(Wrap { trim: false }),
+        Paragraph::new(input_line)
+            .wrap(Wrap { trim: false })
+            .scroll((input_scroll, 0)),
         input_area,
     );
+}
+
+/// Chat input pane layout: returns `(height, scroll)` for the input pane.
+/// Height matches the wrapped Paragraph's actual row count, capped by `max`
+/// and floored at 1. When the unclamped row count exceeds `max`, `scroll` is
+/// set so the bottom wrapped row (where the cursor sits) stays visible.
+fn input_pane_layout(prompt: &str, input: &str, cursor: &str, width: u16, max: u16) -> (u16, u16) {
+    let line = Line::from(vec![
+        Span::raw(prompt.to_string()),
+        Span::raw(input.to_string()),
+        Span::raw(cursor.to_string()),
+    ]);
+    let needed = (Paragraph::new(line)
+        .wrap(Wrap { trim: false })
+        .line_count(width.max(1)) as u16)
+        .max(1);
+    let height = needed.min(max.max(1));
+    let scroll = needed.saturating_sub(height);
+    (height, scroll)
 }
 
 fn push_message_lines(lines: &mut Vec<Line<'static>>, msg: &crate::app::Message) {
@@ -254,41 +270,72 @@ fn push_rummage_text(lines: &mut Vec<Line<'static>>, text: &str) {
 
 fn push_assistant_text(lines: &mut Vec<Line<'static>>, text: &str) {
     let mut in_tool_call = false;
-    for (i, line) in text.lines().enumerate() {
-        if line.starts_with("→ ") {
-            in_tool_call = true;
-            lines.push(Line::from(vec![
-                Span::raw("       "),
-                Span::styled(line.to_string(), Style::default().fg(Color::DarkGray)),
-            ]));
-        } else if let Some(usage) = line.strip_prefix(USAGE_LINE_MARKER) {
-            in_tool_call = false;
-            lines.push(Line::from(vec![
-                Span::raw("       "),
-                Span::styled(usage.to_string(), Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM)),
-            ]));
-        } else if in_tool_call && line.trim().is_empty() {
-            in_tool_call = false;
-            lines.push(Line::from(vec![
-                Span::raw("       "),
-                Span::raw(""),
-            ]));
-        } else if in_tool_call {
-            // Skip rendering subsequent lines of a tool call payload (crop to first line)
-        } else if i == 0 {
-            lines.push(Line::from(vec![
-                Span::styled(
-                    "tinker ",
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(line.to_string()),
-            ]));
-        } else {
-            lines.push(Line::from(vec![
-                Span::raw("       "),
-                Span::raw(line.to_string()),
-            ]));
+    let mut output_index = 0usize;
+    for raw_line in text.lines() {
+        // The streamed text chunk arriving before a usage line often lacks a
+        // trailing `\n`, so the usage marker can land mid-line. Split here so
+        // each segment is dispatched to its own renderer.
+        let (text_part, usage_part) = match raw_line.find(USAGE_LINE_MARKER) {
+            Some(idx) => (
+                &raw_line[..idx],
+                Some(&raw_line[idx + USAGE_LINE_MARKER.len_utf8()..]),
+            ),
+            None => (raw_line, None),
+        };
+
+        let has_usage = usage_part.is_some();
+        if !text_part.is_empty() || !has_usage {
+            push_assistant_text_segment(lines, text_part, &mut in_tool_call, output_index);
+            output_index += 1;
         }
+
+        if let Some(usage) = usage_part {
+            in_tool_call = false;
+            lines.push(Line::from(vec![
+                Span::raw("       "),
+                Span::styled(
+                    usage.to_string(),
+                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM),
+                ),
+            ]));
+            output_index += 1;
+        }
+    }
+}
+
+fn push_assistant_text_segment(
+    lines: &mut Vec<Line<'static>>,
+    line: &str,
+    in_tool_call: &mut bool,
+    output_index: usize,
+) {
+    if line.starts_with("→ ") {
+        *in_tool_call = true;
+        lines.push(Line::from(vec![
+            Span::raw("       "),
+            Span::styled(line.to_string(), Style::default().fg(Color::DarkGray)),
+        ]));
+    } else if *in_tool_call && line.trim().is_empty() {
+        *in_tool_call = false;
+        lines.push(Line::from(vec![
+            Span::raw("       "),
+            Span::raw(""),
+        ]));
+    } else if *in_tool_call {
+        // Skip rendering subsequent lines of a tool call payload (crop to first line)
+    } else if output_index == 0 {
+        lines.push(Line::from(vec![
+            Span::styled(
+                "tinker ",
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(line.to_string()),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::raw("       "),
+            Span::raw(line.to_string()),
+        ]));
     }
 }
 
@@ -554,7 +601,7 @@ fn draw_log(frame: &mut Frame, app: &mut App, area: Rect) {
                 Style::default().fg(Color::DarkGray),
             )),
             Some(log) => {
-                let lines: Vec<Line> = log.lines().map(render_log_line).collect();
+                let lines: Vec<Line> = log.lines().flat_map(render_log_line).collect();
                 let p = Paragraph::new(lines).wrap(Wrap { trim: false });
                 let total = p.line_count(inner.width);
                 app.log_scroll.record_render(total, inner.height);
@@ -603,8 +650,19 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
     }
 }
 
-pub fn render_log_line(raw: &str) -> Line<'static> {
-    if let Some(reason) = raw.strip_prefix(TRIGGER_REASON_MARKER) {
+pub fn render_log_line(raw: &str) -> Vec<Line<'static>> {
+    // A streamed text chunk that lacks a trailing newline before the usage
+    // line lands here with the marker mid-string. Split the prefix off so
+    // each segment can be styled independently.
+    if let Some(idx) = raw.find(USAGE_LINE_MARKER) {
+        if idx > 0 {
+            let mut out = render_log_line(&raw[..idx]);
+            out.extend(render_log_line(&raw[idx..]));
+            return out;
+        }
+    }
+
+    let line = if let Some(reason) = raw.strip_prefix(TRIGGER_REASON_MARKER) {
         Line::from(Span::styled(
             reason.to_string(),
             Style::default().add_modifier(Modifier::BOLD),
@@ -616,7 +674,8 @@ pub fn render_log_line(raw: &str) -> Line<'static> {
         ))
     } else {
         Line::from(raw.to_string())
-    }
+    };
+    vec![line]
 }
 
 #[cfg(test)]
@@ -714,6 +773,80 @@ mod tests {
         assert_eq!(s.effective_y(), 85);
     }
 
+    /// Spec (tui): the chat input pane height must equal the wrapped
+    /// Paragraph's actual rendered line count for any input — no word-wrap
+    /// undercounting, no cursor-row clipping below the cap.
+    #[test]
+    fn test_spec_input_pane_height_matches_paragraph_line_count() {
+        let prompt = "tinker> ";
+        let cursor = "█";
+        let inputs = [
+            "",
+            "hello",
+            "the quick brown fox jumps over the lazy dog",
+            "supercalifragilisticexpialidocious wonderful situation exemplary behavior",
+            "a b c d e f g h i j k l m n o p q r s t u v w x y z a b c d e f g h",
+        ];
+        for &width in &[20u16, 40, 60, 80, 100] {
+            for input in &inputs {
+                let line = Line::from(vec![
+                    Span::raw(prompt.to_string()),
+                    Span::raw(input.to_string()),
+                    Span::raw(cursor.to_string()),
+                ]);
+                let expected = (Paragraph::new(line)
+                    .wrap(Wrap { trim: false })
+                    .line_count(width) as u16)
+                    .max(1);
+                let big_cap = 1000u16;
+                let (height, scroll) = input_pane_layout(prompt, input, cursor, width, big_cap);
+                assert_eq!(
+                    height, expected,
+                    "input_pane_layout height drifted from Paragraph::line_count: width={} input={:?}",
+                    width, input,
+                );
+                assert_eq!(
+                    scroll, 0,
+                    "scroll must be 0 when needed <= cap: width={} input={:?}",
+                    width, input,
+                );
+            }
+        }
+    }
+
+    /// Spec (tui): once the input grows past the half-REPL cap, the input
+    /// Paragraph must scroll so the bottom wrapped row (cursor row) stays in
+    /// view. Concretely: scroll = needed - height; the bottom row sits at
+    /// `input_area.y + input_area.height - 1`.
+    #[test]
+    fn test_spec_input_pane_scrolls_to_keep_cursor_row_visible() {
+        let prompt = "tinker> ";
+        let cursor = "█";
+        // Long input that wraps to many rows at a narrow width.
+        let mut input = String::new();
+        for _ in 0..30 {
+            input.push_str("the quick brown fox jumps over the lazy dog ");
+        }
+        let width = 40u16;
+        let cap = 4u16;
+        let (height, scroll) = input_pane_layout(prompt, &input, cursor, width, cap);
+        let line = Line::from(vec![
+            Span::raw(prompt.to_string()),
+            Span::raw(input.clone()),
+            Span::raw(cursor.to_string()),
+        ]);
+        let needed = Paragraph::new(line)
+            .wrap(Wrap { trim: false })
+            .line_count(width) as u16;
+        assert!(needed > cap, "test premise: input must exceed cap");
+        assert_eq!(height, cap, "height must clamp to cap when input overflows");
+        assert_eq!(
+            scroll,
+            needed - cap,
+            "scroll offset must place the bottom wrapped row at the last visible row",
+        );
+    }
+
     /// Spec: scrolling back to the bottom re-engages follow.
     #[test]
     fn test_spec_scroll_back_to_bottom_reengages_follow_tail() {
@@ -747,7 +880,7 @@ mod tests {
         // log-line rendering logic directly (we test the mapping, not the
         // full draw call which requires a Frame).
         let log = app.goal_logs.get("alpha").unwrap();
-        let lines: Vec<Line> = log.lines().map(render_log_line).collect();
+        let lines: Vec<Line> = log.lines().flat_map(render_log_line).collect();
 
         assert_eq!(lines.len(), 2);
         // First line (trigger reason) must be bold.
@@ -1109,7 +1242,9 @@ mod tests {
         use crate::claude::USAGE_LINE_MARKER;
         let usage_body = "↳ 1000 in / 200 out / 800 cache_read / 50 cache_write";
         let raw = format!("{}{}", USAGE_LINE_MARKER, usage_body);
-        let line = render_log_line(&raw);
+        let rendered = render_log_line(&raw);
+        assert_eq!(rendered.len(), 1);
+        let line = &rendered[0];
         assert_eq!(line.spans.len(), 1);
         let span = &line.spans[0];
         // Marker must be stripped.
@@ -1124,6 +1259,117 @@ mod tests {
         assert!(
             !span.style.add_modifier.contains(Modifier::BOLD),
             "usage line must not be bold",
+        );
+    }
+
+    /// Spec (tui): the streamed assistant text chunk arriving just before a
+    /// usage line frequently lacks a trailing `\n` (LLM replies typically end
+    /// with a period, quote, etc.), so the usage marker can land mid-line.
+    /// The chat-pane renderer must still split the marker off and style the
+    /// usage segment as DIM with a 7-space indent — and must not leak the
+    /// marker byte into the rendered text.
+    #[test]
+    fn test_spec_chat_pane_splits_usage_marker_mid_line() {
+        let usage_body = "↳ 1000 in / 200 out / 800 cache_read / 50 cache_write";
+        let text = format!("Sure, here is my answer.{}{}", USAGE_LINE_MARKER, usage_body);
+
+        let mut lines: Vec<Line> = vec![];
+        push_assistant_text(&mut lines, &text);
+
+        // The assistant text must be on its own line (with the tinker tag).
+        let assistant_line = lines
+            .iter()
+            .find(|l| l.spans.iter().any(|s| s.content.contains("Sure, here is my answer.")))
+            .expect("assistant text must render on its own line");
+        assert!(
+            assistant_line.spans.iter().any(|s| s.content == "tinker "),
+            "first assistant line must carry the green tinker tag",
+        );
+        // The marker byte must not appear in any rendered span.
+        assert!(
+            !lines.iter().any(|l| l.spans.iter().any(|s| s.content.contains(USAGE_LINE_MARKER))),
+            "USAGE_LINE_MARKER must be stripped from rendered text",
+        );
+
+        // The usage segment must render as a DIM-styled line with body text.
+        let usage_line = lines
+            .iter()
+            .find(|l| l.spans.iter().any(|s| s.content == usage_body))
+            .expect("usage segment must render as its own line");
+        let usage_span = usage_line
+            .spans
+            .iter()
+            .find(|s| s.content == usage_body)
+            .unwrap();
+        assert!(
+            usage_span.style.add_modifier.contains(Modifier::DIM),
+            "usage segment must carry DIM modifier",
+        );
+    }
+
+    /// Spec (tui): the chat pane's "crop tool-call payload to one line"
+    /// feature must not silently destroy the usage line when the message
+    /// shape is `tool_call + text-without-trailing-\n + usage`. The usage
+    /// segment must still render even when the line it shares with leftover
+    /// post-tool-call text would otherwise be cropped.
+    #[test]
+    fn test_spec_chat_pane_usage_survives_after_tool_call_without_newline() {
+        let usage_body = "↳ 1000 in / 200 out / 800 cache_read / 50 cache_write";
+        let text = format!(
+            "Let me check.\n→ Read /some/path/file.rs\nSome more text after the tool call.{}{}",
+            USAGE_LINE_MARKER, usage_body
+        );
+
+        let mut lines: Vec<Line> = vec![];
+        push_assistant_text(&mut lines, &text);
+
+        // Usage segment must render as a DIM-styled line.
+        let usage_line = lines
+            .iter()
+            .find(|l| l.spans.iter().any(|s| s.content == usage_body))
+            .expect("usage segment must render even after a tool call without trailing newline");
+        let usage_span = usage_line
+            .spans
+            .iter()
+            .find(|s| s.content == usage_body)
+            .unwrap();
+        assert!(
+            usage_span.style.add_modifier.contains(Modifier::DIM),
+            "usage segment must carry DIM modifier",
+        );
+        // Marker must not leak into rendered output.
+        assert!(
+            !lines.iter().any(|l| l.spans.iter().any(|s| s.content.contains(USAGE_LINE_MARKER))),
+            "USAGE_LINE_MARKER must not appear in rendered text",
+        );
+    }
+
+    /// Spec (tui): the session-log renderer must split a raw log line on a
+    /// mid-string usage marker so the usage segment is styled DIM, mirroring
+    /// the chat-pane behavior. A streamed chunk lacking a trailing newline
+    /// before the usage line must not cause the marker to render as a raw
+    /// control byte.
+    #[test]
+    fn test_spec_log_pane_splits_usage_marker_mid_line() {
+        let usage_body = "↳ 1000 in / 200 out / 800 cache_read / 50 cache_write";
+        let raw = format!("Sure, here is my answer.{}{}", USAGE_LINE_MARKER, usage_body);
+
+        let rendered = render_log_line(&raw);
+        assert_eq!(rendered.len(), 2, "marker mid-line must split into two rendered lines");
+
+        let prefix_text: String = rendered[0].spans.iter().map(|s| s.content.to_string()).collect();
+        assert_eq!(prefix_text, "Sure, here is my answer.");
+        assert!(
+            !prefix_text.contains(USAGE_LINE_MARKER),
+            "prefix segment must not contain the marker byte",
+        );
+
+        let usage_text: String = rendered[1].spans.iter().map(|s| s.content.to_string()).collect();
+        assert_eq!(usage_text, usage_body);
+        let usage_span = &rendered[1].spans[0];
+        assert!(
+            usage_span.style.add_modifier.contains(Modifier::DIM),
+            "usage segment in the log pane must carry DIM modifier",
         );
     }
 

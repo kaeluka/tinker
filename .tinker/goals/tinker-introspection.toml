@@ -1,169 +1,113 @@
 id = "tinker-introspection"
 description = """
 ## WHAT
-A runtime introspection substrate that lets tinker inspect
-its own state — token usage per turn, the goal-session queue, the
-current UI snapshot, message history — instead of estimating from
-inference or asking the user to read numbers off. Two artifacts: an
-append-only log of runtime events and a state file holding the
-current semantic UI snapshot, both under `.tinker/`. Tinker
-reads both with its existing file-access tools when it needs them;
-it never writes to either, and goal sessions don't touch them at all.
+A runtime introspection substrate that lets tinker inspect its own
+state — token usage per turn, the goal-session queue, the current
+UI snapshot, message history — instead of estimating from inference
+or asking the user to read numbers off.
+
+The mechanism is **hybrid**: an append-only **event log** for
+sequence and history, plus a **state file** holding the current
+semantic UI snapshot. The split is deliberate — a pure state file
+loses temporal information (durations, ordering); a pure log forces
+reconstructing current state by scanning. Both live under
+`.tinker/`; required directories are pre-created at startup. Tinker
+reads both with its existing file tools when it needs them. It
+never writes to either, and goal sessions don't touch them at all.
+
+The **event log** captures: tinker turn boundaries with token
+usage; message-level events in three categories — user input (full
+text), assistant reply (full text, tool calls and results inline),
+and tinker-injected system messages (full content plus a `source`
+field naming the emitting component — dispatcher, batch-summary
+composer, harness); goal-session lifecycle (dispatched, started,
+finished) with observable facts; `/run` emissions; cleanup-hook
+results; goal-file changes; and TUI structural state changes
+(selection, focus, scroll, queue). The session-start event captures
+the system-prompt text plus a goal-list hash so persona/goal drift
+is detectable across sessions. New categories can be added
+additively. The log format satisfies three constraints: a `kind`
+discriminator for filtering by event type; a shape suitable for
+`jq`-style aggregation; and individual events retrievable at low
+token cost (tinker shouldn't have to pay for surrounding context to
+read one event). The log appends forever — no rotation; the user
+clears it manually if it grows. Specific event-kind names, shape,
+and retrieval tooling are implementation's call within these
+constraints.
+
+Finished-session events carry **observable facts only** — what
+tinker sees from outside the session — with no session-declared
+outcome field. Patterns like "no work needed" emerge from the
+observables, never from the session labeling its own work.
+Implementation chooses the specific observable fields.
+
+The **state file** is JSON, semantic only: selected goal id, focus
+region, scroll offsets, queue snapshot (running + pending with
+reasons and start/queue timestamps), and rolling session usage
+totals. Not verbatim pane text — that can be added later as a purely
+additive change if a concrete need emerges.
+
+Writes are **async and non-blocking**, so the substrate never slows
+tinker's main loop. Cost capture is **backend-agnostic and
+best-effort**: both Claude and opencode calls emit into the same
+log shape, and every call captures its cost where available. When
+cost is genuinely unavailable, the `usage` field is `null` and that
+unavailability is recorded as a known gap — not silently accepted
+as the default.
 
 ## WHY
-Tinker has been operating on inferred state — estimating
-its own cost, asking the user "what's running?", reconstructing turn
-counts from memory. That's silly: tinker itself knows. The
-user-system-interaction principle says tinker holds the *is*, but the
-*is* never reaches tinker's reasoning — only the user's
-view. This goal closes that asymmetry. Tinker is part of
+Tinker has been operating on inferred state — estimating its own
+cost, asking the user "what's running?", reconstructing turn counts
+from memory. That's backwards: tinker itself holds this state. The
+`user-system-interaction` principle says tinker holds the *is*, but
+until now the *is* reached only the user's view, never tinker's own
+reasoning. This goal closes that asymmetry — tinker is part of
 tinker, and the *is* should be available to it the same way it's
 available to the user.
 
 The persistent log also opens cross-session self-improvement. Every
 session's transcript, timing, cost, queue events, and observable
-goal-session facts become durable. Questions like "why did the
+goal-session facts become durable, so questions like "why did the
 previous session need a restart?", "did my reactive scheduling
-produce real work?", and "how does cost compare across goals?" turn
-into structured queries instead of fading memory.
+produce real work?", and "how does cost compare across goals?"
+become structured queries instead of fading memory. Logging system
+messages as a first-class category is what makes the "why" of each
+turn queryable — they explain why turns happened, not just what was
+said.
+
+Finished-session events carry observables rather than a
+self-declared outcome because the session is an unreliable narrator
+about its own work. Self-classification fails exactly where it
+matters most — scope expansion, scope shrinkage, doing something
+else entirely. Observable facts from outside the session are
+trustworthy where the session's own account is not.
 
 ## SCOPE
-- In scope: an append-only event log capturing tinker turn
-  boundaries (with token usage), goal-session lifecycle and
-  observables, message-level conversation including every
-  tinker-injected system message (full user input, full assistant
-  reply, and full system-message text per turn), /run emissions,
-  cleanup-hook results, TUI structural state changes (queue,
-  selection, focus, scroll), and events when goal files change;
-  a state file holding current selected goal id, focus region,
-  scroll offsets, queue snapshot (running + pending with reasons
-  and start/queue timestamps), and rolling session usage totals;
-  async non-blocking writes; backend-agnostic structure with
-  best-effort cost capture for every Claude and opencode call;
-  passive read-only access for tinker via existing file
-  tools.
-- Out of scope: pane content beyond message-level — the conversation
-  pane's verbatim rendered text per line, the session-log pane's
-  streaming line-by-line capture (subsumed by the message-level
-  events for the conversation pane, and by the transcript content
-  carried on each finished-session event for the session-log
-  pane); tinker-self-emitted structured events for its own
-  dialectic moves (reframe, frame-check, playback-sent,
-  playback-confirmed) — those remain in pane content and
-  `notes.md` for now, and may become a follow-up goal if
-  reframe-frequency analysis turns out to matter; goal sessions
-  reading the log or state file (they retain their narrow focused
-  scope); tinker control over runtime state (cancelling
-  queued sessions, manipulating queue) — that is a separate
-  parked goal framed as "tinker-controls-itself-like-the-
-  user-can"; log rotation, retention, or compression (the log
-  grows; the user clears it manually if it ever bothers them);
-  redaction of sensitive content surfaced by tool outputs (user-
-  managed cleanup for now); making the log or state file
-  available to anything beyond tinker's own reading.
-
-## DECISIONS (vetted)
-- Decision: The mechanism is hybrid — a log file for sequence and
-  history, plus a state file for "what the user is looking at right
-  now." A pure state file loses temporal information (durations,
-  ordering); a pure log requires reconstructing current state from
-  scanning. Source: user said "log file would have the advantage
-  that you could tell 'goal x was running before this one, and it
-  took 35s'" then "perhaps there should be a separate file that
-  shows a snapshot of the current UI + a log file."
-- Decision: Log format must satisfy three constraints — a `kind`
-  discriminator that lets tinker filter by event type;
-  shape suitable for `jq`-style aggregation queries; and
-  individual events retrievable by tinker at low token
-  cost (the surrounding-event context does not have to be paid
-  for). Implementation picks the specific shape and retrieval
-  tooling within those constraints. Source: user said either a
-  log-kind marker or a jq filter expression would work — "whatever
-  works best for you in order to achieve your goals"; the
-  LLM-cheap-retrieval constraint surfaced during the sparseness
-  cleanup — "an LLM needs to be good at using it."
-- Decision: State file format is JSON. Contents are semantic only
-  (selected goal id, focus region, scroll offsets, queue snapshot,
-  rolling session usage totals) — NOT verbatim pane text. Verbatim
-  pane content can be added later as a purely additive change if
-  a concrete need emerges; rendering pane text is harder than
-  exporting semantic state and the user-visible need has not yet
-  justified the work. Source: user said "(a) suffices for now IMO"
-  between semantic-only, pane-content, and both.
-- Decision: There is a log file and a state file, both under
-  `.tinker/`. Required directories are pre-created at startup if
-  missing. Implementation chooses the specific paths and
-  filenames. Source: tinker default; user-anchored facts
-  are findability under `.tinker/` and auto-creation of
-  directories.
-- Decision: No log rotation. The log appends forever; the user
-  clears it manually if it grows too large. Tinker is a personal
-  tool; the file is unlikely to become a problem in practice.
-  Source: user said "(i) - user can delete manually, but when
-  you're reading the log: it should be greppable nicely."
-- Decision: Backend-agnostic structure with best-effort cost capture
-  per call. Both Claude and opencode emit events into the same log
-  shape, AND every Claude or opencode call captures its cost on a
-  best-effort basis. When cost is genuinely unavailable for a
-  specific call, the `usage` field is `null` AND that
-  unavailability is recorded as a known gap, not accepted as the
-  default. Source: user said "don't forget opencode. opencode
-  must always be supported equally well" and "have you made sure
-  any claude/opencode call is logging its cost?"
-- Decision: Writes are async and non-blocking. The introspection
-  substrate does not slow tinker's main loop. Source:
-  user flagged performance concerns and proposed "fire off async
-  tasks or something like that."
-- Decision: The substrate is passive observability, read-only, and
-  tinker-only. Goal sessions do not read the log or state
-  file. Tinker cannot mutate runtime state through this
-  primitive — no cancelling queued sessions, no UI manipulation.
-  Source: user said "a for now. definitely out of reach for goal
-  agents. maybe you should be able to cancel later. but even i
-  can't do that. if we ever get to that that should be framed as
-  a 'tinker can control itself like the user can' goal."
-- Decision: Each finished-session event carries observable facts
-  only — what tinker sees from outside the session — and no
-  session-declared outcome field. The session is an unreliable
-  narrator about its own work: self-classification fails exactly
-  where it matters most (scope expansion, scope shrinkage, doing
-  something else). Patterns like "no work needed" emerge from
-  observables, not from the session labeling itself. Implementation
-  chooses the specific observable fields. Source: user said "i
-  don't think the goal session has demonstrated this sort of
-  introspection to use. it's an everyday occurrence that it does
-  something that goes beyond what was asked, or doesn't do enough,
-  or does something else."
-- Decision: Every message in tinker session is logged in
-  three categories — user input, assistant reply, and
-  tinker-injected system message. Payload semantics: the
-  session-start event captures the system prompt text plus a
-  goal-list hash, so persona/goal drift can be detected across
-  sessions; user input carries full text; assistant reply carries
-  full text including tool calls and tool results inline;
-  tinker-injected system message carries a `source` field naming
-  the component that emitted it (dispatcher, batch-summary
-  composer, harness, etc.) and the full content. System messages
-  are a first-class third category alongside user input and
-  assistant output — they explain *why* turns happened, not just
-  what was said. This makes cross-session analysis viable —
-  questions like "why did the previous session need a restart?"
-  and "what triggered this /run?" become queryable instead of
-  fading. Implementation picks the specific event-kind names.
-  Source: user said "what if we logged every message in the
-  tinker session, too? that would contain the information
-  about why a restart was necessary for instance" and "have you
-  also added the ability to read sys messages?"
-- Decision: Event categories include tinker turn boundaries
-  (with token usage), message-level events (user input, assistant
-  reply, system message), goal-session lifecycle (dispatched,
-  started, finished) with observables, cleanup-hook results,
-  `/run` emissions, goal-file changes, and TUI structural state
-  changes (selection, focus, scroll, queue). New categories can
-  be added additively. Implementation picks the specific
-  event-kind names within these categories. Source: categories
-  vetted during the tinker-introspection interview;
-  specific names within them are implementation's call.
+- In scope: the append-only event log (categories above) and the
+  semantic JSON state file, both under `.tinker/`; async
+  non-blocking writes; backend-agnostic best-effort cost capture
+  for every Claude and opencode call, with unavailability recorded
+  as a known gap; passive read-only access for tinker via its
+  existing file tools.
+- Out of scope:
+  - Pane content beyond message-level — verbatim conversation-pane
+    text per line and streaming session-log capture (subsumed by
+    the message-level events and the transcript on each
+    finished-session event).
+  - Tinker-self-emitted structured events for its own dialectic
+    moves (reframe, frame-check, playback-sent/confirmed) — those
+    stay in pane content and `notes.md`; may become a follow-up
+    goal if reframe-frequency analysis turns out to matter.
+  - Goal sessions reading the log or state file.
+  - Tinker mutating runtime state through this primitive
+    (cancelling queued sessions, manipulating the queue) — a
+    separate parked goal, "tinker-controls-itself-like-the-user-
+    can."
+  - Log rotation, retention, or compression.
+  - Redaction of sensitive content in tool outputs (user-managed
+    for now).
+  - Exposing the log or state file to anything beyond tinker's own
+    reading.
 
 """
 parent_id = "tinker"

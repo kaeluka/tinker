@@ -1,48 +1,51 @@
 id = "claude-backend"
 description = """
 ## WHAT
-Add a `--claude` CLI flag that makes tinker shell out to `claude -p` instead of
-`opencode`. When set, tinker uses Opus, goal sessions use Sonnet,
-and the scheduler uses Haiku.
+A `--claude` CLI flag that makes tinker shell out to `claude -p`
+instead of `opencode`. It is a boolean startup flag with no
+config-file persistence — the user chooses the backend when
+launching.
+
+Under `--claude`, the model tiers map to Claude aliases: Opus for
+tinker, Sonnet for goal sessions.
+The tinker persona is passed via `--system-prompt` rather than the
+opencode agent-file installation. Session resumption uses
+`--resume <session-id>` (the Claude equivalent of opencode's `-s`).
+Tool calls render in the TUI as compact one-liners, matching the
+opencode style.
+
+Because the Claude path bypasses the opencode agent file — where
+`tinker-agent` and `rummage` define their identity-level tool
+denials (`task`, `todowrite`) in YAML frontmatter — those denials
+must be re-imposed mechanically on this path, through whatever the
+`claude` CLI offers for tool restriction (`--disallowedTools` or
+equivalent). If no such mechanism exists, that gap is surfaced
+rather than shipping a silently weaker boundary: the denials are
+mechanical-by-design per `tinker-agent`, and a prompt-only boundary
+on one backend would break that parity.
 
 ## WHY
-Users may prefer Claude models over the default OpenRouter-backed models. A
-flag-based toggle lets them choose at startup without configuration overhead.
+Users may prefer Claude models over the default OpenRouter-backed
+models. A flag-based toggle lets them choose at startup without
+configuration overhead.
 
 ## SCOPE
-- In scope: a boolean `--claude` CLI flag; a new `ClaudeRunner` implementing
-  the existing `OpenCodeRunner` trait; streaming JSON parsing for Claude's
-  output format; model tier mapping (opus/sonnet/haiku); session resumption
-  via `--resume`; tool-call rendering in the TUI as compact one-liners;
-  passing tinker persona via `--system-prompt` instead of agent
-  file installation.
-- Out of scope: persisting the backend choice in config; supporting other
-  backends beyond opencode and claude; auto-detecting which CLI is available.
-
-## DECISIONS (vetted)
-- Decision: Model tier mapping is opus (tinker), sonnet (goal sessions),
-  haiku (scheduler). Source: user said "opus for tinker, sonnet for
-  everything else" then "scheduler can use haiku."
-- Decision: Tinker persona is passed via `--system-prompt` when using
-  Claude, not via agent file installation. Source: user chose option C.
-- Decision: Session resumption uses `--resume <session-id>`, the Claude equivalent
-  of opencode's `-s`. Source: user confirmed "yes, same way."
-- Decision: Tool calls in the TUI are rendered as compact one-liners, similar to
-  the opencode style (e.g., `→ bash echo hello`). Source: user confirmed
-  "reasonably similar."
-- Decision: `--claude` is a boolean flag only, no config file persistence.
-  Source: user chose option A.
-- Decision: Claude output format requires `--output-format stream-json --verbose`.
-  Source: CLI probe showed the verbose flag is required for stream-json.
-- Decision: New implementation lives in `src/claude.rs`, parallel to `src/opencode.rs`.
-  The trait name `OpenCodeRunner` stays unchanged (internal naming, not worth
-  rename churn). Source: tinker assumption confirmed by "go."
-- Decision: Model constants use Claude's short aliases: "opus", "sonnet", "haiku".
-  Source: tinker assumption confirmed by "go."
+- In scope: the boolean `--claude` flag; a Claude runner
+  implementing the existing runner trait; streaming-JSON parsing of
+  Claude's output (which requires `--output-format stream-json
+  --verbose`); the opus/sonnet tier mapping; `--resume`
+  session resumption; compact one-liner tool-call rendering;
+  `--system-prompt` persona passing; mechanical `task`/`todowrite`
+  denial parity on the Claude path.
+- Out of scope: persisting the backend choice in config; backends
+  beyond opencode and claude; auto-detecting which CLI is
+  available.
 
 """
 parent_id = ""
 children = []
 related = [
-  { id = "cost-reduction", reason = "`cost-reduction` builds its measurement substrate by extending `src/claude.rs`'s output parser to capture the `usage` field that's currently discarded. Cost-cutting work on the Claude path is scoped through this goal." }
+  { id = "cost-reduction", reason = "`cost-reduction` builds its measurement substrate on `src/claude.rs`'s output parser, which captures the per-message `usage` field the Claude CLI emits. Cost-cutting work on the Claude path is scoped through this goal." },
+  { id = "tinker-agent", reason = "Mechanical tool restrictions defined in `tinker-agent`'s opencode agent file (e.g. `task`/`todowrite` denial) do not auto-apply on the Claude path because the agent file is bypassed there. This goal owns making them apply equivalently via `--disallowedTools` or equivalent." },
+  { id = "rummage", reason = "Mechanical tool restrictions defined in `rummage`'s opencode agent file (e.g. `task`/`todowrite` denial) do not auto-apply on the Claude path because the agent file is bypassed there. This goal owns making them apply equivalently via `--disallowedTools` or equivalent." }
 ]

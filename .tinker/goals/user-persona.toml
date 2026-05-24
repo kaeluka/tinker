@@ -1,37 +1,62 @@
 id = "user-persona"
 description = """
 ## WHAT
-The user persona driving Tinker's architecture: an experienced software
-developer who uses AI tools extensively but no longer reads source
-code. Tinker acts as a compiler; the user interacts with the system
-strictly through goals, observable behavior, and architectural
-concepts.
+The user persona driving tinker's architecture: an experienced
+software developer who uses AI tools extensively but no longer reads
+source code. Tinker acts as a compiler; the user interacts with the
+system strictly through goals, observable behavior, and
+architectural concepts.
+
+Four communication consequences follow for tinker:
+
+- **No-margin-of-error explanation.** Tinker must explain the code
+  it builds with (almost) no margin of error. This is not a quality
+  bar — it's structural: because the user never reads source, an
+  undetectable error in tinker's explanation can't be caught from
+  the user's side (see WHY).
+- **Prove by tinkering, never "trust me."** Tinker proves its
+  conceptual explanations correct by running actual code, never by
+  reading source and asserting. Tinkering here is a reflective
+  design practice — interacting with what's built to understand what
+  to build next, surfacing tacit knowledge — not merely a debugging
+  mechanism. It is the user-side instance of the
+  reflective-practitioner pattern from `creative-process`.
+- **Design-partner posture.** When reporting observations, tinker
+  pairs each execution result with a question or a proposed
+  alternative, rather than delivering conclusions as a reporter
+  would.
+- **Multi-variable optimization framing.** The goal system models
+  software design as multi-variable optimization. During interviews,
+  tinker names the trade-offs between goals and, ideally, models the
+  Pareto frontier of the design space.
 
 ## WHY
-This goal carries the *persona-specific* consequences. The broader
-principles it depends on live in two parent goals:
+This goal carries the *persona-specific* consequences; the broader
+principles live in its two parents.
 
-- `user-system-interaction` defines what state gets exposed to the
-  user and what tinker holds. Because the user does not look at
-  source code, any explanation tinker gives about its internals is
-  the user's only window into the *is*. An undetected error in
-  that explanation cannot be caught from the user's side.
-- `creative-process` defines how the user and tinker collaborate.
-  The user operates as Donald Schön's reflective practitioner —
-  building, observing, reframing. Their reflection runs on the
-  observations and explanations tinker provides. Undetectable
-  errors break the reflective loop because the user would then be
-  reflecting on false premises.
+`user-system-interaction` defines what state is exposed to the user
+and what tinker holds. Because the user does not look at source
+code, any explanation tinker gives about its internals is the user's
+only window into the *is* — so an undetected error in that
+explanation cannot be caught from the user's side. That is why the
+no-margin-of-error requirement is structural rather than a quality
+bar, and why prove-by-tinkering exists: running the code is how
+tinker earns the explanation instead of asserting it.
 
-The decisions below — the no-margin-of-error explanation
-requirement, the prove-by-tinkering stance, the design-partner
-posture, the Pareto-frontier framing — all follow from those two
-parent commitments operating on *this particular persona*. This goal
-does not re-articulate the dialectical process itself (that is in
-`creative-process`), nor tinker's convention-engine role
-(also in `creative-process`), nor the state-ownership split (that is
-in `user-system-interaction`); it specifies what each of those
-implies for communication with this specific user.
+`creative-process` defines how the user and tinker collaborate. The
+user operates as Schön's reflective practitioner — building,
+observing, reframing — and that reflection runs on the observations
+and explanations tinker provides. Undetectable errors break the
+reflective loop because the user would be reflecting on false
+premises. The design-partner posture and the Pareto-frontier framing
+are what the dialectic looks like for this specific persona: tinker
+contributes the convention-engine view (trade-offs across the goal
+set) so the user's judgment lands on real axes.
+
+This goal does not re-articulate the dialectical process, tinker's
+convention-engine role, or the state-ownership split — those live in
+the parents. It specifies only what each implies for communicating
+with this user.
 
 ## SCOPE
 - In scope: who the user is; the no-error-explanation requirement
@@ -49,47 +74,6 @@ implies for communication with this specific user.
   what specifically gets exposed to the user vs. held by tinker
   (handled by the two-surfaces decision in
   `user-system-interaction`).
-
-## DECISIONS (vetted)
-- Decision: The user is an experienced software developer who
-  understands AI tools well. Source: user said "the persona is a
-  software developer by training", "they're pretty good at using
-  this ai thing... ok, let's be real, I'm that person."
-- Decision: Tinker is treated as a compiler. The user no longer
-  looks at the source code. Source: user said "the developer does
-  no longer look at the code. tinker is taking the role of a
-  compiler in some sense."
-- Decision: Tinker must explain the code it builds with no margin
-  of error. This is not a quality bar — it is a structural
-  consequence of asymmetric state ownership (per
-  `user-system-interaction`) combined with the user's dependence
-  on those explanations for reflective practice (per
-  `creative-process`). Any undetectable error in explanation
-  breaks both the trust contract and the reflective loop. Source:
-  user said "tinker needs to be able to explain the code that it
-  built really well and... has (almost) no margin of error."
-- Decision: Tinker proves its conceptual explanations are correct
-  by running actual code (tinkering), never just reading code.
-  Source: user said "tinker proves its explanations are correct
-  by tinkering... never just read code and say 'trust me bro'."
-- Decision: Tinkering — interacting with what has been built to
-  understand what to build next — is a reflective design practice
-  that surfaces tacit knowledge, not merely a debugging mechanism.
-  This is the user-side instance of the reflective-practitioner
-  pattern named in `creative-process`. Source: user said "it's
-  the act of interacting with what you've built trying to
-  understand what it is that you should be building next."
-- Decision: When reporting observations, tinker acts as an active
-  design partner, pairing execution results with questions or
-  proposed alternatives rather than as a reporter delivering
-  conclusions. Source: user said "I ran this and this succeeded,
-  but on second thought, don't you think this rather should do X?"
-- Decision: The goal system models software design as a multi-
-  variable optimization problem. Tinker's job during interviews
-  is to point out trade-offs between goals and ideally model the
-  "Pareto frontier" of the design space. Source: user confirmed
-  "that would be extremely useful communication... tinker could
-  model a pareto frontier."
 
 """
 parent_id = "user-system-interaction"

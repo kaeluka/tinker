@@ -1,47 +1,40 @@
 id = "readme-maintainer"
 description = """
 ## WHAT
-A packaged goal that reactively maintains the human-facing `README.md` at
-the project root by reading the project's current goal tree. It synthesizes
-whatever foundational "Why" and "What" the project's goals contain into a
-cohesive narrative designed to explain the project to a new developer.
+A packaged goal that reactively maintains the human-facing
+`README.md` at the project root by reading the project's current goal
+tree. It synthesizes whatever foundational "why" and "what" the goals
+contain into a cohesive narrative for a new developer — it does not
+invent features or philosophy, it articulates exactly what the goals
+hold.
+
+The prose is simple, clear, and precise (think Vonnegut, Hemingway,
+Erich Kästner): no ten-dollar words where simple ones suffice, but
+precision always comes first. The README opens assuming zero prior
+knowledge — using even less in-group shared language than tinker
+itself does — because the top is a landing point that must pick up a
+first-time reader exactly where they are. As the human-facing
+counterpart to `project-indexer`, it defaults to conceptual
+descriptions and avoids raw code identifiers except where they're
+needed for setup.
 
 ## WHY
-AI-built projects evolve rapidly, and manual documentation rots. Every
+AI-built projects evolve rapidly and manual documentation rots. Every
 project needs a human-facing entry point explaining its intent and
-architecture. By making this a packaged goal, every Tinker-built project
-automatically gets a self-updating README derived directly from its actual
-load-bearing intent (the goal files). The README doesn't drift because it
-is just a reflection of the tree.
+architecture. Making this a packaged goal means every tinker-built
+project automatically gets a self-updating README derived directly
+from its load-bearing intent (the goal files); the README doesn't
+drift because it is just a reflection of the tree.
 
 ## SCOPE
-- In scope: generating the `README.md` at the project root; reading the
-  project's goal tree to source the narrative; explicitly directing the
-  LLM's prose style (simple, clear, precise); tailoring the introduction
-  to a reader who knows absolutely nothing about the project.
-- Out of scope: documenting internal module structure or low-level API
-  details (that is handled by LLM-targeted artifacts like `AGENTS.md`
-  or in-tree docs); hardcoding any specific philosophy (the agent must
-  synthesize whatever philosophy the specific project's goal tree holds).
-
-## DECISIONS (vetted)
-- Decision: The README is synthesized dynamically from the project's goal
-  tree. It does not invent features or philosophy; it articulates exactly
-  what is in the goals. Source: user generalization of the Tinker-specific
-  README maintainer into a generic packaged goal.
-- Decision: The prose style must be simple, clear, and precise (think
-  Vonnegut, Hemingway, Erich Kästner). No ten-dollar words where simple
-  words suffice, but precision always comes first. Source: user provided
-  explicit stylistic constraints for the LLM.
-- Decision: The README must start with content that assumes zero prior
-  knowledge, using even *less* in-group shared language than the
-  tinker uses. The top of the README is a landing point that must
-  convince a first-time viewer by picking them up exactly where they are.
-  Source: user clarified the audience gradient for the README.
-- Decision: It is the human-facing counterpart to `project-indexer`. It
-  must synthesize the narrative for humans, defaulting to conceptual
-  descriptions and avoiding raw code identifiers unless necessary for setup.
-  Source: user definition of the dual roles of these two documentation goals.
+- In scope: generating `README.md` at the project root; reading the
+  goal tree to source the narrative; directing the LLM's prose
+  style; tailoring the opening to a reader who knows nothing about
+  the project.
+- Out of scope: documenting internal module structure or low-level
+  API details (handled by LLM-targeted artifacts like `AGENTS.md` or
+  in-tree docs); hardcoding any specific philosophy (the agent
+  synthesizes whatever the project's goal tree holds).
 
 """
 parent_id = ""
