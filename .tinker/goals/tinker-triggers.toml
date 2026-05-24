@@ -1,89 +1,55 @@
 id = "tinker-triggers"
 description = """
 ## WHAT
-When tinker wants a goal session to run — a goal it just
-created, a goal it just edited, a downstream goal that should
-react to a just-finished batch, or any other reason to act on a
-goal — it announces the trigger in its chat output as a line of
-the form `/run <goal-id> <reason>`. Tinker scans tinker's
-finalized message for those lines and dispatches a goal session
-for each, with the reason threaded through as the goal session's
-"what to do right now" context. The same syntax is what the user
-types at the input prompt to fire a goal manually.
+When tinker wants a goal session to run — a goal it just created or
+edited, a downstream goal that should react to a just-finished
+batch, or any other reason to act on a goal — it announces the
+trigger in its chat output as a line of the form
+`/run <goal-id> <reason>`. After the reply finalizes, tinker scans
+it for those lines and dispatches a goal session for each, threading
+the reason through as the session's "what to do right now" context.
+Multiple `/run` lines in one reply each fire a separate session (the
+first runs, the rest queue). Anything that isn't a recognized `/run`
+line is shown to the user as ordinary chat, so triggers and prose
+coexist in the same reply. The same syntax is what the user types at
+the input prompt to fire a goal manually.
+
+The reasons tinker emits are **declarative pointers to spec deltas**
+— what changed in the goal text, or what changed in the environment
+the goal might react to — never imperatives about what to build. The
+session reads the updated goal, sees the delta, and derives its work
+from the spec itself. An imperative reason ("add modulo support")
+would launder implementation intent through the dispatch channel and
+bypass the spec process, where that intent legitimately belongs.
+User-typed reasons (the TUI Enter modal, `/run` at the prompt) are
+exempt as a pragmatic escape hatch.
+
+This is the single channel for goal-session dispatch that doesn't
+come from manual user input: the same `/run` mechanism serves both
+edited goals and reactive post-batch scheduling. There is no
+separate scheduler component.
 
 ## WHY
 Earlier, goals carried a `change_log` array recording pending work
-tinker wanted the goal session to act on. That had three
-problems. The name implied a historic record (not pending tasks).
-The field accumulated cruft across resumes. And it coupled spec
-storage to runtime triggers. Moving the trigger out of the file and
-into a chat-line slash command keeps the spec clean and ties each
-trigger to a specific moment with a specific reason. The same
-mechanism now also serves reactive scheduling — what used to be a
-separate cheap-model scheduler component is now just the
-tinker emitting more `/run` lines in its post-batch reply.
+tinker wanted a session to act on. That had three problems: the name
+implied a historic record rather than pending tasks; the field
+accumulated cruft across runs; and it coupled spec storage to runtime
+triggers. Moving the trigger out of the file and into a chat-line
+slash command keeps the spec clean and ties each trigger to a
+specific moment with a specific reason. The same move folded the old
+separate cheap-model scheduler into tinker — reactive scheduling is
+now just tinker emitting more `/run` lines in its post-batch reply,
+where it has full batch context.
 
 ## SCOPE
-- In scope: tinker emits `/run <goal-id> <reason>` in chat
-  output to trigger goal sessions, for both newly-edited goals
-  and reactive scheduling after a goal-session batch finishes;
-  tinker scans the finalized assistant message for those lines;
-  one goal session fires per matching line, with the reason
-  threaded through as context; multiple `/run` lines per
-  tinker turn each fire a separate session (queued in the
-  existing goal queue); the same `/run` syntax usable by the
-  user at the input prompt.
-- Out of scope: triggering arbitrary commands other than `/run`;
-  argument syntax beyond goal-id and reason; cross-project
-  triggers.
-
-## DECISIONS (vetted)
-- Decision: The trigger is a chat-line slash command, not a tool
-  call. Tinker emits `/run <goal-id> <reason>` as plain
-  text in its reply; tinker parses it after the message
-  finalizes. Source: user said "what if tinker would
-  'trigger' a goal by appending '/run <goal-id> <reason...>' to
-  their message and a hard-coded check would parse the slash
-  command? just like slash commands are parsed from user
-  messages..?"
-- Decision: `change_log` is removed from goals entirely. The
-  tinker never records pending work on the spec; it emits
-  triggers at the moment they are needed. Source: user said
-  "we're using the change log as a todo list, but to the agent
-  it may look like that's just a historic record. a change log
-  doesn't imply that there's a spec/implementation gap to be
-  fixed. it reads a bit weird."
-- Decision: Multiple `/run` lines per tinker turn are
-  allowed. Each line fires a separate goal session; the first
-  runs immediately, the rest queue. Source: open question in the
-  draft; ratified as the natural extension of the syntax.
-- Decision: Text that isn't a recognized `/run` command is shown
-  to the user as normal chat. Triggers and prose coexist in the
-  same tinker reply. Source: keeps the syntax unobtrusive.
-- Decision: The `/run` mechanism is used both for goals the
-  tinker created/edited AND for reactive scheduling after
-  a goal-session batch finishes. There is no second trigger
-  channel; tinker's reply is the single source of
-  goal-session dispatches that don't come from manual user
-  input. Source: user said "(a)" to folding reactive scheduling
-  into tinker and retiring the scheduler component.
-- Decision: `/run` reasons emitted by tinker are
-  declarative pointers to spec deltas — they describe what
-  changed in the goal text, or what changed in the environment
-  that the goal might react to, not what the session should do
-  about it. The session reads the updated goal, sees the delta,
-  and derives its work from the spec itself. Imperative reasons
-  ("add modulo support") would launder implementation intent
-  through the dispatch channel and bypass the spec process; the
-  spec is the only legitimate place for that intent to live.
-  User-typed reasons (TUI Enter modal, `/run` at the input
-  prompt) are exempt as a pragmatic escape hatch. Source: user
-  said "the commands you give the run slash command as
-  instructions should only mention what has changed in the goal
-  text, not give actual build instructions. otherwise, we're
-  bypassing the spec process"; user-typed exemption confirmed:
-  "user-typed reasons are ignored for now. as i said, it's an
-  escape hatch."
+- In scope: tinker emitting `/run <goal-id> <reason>` in chat to
+  trigger sessions, for both edited goals and reactive post-batch
+  scheduling; scanning the finalized assistant message for those
+  lines; one session per matching line with the reason threaded
+  through; multiple `/run` lines per turn each queuing a session;
+  the same `/run` syntax usable by the user at the prompt.
+- Out of scope: triggering commands other than `/run`; argument
+  syntax beyond goal-id and reason; cross-project triggers.
 
 """
 parent_id = "tinker"

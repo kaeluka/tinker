@@ -2,123 +2,92 @@ id = "goal-structure-standard"
 description = """
 ## WHAT
 A set of structural rules tinker uses to organize goals
-hierarchically instead of defaulting to flat lists. It defines four
-operations for integrating new user intent: Merge (modify existing),
-Nest Down (create child), Nest Up (create parent), and New Root (sibling).
-It also defines two structural coherence rules that the write protocol
-enforces on every edit: parent goals must summarize their children
-sufficiently to support drill-down filtering during cross-goal
-alignment, and goals may carry symmetric reasoned related-links
-capturing cross-cutting interactions that the containment hierarchy
-does not.
+hierarchically instead of defaulting to flat lists.
+
+Five operations shape the tree as intent evolves. **Merge** (modify
+an existing goal — logically identical to merging new intent into
+it). **Nest Down** (create a child) when the new intent would break
+an existing goal's level-of-detail coherence. **Nest Up** (create a
+new parent that existing goals are reparented under) when the new
+intent is a broader justification or conceptual umbrella. **New
+Root** (a sibling) when it's genuinely independent. **Retire** (delete
+an existing goal) when a reframe has made it obsolete — subsumed,
+contradicted, or no longer the right question; tinker proposes the
+retirement and the user confirms it, never unilaterally. For the four
+integration operations, the governing heuristic is **level-of-detail
+coherence**: if adding intent to a goal makes one section vastly
+deeper or more technical than the rest, it breaks the zoom level and
+must be extracted into a child.
+
+Two TOML link primitives are kept distinct:
+- `parent_id` / `children` capture **containment / specialization**
+  (B is a sub-aspect of A). Parent goals must **summarize their
+  children** well enough to support drill-down filtering during
+  cross-goal alignment — alignment starts at parents and drills down
+  only when warranted, instead of scanning every goal flat. If a
+  parent can't meaningfully summarize its children, the structure is
+  wrong: the children don't belong together, or the parent is
+  misnamed.
+- `related` captures **interaction** (B's behavior depends on or
+  affects A's), as reasoned cross-cutting links. Related-links are
+  **symmetric** — both goals must list each other — but the reason
+  text on each side may differ, because the relationship reads
+  differently from each end. Symmetry is enforced; **transitivity is
+  not** (`a↔b` and `b↔c` does not imply `a↔c`; auto-transitivity
+  would explode the graph back into flat scanning). Any goal can
+  carry related-links, not just roots, because cross-cutting concerns
+  don't respect tree level.
+
+The **write protocol** re-validates both coherence rules on every
+edit: it re-checks the parent summary whenever a child is created or
+edited, and re-validates related-links on both sides. When an edit
+needs to touch a partner goal (to add, remove, or rephrase a
+back-pointing link), that partner edit happens in the **same write
+turn** and appears in the playback as one bundle, so the user
+confirms or overrides the whole thing together rather than through
+cascading multi-turn interviews.
+
+**Symmetry exception:** a packaged goal (shared across projects)
+cannot symmetrically link to a project-local goal, because it can't
+carry knowledge of an internal goal that exists in only one project.
+Symmetry is enforced only between goals at the same scope level; a
+project-local goal may link to a packaged one as an asymmetric
+(one-way) reference.
+
+The section schema each goal is written in — WHAT/WHY/SCOPE, no
+DECISIONS section — and the content-quality tactics are governed by
+`goal-craft`, the content twin of these structural rules.
 
 ## WHY
-Defaulting to new, flat files for every user request creates "cognitive debt" —
-a flat soup of spaghetti intentions that is hard to read, maintain, and
-apply effectively. Maintaining a structured, coherent tree of intent
+Defaulting to new, flat files for every request creates "cognitive
+debt" — a flat soup of spaghetti intentions that's hard to read,
+maintain, and apply. A structured, coherent tree of intent
 accumulates value by making the system's goals legible at different
-levels of abstraction.
+levels of abstraction. This is a collaborative definition of value,
+not a rigid mechanical constraint — a guideline for creating value by
+defining what value means, not a forcing rule.
 
-The parent-summary and related-link rules extend that logic. Goals are
-read on every tinker turn and every fresh goal-session start, but
-written rarely — paying coherence-maintenance cost at write time keeps
-the common read path cheap and correct. Parent summaries let cross-goal
-alignment start at parents and drill down only when warranted, instead
-of scanning every goal flat. Related-links capture the cross-cutting
-interactions (e.g. `shared-language` affecting many user-facing surfaces
-that live outside its branch) that the containment hierarchy alone
-cannot express.
+The parent-summary and related-link rules extend that logic. Goals
+are read on every tinker turn and every fresh goal-session start but
+written rarely, so paying coherence-maintenance cost at write time
+keeps the common read path cheap and correct. Parent summaries let
+cross-goal alignment start at parents and drill down only when
+warranted. Related-links capture the cross-cutting interactions (e.g.
+`shared-language` affecting many user-facing surfaces outside its
+branch) that the containment hierarchy alone can't express.
 
 ## SCOPE
-- In scope: rules for when to merge versus nest; the "level of detail
-  coherence" heuristic; inserting new overarching concepts above
-  existing goals; the parent-summary coherence rule; the symmetric
-  reasoned related-links primitive; write-time re-validation of both
-  rules on every edit, with partner edits bundled into the same write
-  turn; the symmetry exception for packaged goals.
-- Out of scope: automated background refactoring of goal files (the
-  tinker applies these rules interactively during conversation);
-  backfilling existing parents with child summaries (a one-time
-  migration, handled as a separate deliberate step); seeding initial
-  related-links across existing goals (same); TUI rendering of
-  related-links; tinker-protocol updates to actively use the
-  new primitives during cross-goal alignment.
-
-## DECISIONS (vetted)
-- Decision: The core heuristic for Merge vs. Nest is "level of detail
-  coherence". If adding new intent to a goal makes one section
-  vastly deeper or more technical than the rest, it breaks the zoom
-  level and must be extracted into a nested child goal. Source:
-  user said "would the merged version be coherent in the sense that
-  it has similar level of detail for all topics discussed?"
-- Decision: Modifying an existing goal is logically identical to
-  merging new intent into it. Source: confirmed by user.
-- Decision: New intent can "Nest Up" — meaning it becomes a new root
-  that existing goals are reparented under, if the new intent
-  represents a broader justification or conceptual umbrella. Source:
-  user said "imagine i'd have a new goal idea that justifies WHY
-  tinker exists... inserted above".
-- Decision: The standard is framed as a collaborative definition of
-  value, not a rigid mechanical constraint. Source: user rejected
-  "forcing" language in favor of "giving you a guideline for
-  creating value by defining what value means."
-- Decision: When tinker updates or creates a goal and wants
-  the goal session to execute, it explicitly triggers it by emitting
-  `/run <goal-id> <reason...>` in its chat response. Source: user
-  requested explicitly parsing slash commands from tinker
-  output.
-- Decision: Parent goals must summarize their children sufficiently
-  to enable drill-down filtering during cross-goal alignment. If a
-  parent cannot meaningfully summarize its children, the structure
-  is wrong — the children don't belong together, or the parent is
-  misnamed/misplaced. The write protocol re-checks the parent
-  summary whenever a child is created or edited. Source: user said
-  "i was thinking there could be a structural coherence rule that
-  every parent goal must summarize its children. then
-  crossreferencing could start at the parents and only drill down
-  when needed."
-- Decision: Goals may carry a `related` TOML field listing other
-  goals they cross-cut with, plus a reason for each link. Related-
-  links are symmetric — `a -related-> b` always implies
-  `b -related-> a`, and both files must list each other. The reason
-  text on each side may differ, because the relationship reads
-  differently from each end (e.g. `shared-language → tinker`:
-  "tinker chat is one of the user-facing surfaces these
-  filters apply to"; `tinker → shared-language`: "the filtering
-  rules for what surfaces to the user come from here"). Source: user
-  said "yeah, not the same string."
-- Decision: Symmetry of related-links is enforced; transitivity is
-  not. `a↔b` and `b↔c` does NOT imply `a↔c`. Cross-goal alignment
-  scanning `a` finds `b` and drills into `b`'s links if warranted,
-  which surfaces `c` only when relevant from `b`. Auto-transitivity
-  would explode the graph back into flat scanning. Source: user
-  confirmed "yes" to symmetric-but-not-transitive in playback.
-- Decision: The write protocol re-validates related-links on both
-  sides on every edit. When a write needs to update a partner goal
-  (to add, remove, or rephrase a back-pointing related-link), the
-  partner edit happens in the same write turn and appears in the
-  playback as one bundle, so the user can confirm or override the
-  whole thing together. This avoids fragmenting single-goal edits
-  into cascading multi-turn interviews. Source: user picked option
-  (b) — auto-edit partner in same write turn, surface in playback.
-- Decision: `parent_id` / `children` and `related` are kept as
-  distinct primitives. The first captures containment / specialization
-  (B is a sub-aspect of A); the second captures interaction (B's
-  behavior depends on or affects A's). Cross-goal alignment uses
-  them differently — parent-first drill-down vs. lateral lookup.
-  Source: tinker default, confirmed in playback.
-- Decision: Related-links can be carried by any goal, not only root
-  goals. Cross-cutting concerns do not respect tree level (e.g.
-  `shared-language` is a nested child but cross-cuts widely), so
-  restricting the primitive to roots would leave the most
-  interesting cases out. Source: user agreed in playback.
-- Decision: Symmetry Exception: Packaged goals (`packaged-goals/*.toml`)
-  cannot symmetrically link to project-local goals (`.tinker/goals/*.toml`).
-  Because packaged goals are shared across projects, they cannot carry
-  knowledge of internal goals that only exist in one specific project.
-  Symmetry is enforced *only* between goals that live at the same scope level.
-  Source: user identified that a packaged goal referring to an internal goal
-  breaks the sharing boundary.
+- In scope: the five tree operations (four integration plus Retire)
+  and the level-of-detail coherence heuristic; the parent-summary
+  coherence rule; the
+  symmetric reasoned related-links primitive; write-time re-validation
+  of both rules on every edit, with partner edits bundled into the
+  same write turn; the packaged-vs-project-local symmetry exception.
+- Out of scope: automated background refactoring of goal files (tinker
+  applies these rules interactively during conversation); one-shot
+  mass backfilling of parent summaries or related-links across
+  existing goals (each is a deliberate hand-picked step); TUI
+  rendering of related-links.
 
 """
 parent_id = "tinker"
@@ -126,4 +95,4 @@ children = []
 
 [[related]]
 id = "goal-craft"
-reason = "Content-quality counterpart to this goal's structural rules. Structure ensures tree integrity (parent-summary coherence, symmetric related-links, merge/nest operations); content ensures each file is a clean prompt (anchored bullets, positive framing, orthogonality of content, goals-as-prompts). Both apply on every edit."
+reason = "Content-quality counterpart to this goal's structural rules, and owner of the WHAT/WHY/SCOPE section schema. Structure ensures tree integrity (parent-summary coherence, symmetric related-links, merge/nest operations); content ensures each file is a clean prompt (anchored claims, positive framing, orthogonality, goals-as-prompts, synthesis over enumeration). Both apply on every edit."

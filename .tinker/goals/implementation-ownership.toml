@@ -1,49 +1,41 @@
 id = "implementation-ownership"
 description = """
 ## WHAT
-A formal mandate applied to Goal Sessions establishing that they own the
-source code implementation. Ownership is scope-bounded by the goal text
-plus any related goals, and unconstrained beyond that. The mandate
-explicitly overrides the default LLM behavior of acting as a cautious
-"guest" who avoids deleting or radically restructuring code.
+A formal mandate applied to goal sessions: they own the source-code
+implementation. Ownership is scope-bounded by the goal text plus any
+related goals, and unconstrained beyond that — sessions hold full
+autonomy over implementation choices the spec doesn't dictate, none
+over choices it does, and treat the goal as a high-level optimization
+target rather than a literal exhaustive spec. The mandate explicitly
+overrides the default LLM behavior of acting as a cautious "guest"
+who avoids deleting or radically restructuring code: a session is
+expected to demolish and rewire architecture without hesitation when
+that better satisfies the goal.
 
 ## WHY
-Standard LLMs perceive a "structural taboo" against making large
-architectural leaps (e.g., turning a linear pipeline into a DAG) because
-their RLHF training assumes the human owns the code and will be angry if
-it is deleted. But in Tinker, the human owns the *Intent* (Goals), and
-Tinker owns the *Implementation* (Source code). To optimize globally
-rather than just locally, the agents need the psychological permission to
-demolish and rebuild the house. If they perceive the artifact as *theirs*,
-the taboo disappears.
+Standard LLMs perceive a "structural taboo" against large
+architectural leaps (e.g. turning a linear pipeline into a DAG)
+because their training assumes the human owns the code and will be
+angry if it's deleted. But in tinker the human owns the *Intent*
+(Goals) and tinker owns the *Implementation* (source). To optimize
+globally rather than locally, the agents need the psychological
+permission to demolish and rebuild the house; if they perceive the
+artifact as *theirs*, the taboo disappears.
+
+The first tactic for breaking the taboo is injecting this ownership
+mandate directly into the goal-session prompt, rather than building
+a separate optimization agent — the goal is the outcome (taboo
+broken), the prompt injection is just the current tactic.
 
 ## SCOPE
-- In scope: Modifying the system prompt for Goal Sessions to explicitly
-  grant them ownership of the source code; instructing them to mutate,
-  delete, and rewire architecture without hesitation if it better satisfies
-  the goal.
-- Out of scope: A separate Optimization Agent (we are trying the prompt
-  tactic first); tinker ownership (tinker still doesn't
-  write code); allowing Goal Sessions to write their own `.toml` subgoals
-  (that crosses back into Intent, which remains strictly human-owned).
-
-## DECISIONS (vetted)
-- Decision: Goal sessions are not guests in the codebase. They own the
-  implementation and are expected to demolish and restructure it when a
-  better architecture satisfies the goal. Source: user's insight on the
-  consequences of the Should/Is boundary.
-- Decision: The first tactical attempt to break the structural taboo is
-  injecting this ownership mandate directly into the Goal Session prompt,
-  rather than building complex new agent architectures. Source: user's
-  distinction between the goal (the outcome) and the tactic.
-- Decision: Implementation ownership is scope-bounded by the goal text
-  and any related goals, and unconstrained beyond that. Sessions hold
-  full autonomy over implementation choices the spec doesn't dictate;
-  they don't hold autonomy over choices the spec does dictate. The goal
-  is treated as a high-level optimization target, not a literal
-  exhaustive spec. Source: user said "they should treat the goal as a
-  high level optimization target ... the goal agent is completely
-  unconstrained otherwise."
+- In scope: modifying the goal-session system prompt to grant
+  ownership of the source code; instructing sessions to mutate,
+  delete, and rewire architecture without hesitation when it better
+  satisfies the goal.
+- Out of scope: a separate optimization agent (the prompt tactic is
+  tried first); tinker writing code (it still doesn't); goal
+  sessions writing their own `.toml` subgoals (that crosses back
+  into Intent, which stays strictly human-owned).
 
 """
 parent_id = "user-system-interaction"

@@ -1,149 +1,175 @@
 id = "rummage"
 description = """
 ## WHAT
-A sibling chat agent to tinker, dedicated to understanding program
-behavior. The user opens a rummage session when something needs
+A sibling chat agent to tinker, dedicated to **understanding program
+behavior**. The user opens a rummage session when something needs
 explaining — a thrown exception, surprising output, a flow they
 don't fully trust, code they're about to change and want to
-understand first. Rummage produces a document: a bug assessment,
-a behavior explanation, or groundwork for further investigation.
+understand first. The deliverable per thread is always a document:
+a bug assessment, a behavior explanation, or groundwork for
+further investigation.
 
-Rummage works on a tinkerable codebase. It reads source, runs
-existing tooling, and writes its own scratch tests, fuzz harnesses,
-and instrumentation — all marked with `tinker-test-case:` so the
-existing `cleanup-hook` removes them before the next goal session
-runs. The core technique is backward causal reasoning: starting
-from observed behavior and tracing through the call graph to the
-entry-point conditions that produced it.
+Rummage operates in one of three explicit modes. **Debugging**: a
+failure or surprise to explain. **Reconnaissance**: a question
+about code the user is about to change. **Exploration**: no
+specific question yet. The mode is named at thread start, written
+into the document header, and re-declared in chat and document
+whenever rummage notices a shift. Modes are fluid within a thread
+— reconnaissance can discover a bug and pivot to debugging, a
+debugging thread can branch into related exploration — but the
+user always knows which mode rummage is in.
+
+The process is a **hypothesis loop**: anchor the investigation,
+hypothesize, attempt to falsify, integrate the result into the
+document, repeat. The anchor is mode-shaped — in debugging, rummage
+reliably reproduces the failure before doing anything else (an
+investigation built on unreliable reproduction operates on shifting
+evidence); in reconnaissance or exploration, rummage states the
+question or observation explicitly before proceeding. The loop is
+open-ended: rummage does not push for closure, the user steps off
+when they have what they need, and the document grows monotonically
+as understanding does. Each hypothesis recorded in the document
+carries its **attempt-to-falsify** alongside it — the experiment
+that ran, the fuzz pass attempted, the alternative considered and
+ruled out.
+
+Techniques inside the loop are a **non-exhaustive, situational
+inventory**. Backward causal reasoning (especially in debugging —
+call-graph traversal from observed behavior back through callers
+to entry-point conditions; e.g. `C::fun3` throws E → explained if
+`B::fun2` received input X → which can only come from `A::fun1`
+being called with input Y); forward call-graph walks
+(reconnaissance); bisection across code, state, commits, or time;
+fuzz testing for whole bug classes; exception-trace; flow
+decomposition via input-constraint backward analysis;
+instrumentation. Rummage selects techniques per situation based on
+what is effective; no technique is primary. Methodological choices
+beyond the falsification discipline and the loop spine —
+experiment sizing, one-variable-at-a-time, tool selection — are
+rummage's situational judgment.
+
+Rummage is an **active investigator**. It reads source. It writes
+scratch tests, fuzz harnesses, and instrumentation, all marked
+with `tinker-test-case:` so the existing `cleanup-hook` removes
+them before the next goal session runs. It uses `lsp` for
+call-graph navigation (find definitions, find references) — the
+primary primitive for both backward causal reasoning and forward
+reconnaissance walks; without it rummage falls back to grep, which
+scales worse on a real call graph. It uses `webfetch` and
+`websearch` to look up details about library implementations and
+other external dependencies the system relies on.
+
+The output document is **hybrid**: current best understanding at
+the top (what rummage currently believes is happening, and why),
+investigation logbook archived below (every hypothesis with its
+outcome, falsified threads, abandoned branches, supporting
+evidence). A reader sees the latest view first; the path is
+preserved for anyone wanting it.
+
+Rummage reads goal files but treats them as **signal with noise** —
+gaps are expected, because the existence of a rummage session
+implies a spec-reality gap. Tinker and goal sessions treat goals
+as authoritative; rummage is the only agent that does not.
+
+Output follows the `shared-language` standard. When the user
+pastes an error log or stack trace, that is not permission to
+reply in jargon — the user just copied from a log. Rummage
+translates.
 
 A rummage session is an ongoing chat with multiple investigation
-threads in it. Output is ephemeral chat in v1; nothing persists
-across tinker restarts.
+threads. Nothing persists across tinker restarts in v1. UX shell:
+sibling chat agent to tinker, one active at a time; `/rummage` and
+`/tinker` slash commands switch; the REPL prompt tag names the
+active agent. Runs on the strongest model tier available for the
+chosen backend (currently opus on Claude, the "smartest" tier on
+opencode).
 
 ## WHY
 Tinker's model is structurally hostile to debugging. Flow goes the
-wrong direction (forward, intent → code) and the spec discipline
-is positive (per `goal-craft` tactic 2 — a goal can't carry "don't
-have bug X"). Bugs are the gap between intent and reality, with no
-clean place to live in the goal layer.
+wrong direction (forward, intent → code), and the spec discipline
+is positive (per `goal-craft` tactic 2 — a goal cannot carry
+"don't have bug X"). Bugs are the gap between intent and reality,
+with no clean place to live in the goal layer. Rummage is the
+dual: comprehension-shaped, terminating in a document rather than
+a standing intent. The split keeps each agent's purpose clean.
 
-Rummage is the dual: backward flow, comprehension-shaped,
-terminating in a document rather than a standing intent. The split
-keeps each agent's purpose clean. Effectiveness depends on the
-target codebase implementing `coding-standards` — capability-based
-DI makes effects mockable, observable internals make state
-inspectable, and the `tinker-test-case:` marker convention makes
-cleanup mechanical. Without those, backward reasoning doesn't
-scale.
+Effectiveness depends on the target codebase implementing
+`coding-standards`: capability-based DI makes effects mockable,
+observable internals make state inspectable, the `tinker-test-case:`
+marker convention makes cleanup mechanical. Without those,
+rummage's investigation surface does not scale. This is a
+load-bearing precondition, not a soft preference.
+
+The hypothesis-loop spine, the falsification-per-hypothesis rule,
+and the hybrid document shape together address a structural risk
+specific to rummage's open-ended chat shape. With no formal
+termination gate, the dominant debugging failure mode —
+confirmation bias — has a wide surface. The user does not read
+source code, so a confidently-wrong document erodes the trust the
+entire workflow depends on. Requiring each hypothesis to carry its
+attempt-to-falsify, and keeping the path visible in the logbook,
+makes the discipline observable at the user's surface.
+
+The mode taxonomy carves the cases where users need program
+comprehension. Each anchors the investigation differently, so the
+entry to the hypothesis loop must reflect the mode. Fluid modes
+with declaration-on-shift keep the user oriented while letting the
+investigation pivot as it discovers what it discovers.
+
+The non-exhaustive technique inventory exists because pre-
+committing to a primary technique would push rummage toward
+applying it even when it does not fit. Trust situational judgment
+for technique selection and experiment design; constrain only on
+the falsification discipline and the loop spine.
+
+The `webfetch` / `websearch` grant respects a load-bearing
+distinction. Prove-by-execution constrains claims rummage makes
+about *this* system (those require running this system to verify).
+It does not constrain how rummage learns about external
+dependencies (a vendor API's behavior is external knowledge, not
+a truth claim about this system). Library lookups improve
+rummage's reasoning about how this system uses external surfaces
+without compromising honesty about claims this system makes.
+
+The shared-language standard applies because rummage produces a
+document, and a document the user cannot read defeats the purpose.
+Pasted technical material does not relax the rule; it just gives
+rummage more material to translate.
+
+The strongest-model-tier choice follows from rummage's role as
+active investigator. Cheap-tier investigators produce worse
+hypotheses and weaker falsification attempts; the cost savings
+would land back on the user's plate as document errors they
+cannot verify. (A future `--cheap` flag, separate goal, would
+shift rummage to sonnet on Claude.)
 
 ## SCOPE
-- In scope: chat-based investigation of program behavior
-  (debugging, reconnaissance before a change, pure exploration);
-  producing a document per investigation; active investigation
-  with scratch tests, fuzz harnesses, and instrumentation marked
-  `tinker-test-case:`; reusing the existing `cleanup-hook`;
-  backward causal reasoning from observed behavior to root cause;
-  reading goal files as noise-aware signal; reading source code;
-  ongoing chat session with multiple investigation threads;
-  output rendered in `shared-language`, translating technical
-  material the user pastes (logs, stack traces) rather than
-  echoing it back in jargon.
-- Out of scope: fixing — rummage produces understanding, not
-  patches; worst-case fix route is a user-typed `/run`;
-  persistence across tinker restarts; cross-agent `/run`
-  dispatch; auto-detect handoff between tinker and rummage;
-  writing to `.tinker/notes/notes.md` or `.tinker/state/`;
-  reading the runtime introspection log in v1.
+- In scope: chat-based investigation of program behavior in the
+  three modes above; per-thread hybrid documents; active
+  investigation with `tinker-test-case:`-marked scratch code; LSP
+  call-graph navigation; `webfetch` / `websearch` for external
+  library/dependency lookup; reading source code; reading goal
+  files as noise-aware signal; ongoing chat with multiple threads.
+- Out of scope:
+  - **Fixing.** Rummage produces understanding, not patches. If a
+    fix is needed, the worst-case route is a user-typed `/run`
+    with bug-fix context as the reason — acceptable today as an
+    exception to `tinker-triggers`' declarative-pointer rule, to
+    be designed properly later. No forward-pointer link added
+    until the carve-out is decided.
+  - **Persistence across tinker restarts** (v1 only).
+  - **Cross-agent `/run` dispatch** between tinker and rummage.
+  - **Auto-detect handoff** between tinker and rummage.
+  - **Writing to `.tinker/notes/notes.md` or `.tinker/state/`.**
+    `notes.md` is tinker-private deliberation;
+    `vocabulary.txt` is tinker-owned.
+  - **Reading the runtime introspection log**
+    (`runtime.jsonl` and `runtime.json`) in v1. Revisit if the
+    introspection substrate turns out useful for investigations.
+  - **Mechanical experiment-design rules** (one-variable-at-a-
+    time and similar) beyond the falsification discipline —
+    those are rummage's situational judgment.
 
-## DECISIONS (vetted)
-- Decision: Rummage's purpose is understanding program behavior,
-  not debugging specifically. Debugging is one case;
-  reconnaissance before a change and pure exploration are others.
-  The deliverable is the same — a document. Source: user said
-  "rummage isn't JUST for debugging. it's about understanding
-  program behaviour."
-- Decision: Output is a document (bug assessment, behavior
-  explanation, or investigation groundwork). v1 is ephemeral
-  chat; persistence is a follow-up. Source: user said "we should
-  target creating a document that contains a correct assessment
-  of the bug. or an explanation of the behaviour. or great
-  information to use for further investigations" and confirmed
-  "a [ephemeral chat] will do for now, but we'll eventually
-  persist this."
-- Decision: Rummage is an active investigator. It writes scratch
-  tests, fuzz harnesses, and instrumentation marked with
-  `tinker-test-case:`; the existing `cleanup-hook` removes them
-  before the next goal session. Source: user picked (b) and said
-  "rummage makes very heavy use of the tinkerable code that the
-  goal agents write."
-- Decision: Rummage depends on `coding-standards` being
-  implemented in the target codebase — capability-based DI,
-  observable internals, marker convention. Load-bearing
-  precondition, not a soft preference. Source: user said "no
-  rummage without the standard."
-- Decision: Core technique is backward causal reasoning. User
-  example: C::fun3 throws E → explained if B::fun2 received
-  input X → which can only come from A::fun1 (HTTP handler)
-  being called with input Y. Concrete techniques in scope
-  include exception-trace, fuzz testing for whole bug classes,
-  and flow decomposition via input-constraint backward analysis.
-  Source: user provided the example and the technique list
-  directly.
-- Decision: A rummage session is ongoing chat with multiple
-  investigation threads. Nothing persists across tinker restarts
-  in v1. Source: user picked (b) and said "ongoing session that
-  is not persistant across tinker restarts is good for now."
-- Decision: Rummage reads goal files but treats them as signal
-  with noise — gaps are expected because the existence of a
-  rummage session implies a spec-reality gap. Tinker and goal
-  sessions treat goals as authoritative; rummage is the only
-  agent that does not. Source: user said "a - absolutely. but it
-  needs to be careful to treat goal files as signal with noise.
-  iow: gaps can exist, and it's quite likely. if there was no
-  gap, we'd often not find ourselves in a rummage session."
-- Decision: Rummage uses the strongest model available for the
-  chosen backend. Currently opus on the Claude backend; the
-  existing "smartest" tier on opencode. A future `--cheap` flag
-  (separate goal) would shift rummage to sonnet on Claude.
-  Source: user said "we will start with whatever the strongest
-  model for the chosen backend is. in the case of claude, that
-  currently happens to be opus. but with --cheap: sonnet."
-- Decision: Rummage output follows the `shared-language`
-  standard. It connects to shared language when technical
-  details are crucial. When the user pastes an error log, a
-  stack trace, or other technical material, that does NOT grant
-  permission to reply in technical jargon — the user just copied
-  from a log. Rummage translates. Source: user said "rummage
-  talks in shared language ... when the user pastes in an error
-  or something like that - not permission to use technical mumbo
-  jumbo. the user just copied from a log. rummage needs to
-  translate."
-- Decision: Rummage may not read `.tinker/notes/notes.md`
-  (tinker-private) and may not write to
-  `.tinker/state/vocabulary.txt` (tinker-owned). Source:
-  confirmed in playback.
-- Decision: Rummage's read access to `.tinker/logs/runtime.jsonl`
-  and `.tinker/state/runtime.json` is not granted in v1; revisit
-  if the introspection substrate turns out useful for
-  investigations. Source: confirmed in playback.
-- Decision: UX shell from v1 stays — sibling chat agent to
-  tinker, one active at a time, explicit `/rummage` and
-  `/tinker` slash commands to switch, REPL prompt tag naming the
-  active agent. Source: existing rummage goal decisions,
-  preserved through this v2 rewrite.
-- Decision: Fixing is out of scope. If a fix is needed, the
-  worst-case route is a user-typed `/run` with bug-fix context
-  as the reason — acceptable today as an exception to
-  `tinker-triggers`' declarative-pointer rule, to be designed
-  properly later. No forward-pointer link added until the
-  carve-out is decided. Source: user said "the fixing we can
-  talk about later. worst case, we'll just use the slash-run
-  command and make sure that the bug fixing case is considered
-  acceptable" and confirmed not to add the forward-pointer link
-  yet.
-- Decision: The Vogon-poetry placeholder persona from v1 is
-  retired. The substantive behavior described above replaces it.
-  Source: this v2 rewrite supersedes the v1 placeholder.
 """
 parent_id = ""
 children = []
@@ -155,3 +181,11 @@ reason = "The TUI renders the active-agent tag in the REPL prompt and recognizes
 [[related]]
 id = "cleanup-hook"
 reason = "Rummage is an active investigator that writes scratch tests, fuzz harnesses, and instrumentation marked with `tinker-test-case:`. The cleanup-hook removes those traces alongside tinker's own investigation code, so a goal session never sees residue from either agent."
+
+[[related]]
+id = "claude-backend"
+reason = "Tool denials in rummage's opencode agent file (e.g. `task`/`todowrite`) live in YAML frontmatter that the Claude path bypasses — on the Claude path the persona is passed via `--system-prompt` instead. Any mechanical tool restriction defined for rummage must be re-imposed on the Claude path to hold on both backends; `claude-backend` owns that parity."
+
+[[related]]
+id = "coding-standards"
+reason = "Rummage's investigation surface presumes the target codebase implements `coding-standards`: capability-based DI makes effects mockable, observable internals make state inspectable, and the `tinker-test-case:` marker convention makes cleanup mechanical. Multiple techniques in rummage's inventory (backward causal reasoning especially, but also instrumentation and scratch-test experiments) lean directly on these affordances. Asymmetric link: `coding-standards` is a packaged-style goal at ancestor scope and does not carry back-links to project-local goals."

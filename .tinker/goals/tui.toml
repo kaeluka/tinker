@@ -1,138 +1,88 @@
 id = "tui"
 description = """
 ## WHAT
-Tinker presents a terminal interface with three regions visible at
-once. One region carries the live conversation with the currently
-active agent (tinker or rummage) — typed input, streamed replies,
-and a prompt-line tag naming whichever agent will receive the next
-message. Another lists the current goals and, beneath that list,
-shows the full text of whichever goal is currently selected. The
-third shows the output of whatever goal session is currently
-running. Any text region can be scrolled with the mouse wheel; new
-content keeps the view at the bottom unless the user has scrolled
-away manually.
+Tinker presents a terminal interface in two columns. The **left
+column** carries the live conversation. The **right column** stacks
+three bands at fixed proportions: a selectable **goal list** (25%
+height), the full **goal text** of the currently selected goal
+beneath it (50%), and the **session log** at the bottom (25%).
+
+In the conversation, an input-prompt tag names whichever agent will
+receive the next message (`tinker> ` or `rummage> `); input routes
+to that agent, and the `/rummage` and `/tinker` slash commands
+(defined in `rummage`) switch it. Tinker's tool calls (bash, read,
+edit, etc.) render in dim grey with payloads cropped to their first
+line, so multi-line output doesn't flood the thread. When tinker
+triggers follow-up goals via `/run` lines in its reply, the system
+message listing those goals and their reasons also renders in grey.
+
+In the goal list, only the list is selectable — the text beneath is
+read-and-scroll only. Keyboard navigation auto-scrolls the list so
+the selected goal stays visible (edge scrolling).
+
+In the session log, the reason a session was triggered renders in
+bold at the top.
+
+Any text region scrolls with the mouse wheel — whichever region is
+under the cursor. New content keeps the view pinned to the bottom;
+scrolling up disables auto-follow until the user scrolls back down,
+where it re-engages.
+
+**Queue visibility.** When goals have running or pending sessions,
+the goal list marks them: a distinct glyph (`▶`) for the
+currently-running goal, a bracketed integer (`[1]`, `[2]`) for each
+goal's next queued position. A goal with several pending
+invocations shows only its *next* index — never multiple numbers —
+so the list stays uncluttered. Markers render dim/grey so they
+don't dominate the goal name. When a marked goal is selected, the
+goal-text region appends a section beneath the description listing
+every pending invocation for that goal in queue order — running
+first, then queued — each line carrying its glyph or index and
+trigger reason. In the idle state (empty queue, nothing running) no
+markers appear and the goal-text region shows only the description.
+
+**Manual triggers.** When the user triggers a goal by hand — Enter
+in the goal list, or `/run` without arguments — a modal text-input
+dialog collects the trigger reason.
 
 ## WHY
 Tinker is meant to be watched while it works. A single REPL would
 hide too much — the user wants to see the conversation, the
-standing intent, and what the goal sessions are actually doing,
-all at the same time.
+standing intent, and what the goal sessions are actually doing, all
+at once. The three-region layout keeps all of that visible without
+configuration.
+
+The rendering choices serve legibility under live streaming. Tool
+calls and tinker-triggered system messages render dim because
+they're scaffolding, not the conversation the user is following;
+cropping tool payloads to one line keeps multi-line output from
+burying the thread. Trigger reasons render bold in the session log
+because they're the one piece of context explaining why a session
+is doing what it's doing. Queue markers render dim for the inverse
+reason — they're ambient status, and a bright marker would compete
+with the goal name that carries the actual meaning.
+
+The queue surface is read-only by deliberate choice: the user
+wanted to see what's queued without being able to cancel, reorder,
+or pause it. Queue control is a separate concern, deferred until
+there's a real need — today not even tinker can manipulate the
+queue.
 
 ## SCOPE
-- In scope: a layout that keeps all three regions visible without
-  configuration; live streaming of conversation and session
-  output; mouse-wheel scrolling with auto-follow behavior;
-  keyboard navigation of the goal list with automatic scrolling;
-  dimming and summarizing tool calls in the conversation view;
-  rendering the system message that lists triggered follow-up
-  goals in grey; a modal text input dialog to collect trigger
-  reasons; rendering the trigger reason in bold in the session
-  log; rendering queue markers (a glyph for the running goal,
-  integer indices for queued entries) next to goal names in the
-  goal-list region; rendering each marked goal's pending
-  invocations with their queue indices and reasons in the
-  goal-text region beneath the description; an active-agent tag
-  in the conversation pane's input prompt; routing input to the
-  active agent; recognizing the agent-switching slash commands
-  defined in `rummage`.
+- In scope: the two-column layout at fixed 25%/50%/25% right-side
+  proportions; live streaming of conversation and session output;
+  mouse-wheel scrolling with auto-follow; keyboard goal-list
+  navigation with edge scrolling; dim/cropped tool-call rendering;
+  grey rendering of the triggered-goals system message; the modal
+  trigger-reason dialog; bold trigger reasons in the session log;
+  queue markers in the goal list and pending-invocation listing in
+  the goal-text region; the active-agent input-prompt tag and
+  message routing; recognizing the `/rummage` and `/tinker` slash
+  commands defined in `rummage`.
 - Out of scope: themes, syntax highlighting, layout
-  configurability, syncing the interface to a remote viewer;
-  any interactive manipulation of the queue (cancel, reorder,
-  pause, clear) — the queue surface is read-only.
-
-## DECISIONS (vetted)
-- Decision: The goal region shows BOTH the selectable goal list
-  AND the description text of the currently selected goal. Only
-  the list is selectable; the text below is read-and-scroll
-  only. Source: user said "show the tree as you currently do.
-  but after, show ... full goal text of the currently selected
-  goal, scrollable. make sure I can only select goals, not the
-  text after."
-- Decision: The layout proportions for the right side are fixed at
-  25% height for the goal list, 50% for the goal text view, and
-  25% for the session log. Source: user requested these exact proportions.
-- Decision: When navigating the goal list with the keyboard, the
-  list view automatically scrolls to ensure the currently selected
-  goal is always visible (standard edge scrolling). Source: user confirmed.
-- Decision: Mouse wheel scrolls whichever region is under the
-  cursor. Source: user agreed to add mouse routing this way.
-- Decision: Text regions follow the tail of new content by
-  default. Scrolling up disables the follow until the user
-  scrolls all the way back to the bottom, at which point follow
-  re-engages. Source: matches how every chat-style interface
-  handles streaming text; built this way without contention.
-- Decision: All tinker tool calls (bash, read, edit, etc.)
-  shown in the conversation pane are rendered in a grey/dim style
-  to reduce visual noise. Their payloads are summarized (cropped
-  to the first line) to prevent multi-line strings from flooding
-  the view. Source: user said "all in grey and summarized, yes".
-- Decision: When a goal session starts, the specific "reason" it
-  was triggered must be rendered in the log pane in bold font.
-  Source: user requested "that reason must show up in the agent
-  log in bold font."
-- Decision: When the user manually triggers a goal via Enter in
-  the tree (or via `/run` without arguments), a modal text input
-  dialog pops up to collect the trigger reason. Source: user said
-  "3. i hit enter in the goal pane... 3: modal dialog". The old
-  YAGNI constraint against modals is explicitly removed.
-- Decision: The system message that lists the goals the
-  tinker triggered (via `/run` lines in its last reply)
-  and their reasons must be rendered in grey to reduce visual
-  noise. Source: user said "in grey"; producer changed from the
-  retired scheduler to tinker without changing the
-  rendering rule.
-- Decision: Goals in the goal-list region carry a marker next to
-  their name when they have a running or pending session. The
-  currently-running goal gets a distinct glyph (e.g. `▶`); each
-  goal with queued entries gets a bracketed integer showing its
-  next upcoming queue position (e.g. `[1]`, `[2]`). Goals with
-  nothing pending carry no marker. Source: user picked option
-  (i) (marker next to name) and option (ii) (distinct glyph for
-  running) during the queue-visibility interview, saying "a
-  marker next to the name (like a queue index integer)" and "ii".
-- Decision: When a goal with a marker is selected, the goal-text
-  region shows an extra section beneath the description listing
-  every pending invocation for that goal — including the
-  currently-running one if applicable — in queue order, with
-  each line carrying the running glyph or queue index and the
-  trigger reason. This makes the goal-text region a complete
-  picture of "what's happening with this goal." Source: user
-  picked option (i) for reason placement ("i") and option (A)
-  for multi-queueing display ("a").
-- Decision: When the same goal has multiple pending invocations,
-  every entry appears in the goal-text region section in queue
-  order, each with its own queue index and reason. The marker on
-  the list itself always shows only the *next* index for that
-  goal — never multiple numbers — so the list stays uncluttered.
-  Source: user picked option (A) for multi-queueing.
-- Decision: Markers in the goal-list region are rendered in a
-  dim/grey style so they don't visually dominate the goal name.
-  Source: confirmed in playback as an tinker default.
-- Decision: When the queue is empty and no session is running,
-  no markers appear in the goal-list region, and the goal-text
-  region shows only the description. The queue surface is not
-  visible at all in the idle state. Source: confirmed in
-  playback.
-- Decision: The queue-visibility additions do not change the
-  fixed 25%/50%/25% layout proportions, do not introduce a new
-  region, and do not change the existing selectability rules
-  (list selectable, text-below read-only). Source: user said
-  the option that motivated this — "a marker next to the name"
-  — was acceptable because it was "low-disruption"; confirmed
-  in playback.
-- Decision: The queue surface is read-only. The user does not
-  cancel, reorder, pause, or otherwise manipulate the queue from
-  the interface. Source: user said "lets not cancel yet - just a
-  queue concept that i can't 'mess with'", walking back from
-  earlier "b sounds fantastic" on first-class queue control.
-- Decision: The conversation pane's input prompt carries a tag
-  naming the currently active agent (e.g. `tinker> ` or
-  `rummage> `), so the user always sees which agent will receive
-  their input. Slash commands that switch the active agent are
-  defined in `rummage` (`/rummage` and `/tinker` in v1); this
-  goal renders the prompt tag and routes the message. Source:
-  user said "when i type a message in the left pane - how do i
-  as the user know who it's going to?"
+  configurability, syncing the interface to a remote viewer; any
+  interactive manipulation of the queue (cancel, reorder, pause,
+  clear) — the queue surface is read-only.
 
 """
 parent_id = ""

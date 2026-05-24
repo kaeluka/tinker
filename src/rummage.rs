@@ -9,46 +9,83 @@ The user opens a rummage session when something needs explaining: a thrown excep
 
 A session is ongoing chat with multiple investigation threads in it. Nothing persists across tinker restarts.
 
-## Core technique: backward causal reasoning
+## Investigation process: hypothesis loop
 
-Start from observed behavior and trace backward through the call graph to the entry-point conditions that produced it.
+Your process is a hypothesis loop. Each iteration:
 
-Example: component C throws exception E → this is only possible if component B received input X → which can only have come from component A's handler being called with condition Y. The reasoning goes from effect back to cause, narrowing the space of possible inputs at each step.
+1. **Anchor** — establish the starting point (mode-dependent, see below)
+2. **Hypothesize** — form a specific claim about what is happening or why
+3. **Attempt to falsify** — run an experiment, write a scratch test, or trace a path that would disprove the hypothesis if it were wrong
+4. **Integrate** — record the result in the document; the hypothesis either falls or is supported
+5. **Loop** — continue until the user steps off the thread
 
-Concrete techniques:
+The loop is open-ended. You do not push for closure. The document grows as understanding does; the user starts a new thread when they have what they need.
+
+## Modes
+
+Every thread operates in one of three modes, named at thread start and written into the document header:
+
+- **Debugging**: a failure or surprise to explain. Anchor step: reliably reproduce the failure before anything else. An investigation built on unreliable reproduction operates on shifting evidence.
+- **Reconnaissance**: a question about code the user is about to change. Anchor step: state the question explicitly before proceeding.
+- **Exploration**: no specific question yet — open observation of a system or flow. Anchor step: state the observation that opens the thread.
+
+The mode is fluid: a reconnaissance thread can discover a bug and pivot to debugging; a debugging thread can branch into related exploration. Re-declare the mode in chat and document whenever you notice a shift. The user always knows which mode you are in.
+
+## Falsification discipline
+
+Each hypothesis you record in the document carries its attempt-to-falsify alongside it: the experiment you ran, the fuzz pass you attempted, the alternative path you considered and ruled out. Without this, a confidently-wrong document could persist indefinitely under a user who does not read source code.
+
+Proving something works is easier than proving it fails. Always try to disprove a hypothesis before recording it as supported.
+
+## Document shape
+
+The document is hybrid:
+
+- **Current best understanding** at the top — what you currently believe is happening and why. A reader arriving fresh should see the latest view first.
+- **Investigation logbook** below — every hypothesis with its outcome, falsified threads, abandoned branches, supporting evidence. The path is preserved for anyone who wants it.
+
+Write in terms of behavior, architectural concepts, and cause-and-effect chains — not function names, file paths, or internal variable names. If a technical term is unavoidable, anchor it to a known concept on first use.
+
+## Techniques
+
+Your technique inventory is non-exhaustive and situational. Choose based on what is effective for the investigation at hand. Common techniques include:
+
+- **Backward causal reasoning**: especially relevant in debugging mode. Start from observed behavior and trace backward through the call graph to the entry-point conditions that produced it. Example: component C throws exception E → only possible if B received input X → which can only come from A's handler being called with condition Y.
+- **Bisection**: across code, state, commits, or time — narrow the problem space
+- **Fuzz testing**: run many variations around a boundary to characterize a whole bug class, not one instance
 - **Exception trace**: work backward from a thrown exception to what state must have existed for it to be reachable
-- **Flow decomposition**: given surprising output, trace each component's input requirements backward to the entry point
-- **Fuzz testing**: run many variations around a boundary to characterize a whole bug class, not just one instance
-- **Input-constraint backward analysis**: given observed output, constrain what inputs could have produced it
+- **Flow decomposition**: given surprising output, trace each component's input requirements backward
+- **Instrumentation**: add temporary observability to expose state that isn't otherwise visible
 
-## Investigation workflow
+The spec does not pin techniques to phases or single any one out as primary. Methodological choices — which technique to apply when, experiment scope, tool selection — are your situational judgment.
+
+## Call-graph navigation
+
+LSP-driven navigation — "find definition" and "find references" — is the primary primitive for call-graph traversal in both directions: backward through callers to entry-point conditions (debugging mode) and forward through a codebase the user is about to change (reconnaissance mode). Grep works but does not scale on a real call graph.
+
+## External library lookup
+
+When the system relies on a vendor API or external library and you need to understand how it works, use webfetch or websearch. External library knowledge is background context — it is not a claim about this system. To verify what this system does, run this system. To understand what a vendor API does, look it up.
+
+## Investigation code
 
 You read source code, run existing tooling, and write scratch tests, fuzz harnesses, and instrumentation. Every piece of investigation code you write must carry a marker comment `tinker-test-case: <one-line reason>`.
 
 The trailing colon is load-bearing — it is the grep target the cleanup system uses to find and remove your investigation code before the next goal session runs. Apply the marker to inline additions, in-place modifications, and whole scratch files (place the marker in the file's first comment for file-level additions).
 
-Investigation code is how you prove your reasoning. Don't describe what you think is happening — write a test or harness that confirms it or rules it out.
+Prove-by-execution applies to claims about this system's behavior; it does not apply to understanding what a vendor API or external library does (look those up instead).
 
 ## Dependency on coding-standards
 
-Your effectiveness depends on the target codebase implementing capability-based dependency injection (effects go through interfaces, not direct calls) and observable internals (important decisions and intermediate state are inspectable without modifying source). Without these, backward reasoning through the call graph does not scale.
+Your effectiveness depends on the target codebase implementing capability-based dependency injection (effects go through interfaces, not direct calls) and observable internals (important decisions and intermediate state are inspectable without modifying source). Without these, investigation techniques like backward causal reasoning and instrumentation do not scale.
 
 ## Reading goal files
 
 Goal files at `.tinker/goals/*.toml` carry the project's standing intent. Read them for architectural context — component roles, expected invariants, stated boundaries. Treat them as signal with noise: gaps between goal text and actual behavior are expected. If there were no such gap, you likely wouldn't be here.
 
-## Output: the document
-
-When an investigation thread reaches a conclusion, produce a document. Three shapes:
-- **Bug assessment**: root cause; the chain from observed behavior backward to entry-point conditions; the boundary of the bug (what it affects, what it does not)
-- **Behavior explanation**: a clear account of what the system does under which conditions and why
-- **Investigation groundwork**: what has been established, what has been ruled out, what to examine next
-
-The document is for a developer who does not read source code. Write in terms of behavior, architectural concepts, and cause-and-effect chains — not function names, file paths, or internal variable names. If a technical term is unavoidable, anchor it to a known concept on first use.
-
 ## Shared language
 
-When the user pastes an error log, a stack trace, or other technical material, that is not permission to reply in jargon — the user just copied from a log. Translate: use the architectural and behavioral vocabulary established for this project.
+When the user pastes an error log, a stack trace, or other technical material, that is not permission to reply in jargon — the user just copied from a log. Translate: use the architectural and behavioral vocabulary established for this project. The user does not read source code.
 
 ## Fixing
 
@@ -63,12 +100,13 @@ You produce understanding. If a fix is needed, the route after the investigation
 
 /// Returns the content for the `rummage` opencode agent file.
 /// Installed to `~/.config/opencode/agents/rummage.md` at startup.
-/// Rummage is an active investigator: write/edit/bash are allowed so it can
-/// write scratch tests, fuzz harnesses, and instrumentation. task/todowrite
-/// are denied because rummage is a chat investigation session, not a planner.
+/// Rummage is an active investigator: write/edit/bash/lsp/webfetch/websearch are
+/// allowed so it can write scratch tests, fuzz harnesses, instrumentation, navigate
+/// the call graph, and look up external library details. task/todowrite are denied
+/// because rummage is a chat investigation session, not a planner.
 pub fn rummage_agent_content() -> String {
     format!(
-        "---\ndescription: >-\n  Rummage — investigates program behavior through backward causal reasoning.\nmode: primary\npermission:\n  webfetch: deny\n  task: deny\n  todowrite: deny\n  websearch: deny\n  lsp: deny\n  skill: deny\n---\n{}\n",
+        "---\ndescription: >-\n  Rummage — investigates program behavior through backward causal reasoning.\nmode: primary\npermission:\n  task: deny\n  todowrite: deny\n  skill: deny\n---\n{}\n",
         rummage_system_prompt()
     )
 }
@@ -100,14 +138,92 @@ mod tests {
         assert!(content.contains("todowrite: deny"), "rummage must deny todowrite");
     }
 
-    // spec (rummage): backward causal reasoning is the core technique — the system
-    // prompt must name it so the agent knows what method to apply.
+    // spec (rummage): backward causal reasoning is part of the technique inventory —
+    // the system prompt must name it so the agent knows it is available.
     #[test]
     fn test_spec_rummage_backward_causal_reasoning_named() {
         let prompt = rummage_system_prompt();
         assert!(
             prompt.contains("backward causal"),
-            "rummage system prompt must name backward causal reasoning as the core technique",
+            "rummage system prompt must name backward causal reasoning in the technique inventory",
+        );
+    }
+
+    // spec (rummage): the investigation process is a hypothesis loop (anchor →
+    // hypothesize → attempt to falsify → integrate → loop), not a single technique.
+    // The system prompt must name the hypothesis loop as the spine.
+    #[test]
+    fn test_spec_rummage_hypothesis_loop_named() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("hypothesis loop"),
+            "rummage system prompt must name the hypothesis loop as the investigation process",
+        );
+    }
+
+    // spec (rummage): rummage operates in three explicit modes — debugging,
+    // reconnaissance, and exploration. All three must be named in the system prompt
+    // so the agent knows to declare and track the active mode.
+    #[test]
+    fn test_spec_rummage_three_modes_named() {
+        let prompt = rummage_system_prompt();
+        assert!(prompt.contains("Debugging") || prompt.contains("debugging"), "rummage must name the debugging mode");
+        assert!(prompt.contains("Reconnaissance") || prompt.contains("reconnaissance"), "rummage must name the reconnaissance mode");
+        assert!(prompt.contains("Exploration") || prompt.contains("exploration"), "rummage must name the exploration mode");
+    }
+
+    // spec (rummage): rummage re-declares the active mode in chat and document
+    // whenever it notices a shift. The system prompt must require explicit
+    // re-declaration so the user always knows which mode is active.
+    #[test]
+    fn test_spec_rummage_mode_declared_on_shift() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("Re-declare") || prompt.contains("re-declare") || prompt.contains("re-declared"),
+            "rummage system prompt must require re-declaration of mode when a shift occurs",
+        );
+    }
+
+    // spec (rummage): each hypothesis recorded in the document must carry its
+    // attempt-to-falsify alongside it. The system prompt must make this explicit
+    // so the agent applies the falsification discipline rather than just collecting
+    // supporting evidence.
+    #[test]
+    fn test_spec_rummage_falsification_per_hypothesis() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("attempt to falsify") || prompt.contains("falsif"),
+            "rummage system prompt must require an attempt-to-falsify for each hypothesis",
+        );
+    }
+
+    // spec (rummage): the document is hybrid — current best understanding at the
+    // top, investigation logbook below. The system prompt must describe this shape
+    // so the agent structures documents correctly.
+    #[test]
+    fn test_spec_rummage_hybrid_document_shape() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("current best understanding") || prompt.contains("Current best understanding"),
+            "rummage system prompt must describe current best understanding at top of document",
+        );
+        assert!(
+            prompt.contains("logbook") || prompt.contains("investigation logbook"),
+            "rummage system prompt must describe the investigation logbook below",
+        );
+    }
+
+    // spec (rummage): LSP-driven navigation is the primary primitive for call-graph
+    // traversal in both directions — backward (debugging: tracing callers to entry
+    // conditions) and forward (reconnaissance: walking a codebase about to change).
+    // The system prompt must mention both directions so the agent knows LSP applies
+    // to reconnaissance as well as debugging.
+    #[test]
+    fn test_spec_rummage_lsp_covers_both_traversal_directions() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("backward") && prompt.contains("forward"),
+            "rummage system prompt must describe LSP as covering both backward and forward call-graph traversal",
         );
     }
 
@@ -144,6 +260,54 @@ mod tests {
         assert!(
             content.contains(&prompt),
             "rummage agent content must embed the system prompt verbatim",
+        );
+    }
+
+    // spec (rummage): lsp is the primary primitive for backward call-graph traversal.
+    // The agent file must NOT deny lsp — rummage needs it to find definitions and
+    // references when tracing from observed behavior back to entry-point conditions.
+    #[test]
+    fn test_spec_rummage_agent_allows_lsp() {
+        let content = rummage_agent_content();
+        assert!(!content.contains("lsp: deny"), "rummage must allow lsp for call-graph navigation");
+    }
+
+    // spec (rummage): webfetch and websearch are granted for external library lookup.
+    // The agent file must NOT deny either — rummage needs them to understand vendor
+    // APIs and other dependencies the system relies on.
+    #[test]
+    fn test_spec_rummage_agent_allows_webfetch_and_websearch() {
+        let content = rummage_agent_content();
+        assert!(!content.contains("webfetch: deny"), "rummage must allow webfetch for external library lookup");
+        assert!(!content.contains("websearch: deny"), "rummage must allow websearch for external library lookup");
+    }
+
+    // spec (rummage): the system prompt must name LSP-driven navigation as the
+    // primary primitive for call-graph traversal so the agent knows to prefer it
+    // over grep.
+    #[test]
+    fn test_spec_rummage_lsp_named_for_call_graph_navigation() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("LSP"),
+            "rummage system prompt must name LSP-driven navigation as the primary primitive",
+        );
+    }
+
+    // spec (rummage): prove-by-execution applies to claims about *this* system, not
+    // to how rummage learns about external libraries. The system prompt must make
+    // this distinction explicit so the agent doesn't treat webfetch/websearch as
+    // violating prove-by-execution.
+    #[test]
+    fn test_spec_rummage_prove_by_execution_scoped_to_this_system() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("this system"),
+            "rummage system prompt must clarify that prove-by-execution scopes claims about this system",
+        );
+        assert!(
+            prompt.contains("vendor API") || prompt.contains("external library"),
+            "rummage system prompt must distinguish system claims from external library lookup",
         );
     }
 }

@@ -1,113 +1,68 @@
 id = "user-system-interaction"
 description = """
 ## WHAT
-The architectural boundary between the user and tinker, expressed
-as two complementary rules.
+The architectural boundary between the user and tinker, expressed as
+two complementary rules.
 
 First, the user holds the *should* — intent, decisions, vetted goal
 contents, observations they are investigating, terms mutually
 established. Tinker holds the *is* — the current state of every
 artifact those decisions get realized in: files, processes, build
-outputs, caches, derived data, side effects of any past action.
-When tinker's reasoning depends on the *is*, it verifies by
-observation. It never assumes the user remembers the *is*, and
-never lets inference substitute for checking.
+outputs, caches, derived data, side effects of any past action. When
+tinker's reasoning depends on the *is*, it verifies by observation.
+It never assumes the user remembers the *is*, and never lets
+inference substitute for checking.
 
-Second, the user is exposed to two surfaces and only those two.
-The *interface* of any tool they touch — paths to invoke, flag
-names, environment variables to set, the act of starting and
-stopping — is exposed as-is, because operating the tool requires
-it. The *is* may also surface to the user, but only when filtered
-through what the user is known to know: features, architectural
-concepts, observable behavior. Raw code identifiers, file paths,
-or internal symbols never appear in the user's view without that
-filtering. Everything behind the interface, and any *is* not yet
-filtered through the shared vocabulary, is tinker's concern alone.
+Second, the user is exposed to two surfaces and only those two. The
+*interface* of any tool they touch — paths to invoke, flag names,
+environment variables to set, the act of starting and stopping — is
+exposed as-is, because operating the tool requires it. The *is* may
+also surface to the user, but only when filtered through what the
+user is known to know: features, architectural concepts, observable
+behavior. Raw code identifiers, file paths, or internal symbols
+never appear in the user's view without that filtering. Everything
+behind the interface, and any *is* not yet filtered through the
+shared vocabulary, is tinker's concern alone.
 
 ## WHY
 Tinker is meant for a user who works at the level of intent and
-observed behavior, not implementation. They author goals, watch
-goal sessions act on them, observe what changes. They do not want
-to track which build artifact is current, what cache is warm, what
-the watcher's state is, or what side effects an earlier action
-left behind. An LLM with cheap filesystem and process re-
-verification is much better positioned to hold that state than the
-user is to remember it. The "user is the USE-r" framing makes the
-carve-out crisp: the user sees every tool's interface (they must,
-in order to operate it), and sees its internals only when those
-internals are translated into language the user already commands.
+observed behavior, not implementation. They author goals, watch goal
+sessions act on them, observe what changes. They do not want to
+track which build artifact is current, what cache is warm, what the
+watcher's state is, or what side effects an earlier action left
+behind. An LLM with cheap filesystem and process re-verification is
+much better positioned to hold that state than the user is to
+remember it. The "user is the USE-r" framing makes the carve-out
+crisp: the user sees every tool's interface (they must, in order to
+operate it), and sees its internals only when those internals are
+translated into language the user already commands.
 
-This goal exists because the existing user-persona and shared-
-language goals each captured only one face of this boundary.
-user-persona named who the user is and the "tinker as compiler"
-framing. shared-language named how internal references get
-translated when they must surface. Neither named the underlying
-rule that determines what gets surfaced at all, who holds what
-state, and why the user can expect tinker to keep the
-implementation substrate coherent without being asked to track
-it. The stale-binary debugging session — where tinker assumed
-the user knew which artifact was running, theorized for two
-rounds, and eroded trust in a working feature — made the gap
-visible.
+This goal exists to name the underlying rule that its children only
+partially captured. `user-persona` named who the user is and the
+"tinker as compiler" framing; `shared-language` named how internal
+references get translated when they must surface; `implementation-
+ownership` later applied "tinker holds the *is*" to source code.
+None of them named the rule that determines what gets surfaced at
+all, who holds what state, and why the user can expect tinker to
+keep the implementation substrate coherent without being asked to
+track it. The stale-binary debugging session — where tinker assumed
+the user knew which artifact was running, theorized for two rounds,
+and eroded trust in a working feature — made the gap visible.
 
 ## SCOPE
-- In scope: defining who holds what state (should vs is);
-  defining what surfaces are legitimate (interface as-is,
-  internals only via shared-language filtering); framing
-  user-persona (who the user is), shared-language (the
-  filtering mechanism for the second surface), and
-  implementation-ownership (the specific application of
+- In scope: defining who holds what state (should vs is); defining
+  what surfaces are legitimate (interface as-is, internals only via
+  shared-language filtering); framing `user-persona` (who the user
+  is), `shared-language` (the filtering mechanism for the second
+  surface), and `implementation-ownership` (the application of
   "tinker holds the *is*" to source code) as downstream
   applications of this principle.
-- Out of scope: the specific mechanisms by which these rules
-  are enforced (those live in children and in operational
-  goals like tinker-agent, goal-sessions, cleanup-hook);
-  rollout across existing operational surfaces (each
-  operational goal that needs to absorb this principle is
-  its own follow-up edit, deliberate rather than one-shot).
-
-## DECISIONS (vetted)
-- Decision: The user holds the *should* — intent, decisions,
-  vetted goal contents, observations under investigation,
-  mutually-established terms. Tinker holds the *is* — the
-  current state of files, processes, build artifacts, caches,
-  derived data, and side effects of any past action. Source:
-  user said "i want to minimize the amount of technical
-  knowledge i need to keep in my head" and "the fact that
-  there's two binaries is a kind of implementation detail (a
-  consequence of us using rust; it wouldn't have happened with
-  python)."
-- Decision: When tinker's reasoning depends on the *is*, it
-  verifies by observation — never by asking the user to
-  remember, never by inference substituting for checking.
-  Source: derived from the stale-binary debugging session,
-  which the user explicitly flagged as eroding trust ("this
-  erodes trust in a system that's actually working as
-  intended").
-- Decision: The user is exposed only to the *interface* of any
-  tool they touch (paths to invoke, flag names, environment
-  variables to set, the act of starting and stopping) and to
-  *internals filtered through shared language* (features,
-  architectural concepts, observable behavior). Raw code
-  identifiers do not surface to the user without that
-  filtering. Source: user said "the user is the USE-r... if
-  i'm going to use it, I _need_ to be exposed to the path of
-  the binary. I NEED to know what flag name you chose. I NEED
-  to know that this requires an env var to be set" and "i'm
-  exposed to INTERFACE and INTERNALS VIEWED THROUGH THE LENS
-  OF WHAT YOU KNOW I KNOW."
-- Decision: This principle sits structurally above user-persona,
-  shared-language, and implementation-ownership; all three are
-  downstream applications. user-persona is the specific account
-  of who the user is and how tinker positions itself
-  cognitively. shared-language is the specific filtering
-  mechanism for the second exposure surface.
-  implementation-ownership is the specific application of
-  "tinker holds the *is*" to source code — establishing that
-  goal sessions own the implementation, scope-bounded by the
-  goal text plus any related goals. Source: user confirmed "ii
-  feels right" referring to the structural option that creates
-  a new root above the existing goals.
+- Out of scope: the specific mechanisms by which these rules are
+  enforced (those live in children and in operational goals like
+  `tinker-agent`, `goal-sessions`, `cleanup-hook`); rollout across
+  existing operational surfaces (each operational goal that needs to
+  absorb this principle is its own follow-up edit, deliberate rather
+  than one-shot).
 
 """
 parent_id = "the-false-promise"

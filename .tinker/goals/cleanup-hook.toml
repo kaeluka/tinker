@@ -1,81 +1,64 @@
 id = "cleanup-hook"
 description = """
 ## WHAT
-While tinker tinkers — writing temporary tests, exposing
-private symbols, swapping constants, adding scratch programs —
-every change it makes carries a marker comment of the form
-`tinker-test-case: <one-line reason>`. Before any goal session
-runs, the system finds every such marker and removes or reverts
-the change it labels. If markers can't be cleaned after a few
-retries, the goal session is blocked and the user is told which
-files still need attention.
+While tinker tinkers — writing temporary tests, exposing private
+symbols, swapping constants, adding scratch programs — every change
+it makes carries a marker comment of the form
+`tinker-test-case: <reason>`. Before any goal session runs, the
+system scans the project tree, finds every marker, and dispatches a
+cheap cleanup agent to remove or revert the change each one labels.
+It retries a few times; if markers still can't be cleaned, the goal
+session is blocked and the user is told which files still need
+attention.
+
+Markers come in three shapes. An **inline addition** labels a new
+region to remove. An **in-place modification** labels a change to
+existing code and carries its undo information with it — either as
+instructions in the reason text or by commenting out the original
+directly above. A **file-level** marker labels a whole file to
+delete. Reverts rely on this inline undo information, never on
+version control.
+
+Two recognition rules keep cleanup from damaging the system's own
+source:
+- A marker counts only when it appears at the **start of a comment
+  line**. This lets the system's source talk *about* the convention
+  — string constants holding the literal marker, prompts describing
+  how it works, this very goal — without those mentions being
+  treated as real markers.
+- A marker whose reason is an **angle-bracket placeholder** (e.g.
+  `tinker-test-case: <one-line reason>`) is a format example —
+  documentation of the marker shape — and is exempt. Real
+  investigation markers always carry a concrete reason describing
+  what the marked code probes.
 
 ## WHY
 Without a marker convention, investigation code accumulates and
-contaminates production. With one, tinker can probe
-freely — including in production source, including by exposing
-private symbols — and the cleanup step keeps the codebase honest.
-The blocking-on-failure behavior is deliberate: a goal session
-writing on top of half-cleaned investigation code is worse than
-not running at all.
+contaminates production. With one, tinker can probe freely —
+including in production source, including by exposing private
+symbols — and the cleanup step keeps the codebase honest.
+
+Blocking on cleanup failure is deliberate: a goal session writing on
+top of half-cleaned investigation code is worse than not running at
+all.
+
+The placeholder exemption complements the start-of-comment-line
+rule. The line rule already protected string-literal and prose
+mentions, but not comment-line *examples* that show the marker
+format to teach the convention — exactly what broke when the rummage
+v2 prompt carried a code-fence example of the marker that cleanup
+couldn't remove without breaking the prompt and a test asserting the
+prompt contains it.
 
 ## SCOPE
-- In scope: detecting markers across the project tree before
-  each goal session; dispatching a cheap cleanup agent;
-  retrying a few times before giving up; surfacing
-  unrecoverable failures to the user; correctly distinguishing
-  real markers from both prose mentions and format-example
-  mentions of the marker name.
-- Out of scope: enforcing the marker at write time (the
-  tinker self-enforces; this hook only cleans up after);
-  recovering across project boundaries.
-
-## DECISIONS (vetted)
-- Decision: A marker is recognized only when it appears at the
-  start of a comment line. This is what lets the system's own
-  source talk ABOUT the marker convention — constants that
-  hold the literal string, prompts that describe how it works,
-  this very goal description — without those mentions being
-  treated as real markers. Source: required so the cleanup
-  agent doesn't damage the system itself when run on its own
-  source.
-- Decision: Markers whose reason text is an angle-bracket
-  placeholder (e.g., `tinker-test-case: <one-line reason>`,
-  `tinker-test-case: <reason>`) are treated as format examples —
-  documentation showing the marker shape — and are exempt from
-  cleanup. Real investigation markers always carry a concrete
-  reason describing what the marked code probes. This
-  complements the start-of-comment-line rule, which protected
-  string-literal and prose mentions but did not protect
-  comment-line examples that show the marker FORMAT to teach
-  future agents the convention. Source: incident with rummage v2
-  rewrite — the new prompt contained `// tinker-test-case: <one-
-  line reason>` as a code-fence example inside the prompt's raw
-  string literal; cleanup could not remove it without breaking
-  the prompt and a test asserting the prompt contains the marker;
-  user confirmed "(b) spec fix" as the resolution.
-- Decision: Three shapes of marker are supported. An "inline
-  addition" labels a new region to remove. An "in-place
-  modification" labels a change to existing code; the marker
-  carries undo information either in its reason text or by
-  commenting out the original directly above. A "file-level"
-  marker labels a whole file to delete. Source: user said
-  "If required, make the thing visible but put in a marker
-  comment that says this needs to be reverted" and "Make
-  visible or make a visible 'adapter' function."
-- Decision: A small fixed number of retries — the cleanup
-  agent gets a few chances, then the goal session is blocked.
-  Source: user said "retry a few times."
-- Decision: When cleanup fails, the goal session does not
-  proceed. The user is told which files still contain
-  markers. Source: a partial cleanup is more dangerous than
-  no cleanup, so blocking is the safe default.
-- Decision: No reliance on version control. When a change
-  isn't mechanically obvious to revert, the marker carries
-  the undo information inline — either as instructions in
-  the comment text or by commenting out the original
-  alongside. Source: user asked "why does it need git
-  diff?"; design simplified accordingly.
+- In scope: detecting markers across the project tree before each
+  goal session; dispatching a cheap cleanup agent; retrying a few
+  times before giving up; surfacing unrecoverable failures to the
+  user; distinguishing real markers from both prose mentions and
+  format-example mentions.
+- Out of scope: enforcing the marker at write time (tinker
+  self-enforces; this hook only cleans up after); recovering across
+  project boundaries; reliance on version control for reverts.
 
 """
 parent_id = "goal-sessions"
