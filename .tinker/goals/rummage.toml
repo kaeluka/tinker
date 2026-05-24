@@ -1,57 +1,149 @@
 id = "rummage"
 description = """
 ## WHAT
-A sibling chat agent to tinker. v1 is a placeholder persona that
-responds in Vogon-poetry style — no actual debugger behavior yet.
-The substantive debugger spec lands as a separate goal once the
-UX shell feels right.
+A sibling chat agent to tinker, dedicated to understanding program
+behavior. The user opens a rummage session when something needs
+explaining — a thrown exception, surprising output, a flow they
+don't fully trust, code they're about to change and want to
+understand first. Rummage produces a document: a bug assessment,
+a behavior explanation, or groundwork for further investigation.
+
+Rummage works on a tinkerable codebase. It reads source, runs
+existing tooling, and writes its own scratch tests, fuzz harnesses,
+and instrumentation — all marked with `tinker-test-case:` so the
+existing `cleanup-hook` removes them before the next goal session
+runs. The core technique is backward causal reasoning: starting
+from observed behavior and tracing through the call graph to the
+entry-point conditions that produced it.
+
+A rummage session is an ongoing chat with multiple investigation
+threads in it. Output is ephemeral chat in v1; nothing persists
+across tinker restarts.
 
 ## WHY
-Validating the agent-switching UX (how the user knows which agent
-they are talking to, how they switch, how it feels) is cheaper to
-do against a placeholder than against a half-built debugger.
-Building the UX shell first means later debugger design decisions
-ride on top of a working interface rather than competing with one.
+Tinker's model is structurally hostile to debugging. Flow goes the
+wrong direction (forward, intent → code) and the spec discipline
+is positive (per `goal-craft` tactic 2 — a goal can't carry "don't
+have bug X"). Bugs are the gap between intent and reality, with no
+clean place to live in the goal layer.
+
+Rummage is the dual: backward flow, comprehension-shaped,
+terminating in a document rather than a standing intent. The split
+keeps each agent's purpose clean. Effectiveness depends on the
+target codebase implementing `coding-standards` — capability-based
+DI makes effects mockable, observable internals make state
+inspectable, and the `tinker-test-case:` marker convention makes
+cleanup mechanical. Without those, backward reasoning doesn't
+scale.
 
 ## SCOPE
-- In scope: a rummage agent process with a Vogon-poetry response
-  persona; explicit `/rummage` and `/tinker` slash commands to
-  switch the active agent; one agent active at a time; a UI tag in
-  the REPL prompt that names the active agent.
-- Out of scope: auto-detect handoff between tinker and rummage;
-  cross-agent `/run` dispatch (e.g. rummage emitting `/run tinker
-  <spec delta>`); investigation thread persistence; probe markers;
-  any actual debugger behavior; persistent state beyond the chat
-  history.
+- In scope: chat-based investigation of program behavior
+  (debugging, reconnaissance before a change, pure exploration);
+  producing a document per investigation; active investigation
+  with scratch tests, fuzz harnesses, and instrumentation marked
+  `tinker-test-case:`; reusing the existing `cleanup-hook`;
+  backward causal reasoning from observed behavior to root cause;
+  reading goal files as noise-aware signal; reading source code;
+  ongoing chat session with multiple investigation threads;
+  output rendered in `shared-language`, translating technical
+  material the user pastes (logs, stack traces) rather than
+  echoing it back in jargon.
+- Out of scope: fixing — rummage produces understanding, not
+  patches; worst-case fix route is a user-typed `/run`;
+  persistence across tinker restarts; cross-agent `/run`
+  dispatch; auto-detect handoff between tinker and rummage;
+  writing to `.tinker/notes/notes.md` or `.tinker/state/`;
+  reading the runtime introspection log in v1.
 
 ## DECISIONS (vetted)
-- Decision: Rummage is a sibling chat agent to tinker, not a child
-  goal session. Rummage is persistent across turns within its own
-  agent context, like tinker. Source: user said "siblings on
-  speaking terms" — rummage and tinker as peer agents.
-- Decision: v1 persona is Vogon poetry — a placeholder that does
-  not perform debugging. The debugger spec lands as a separate
-  later goal. Source: user said "let's just build rummage with a
-  personality that is not actually a debugger - it just responds
-  with vogon poetry."
-- Decision: Agent switching is via explicit slash commands only —
-  `/rummage` to switch to rummage, `/tinker` to switch back. No
-  auto-detect handoff in v1. Source: user said "explicit commands
-  only for now - /rummage and /tinker to switch back."
-- Decision: One agent is active at a time. User messages go to
-  whoever is active. The REPL prompt carries the active agent's
-  name (e.g. `tinker> ` vs `rummage> `) so the user always sees
-  which agent will receive their input. Source: confirmed in
-  playback.
-- Decision: Rummage runs on the cheapest model tier (haiku on the
-  Claude backend). The Vogon-poetry persona does not need more.
-  Source: tinker default, confirmed in playback.
-
-## HOW
-A new agent process parallel to tinker's, sharing the existing
-REPL pane via the active-agent switch. Initial prompt: a short
-system message instructing the agent to respond in Vogon-poetry
-style to anything the user says. No tools needed beyond chat I/O.
+- Decision: Rummage's purpose is understanding program behavior,
+  not debugging specifically. Debugging is one case;
+  reconnaissance before a change and pure exploration are others.
+  The deliverable is the same — a document. Source: user said
+  "rummage isn't JUST for debugging. it's about understanding
+  program behaviour."
+- Decision: Output is a document (bug assessment, behavior
+  explanation, or investigation groundwork). v1 is ephemeral
+  chat; persistence is a follow-up. Source: user said "we should
+  target creating a document that contains a correct assessment
+  of the bug. or an explanation of the behaviour. or great
+  information to use for further investigations" and confirmed
+  "a [ephemeral chat] will do for now, but we'll eventually
+  persist this."
+- Decision: Rummage is an active investigator. It writes scratch
+  tests, fuzz harnesses, and instrumentation marked with
+  `tinker-test-case:`; the existing `cleanup-hook` removes them
+  before the next goal session. Source: user picked (b) and said
+  "rummage makes very heavy use of the tinkerable code that the
+  goal agents write."
+- Decision: Rummage depends on `coding-standards` being
+  implemented in the target codebase — capability-based DI,
+  observable internals, marker convention. Load-bearing
+  precondition, not a soft preference. Source: user said "no
+  rummage without the standard."
+- Decision: Core technique is backward causal reasoning. User
+  example: C::fun3 throws E → explained if B::fun2 received
+  input X → which can only come from A::fun1 (HTTP handler)
+  being called with input Y. Concrete techniques in scope
+  include exception-trace, fuzz testing for whole bug classes,
+  and flow decomposition via input-constraint backward analysis.
+  Source: user provided the example and the technique list
+  directly.
+- Decision: A rummage session is ongoing chat with multiple
+  investigation threads. Nothing persists across tinker restarts
+  in v1. Source: user picked (b) and said "ongoing session that
+  is not persistant across tinker restarts is good for now."
+- Decision: Rummage reads goal files but treats them as signal
+  with noise — gaps are expected because the existence of a
+  rummage session implies a spec-reality gap. Tinker and goal
+  sessions treat goals as authoritative; rummage is the only
+  agent that does not. Source: user said "a - absolutely. but it
+  needs to be careful to treat goal files as signal with noise.
+  iow: gaps can exist, and it's quite likely. if there was no
+  gap, we'd often not find ourselves in a rummage session."
+- Decision: Rummage uses the strongest model available for the
+  chosen backend. Currently opus on the Claude backend; the
+  existing "smartest" tier on opencode. A future `--cheap` flag
+  (separate goal) would shift rummage to sonnet on Claude.
+  Source: user said "we will start with whatever the strongest
+  model for the chosen backend is. in the case of claude, that
+  currently happens to be opus. but with --cheap: sonnet."
+- Decision: Rummage output follows the `shared-language`
+  standard. It connects to shared language when technical
+  details are crucial. When the user pastes an error log, a
+  stack trace, or other technical material, that does NOT grant
+  permission to reply in technical jargon — the user just copied
+  from a log. Rummage translates. Source: user said "rummage
+  talks in shared language ... when the user pastes in an error
+  or something like that - not permission to use technical mumbo
+  jumbo. the user just copied from a log. rummage needs to
+  translate."
+- Decision: Rummage may not read `.tinker/notes/notes.md`
+  (tinker-private) and may not write to
+  `.tinker/state/vocabulary.txt` (tinker-owned). Source:
+  confirmed in playback.
+- Decision: Rummage's read access to `.tinker/logs/runtime.jsonl`
+  and `.tinker/state/runtime.json` is not granted in v1; revisit
+  if the introspection substrate turns out useful for
+  investigations. Source: confirmed in playback.
+- Decision: UX shell from v1 stays — sibling chat agent to
+  tinker, one active at a time, explicit `/rummage` and
+  `/tinker` slash commands to switch, REPL prompt tag naming the
+  active agent. Source: existing rummage goal decisions,
+  preserved through this v2 rewrite.
+- Decision: Fixing is out of scope. If a fix is needed, the
+  worst-case route is a user-typed `/run` with bug-fix context
+  as the reason — acceptable today as an exception to
+  `tinker-triggers`' declarative-pointer rule, to be designed
+  properly later. No forward-pointer link added until the
+  carve-out is decided. Source: user said "the fixing we can
+  talk about later. worst case, we'll just use the slash-run
+  command and make sure that the bug fixing case is considered
+  acceptable" and confirmed not to add the forward-pointer link
+  yet.
+- Decision: The Vogon-poetry placeholder persona from v1 is
+  retired. The substantive behavior described above replaces it.
+  Source: this v2 rewrite supersedes the v1 placeholder.
 """
 parent_id = ""
 children = []
@@ -59,3 +151,7 @@ children = []
 [[related]]
 id = "tui"
 reason = "The TUI renders the active-agent tag in the REPL prompt and recognizes the `/rummage` and `/tinker` slash commands. The UX shape of rummage as a sibling agent is realized at the TUI level."
+
+[[related]]
+id = "cleanup-hook"
+reason = "Rummage is an active investigator that writes scratch tests, fuzz harnesses, and instrumentation marked with `tinker-test-case:`. The cleanup-hook removes those traces alongside tinker's own investigation code, so a goal session never sees residue from either agent."

@@ -86,11 +86,11 @@ Guides tinker's goal-tree decisions: Merge (modify existing), Nest Down (create 
 📁 `src/main.rs` — `goals_summary` injection appends `[related: id: "reason", ...]` when non-empty, so tinker sees cross-cutting links on every turn
 
 ### Root: `rummage`
-A sibling chat agent to tinker. v1 is a placeholder persona that responds in Vogon-poetry style — no actual debugger behavior yet. Validates the agent-switching UX (how the user knows which agent they're talking to, how they switch, how it feels) against a cheap placeholder before building a real debugger. The active agent is shown in the REPL prompt tag; switching is via `/rummage` and `/tinker` slash commands. Runs on the cheapest model tier (haiku on the Claude backend).
+A sibling chat agent to tinker dedicated to understanding program behavior. The user opens a rummage session when something needs explaining — a thrown exception, surprising output, a flow they don't fully trust, or code they're about to change and want to understand first. Core technique is backward causal reasoning: starting from observed behavior and tracing backward through the call graph to entry-point conditions. Rummage is an active investigator: it writes scratch tests, fuzz harnesses, and instrumentation, all marked with `tinker-test-case:` so the cleanup hook removes them before the next goal session runs. Output is a document (bug assessment, behavior explanation, or investigation groundwork) per investigation thread. Reads goal files as noise-aware signal. Output follows the shared-language standard — translates technical material rather than echoing jargon. The active agent is shown in the REPL prompt tag; switching is via `/rummage` and `/tinker` slash commands. Runs on the strongest model tier (opus on the Claude backend).
 
-📁 `src/rummage.rs` — `rummage_system_prompt`, `rummage_agent_content` (opencode agent file); `test_spec_rummage_agent_denies_all_mutation_tools`, `test_spec_rummage_vogon_persona_present_in_both_surfaces`  
+📁 `src/rummage.rs` — `rummage_system_prompt`, `rummage_agent_content` (opencode agent file); `test_spec_rummage_agent_allows_investigation_tools`, `test_spec_rummage_agent_denies_planning_tools`, `test_spec_rummage_backward_causal_reasoning_named`, `test_spec_rummage_tinker_test_case_marker_required`, `test_spec_rummage_prohibits_tinker_dir_writes`, `test_spec_rummage_agent_content_embeds_system_prompt`  
 📁 `src/app.rs` — `ActiveAgent` enum (`Tinker`, `Rummage`), `Role::RummageAssistant`  
-📁 `src/main.rs` — slash command routing for `/rummage` and `/tinker`, rummage runner wiring  
+📁 `src/main.rs` — slash command routing for `/rummage` and `/tinker`, rummage runner wiring (strongest model tier)  
 📁 `.tinker/goals/rummage.toml` — goal definition
 
 ### Root: `goal-sessions`
@@ -102,9 +102,9 @@ The queue is a FIFO `VecDeque<(Goal, Option<String>)>` that does **not** dedupli
 📁 `src/main.rs` — goal runner task (cleanup → `run_goal`)
 
 #### Child: `cleanup-hook`
-Before every goal session, scans the project tree for `tinker-test-case:` markers (line-anchored at comment delimiters). Dispatches a cleanup agent to remove/revert marked code. Retries up to 3×; if still dirty, blocks the goal session and reports files to the user.
+Before every goal session, scans the project tree for `tinker-test-case:` markers (line-anchored at comment delimiters). Dispatches a cleanup agent to remove/revert marked code. Retries up to 3×; if still dirty, blocks the goal session and reports files to the user. Markers with angle-bracket placeholder reasons (e.g., `<one-line reason>`) are exempt — they are format examples teaching the marker convention, not real investigation markers.
 
-📁 `src/cleanup.rs` — marker detection, file walking, retry loop, cleanup prompt builder
+📁 `src/cleanup.rs` — marker detection (`file_contains_marker`, `line_is_marker`, `is_placeholder_reason`), file walking, retry loop, cleanup prompt builder; `test_spec_placeholder_reason_exempt_from_cleanup`, `test_spec_no_self_match_in_tinker_source`, `test_spec_cleanup_prompt_names_placeholder_exemption`
 
 ### Root: `goal-storage`
 Goals are TOML files under `.tinker/goals/<id>.toml`. Ancestor `.tinker/` directories merge with the cwd's; cwd-most wins on duplicates. A malformed file is reported as an error but doesn't block sibling goals. Session IDs are not persisted to disk — they live in memory for the duration of the tinker process only, so goal files remain the sole source of truth across restarts.
@@ -155,7 +155,7 @@ Maintains `AGENTS.md` at the project root — a goals-oriented index mapping eac
 ## Architecture notes
 
 - **Composition root** in `src/main.rs`: `RealFilesystem` and runner instances (one per model tier, plus one for rummage) are wired at startup. Business logic depends only on traits in `cap.rs`. With `--claude`, `ClaudeRunner` instances replace `RealOpenCodeRunner`.
-- **Three model tiers**: tinker (smartest), goal sessions (mid), cleanup (cheapest). Default models defined in `src/opencode.rs:15-20`. With `--claude`, uses Claude aliases: opus, sonnet, haiku (defined in `src/claude.rs:15-17`). Rummage uses the cheapest tier.
+- **Three model tiers**: tinker (smartest), goal sessions (mid), cleanup (cheapest). Default models defined in `src/opencode.rs:15-20`. With `--claude`, uses Claude aliases: opus, sonnet, haiku (defined in `src/claude.rs:15-17`). Rummage uses the smartest tier (same as tinker) — it is an active investigator requiring full reasoning capability.
 - **Two chat agents**: tinker (`src/tinker.rs`) and rummage (`src/rummage.rs`) are peer agents sharing the REPL pane. The active agent is tracked in `App.active_agent`; `/rummage` and `/tinker` slash commands switch between them.
 - **Event loop** (`main.rs:run_loop`): polls terminal events, drains tinker/goal channels, draws TUI on every iteration. When a goal-session batch drains, `handle_goal_event` sends the batch summaries to tinker, which produces the user-facing summary and any reactive `/run` lines in a single reply.
 - **Goal tree**: `goal.rs::build_tree` builds a parent-child hierarchy from `parent_id` fields. Flat list for selection; tree for display.

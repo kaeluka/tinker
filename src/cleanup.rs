@@ -42,12 +42,23 @@ fn line_is_marker(line: &str) -> bool {
     let trimmed = line.trim_start();
     for prefix in COMMENT_PREFIXES {
         if let Some(rest) = trimmed.strip_prefix(prefix) {
-            if rest.trim_start().starts_with(MARKER) {
-                return true;
+            if let Some(after_marker) = rest.trim_start().strip_prefix(MARKER) {
+                // Exempt angle-bracket placeholders (e.g. `<one-line reason>`,
+                // `<reason>`). These are format-example lines that teach the
+                // marker convention; real markers always carry a concrete reason.
+                return !is_placeholder_reason(after_marker);
             }
         }
     }
     false
+}
+
+/// True when the reason text after `MARKER` is an angle-bracket placeholder
+/// such as `<one-line reason>` or `<reason>` — indicating a format example
+/// rather than a real investigation marker.
+fn is_placeholder_reason(reason: &str) -> bool {
+    let r = reason.trim();
+    r.starts_with('<') && r.ends_with('>')
 }
 
 /// Directory names skipped when walking the project. Either the build
@@ -171,6 +182,7 @@ These references mention the marker name but aren't markers themselves:
 
 - A string literal containing the marker text (e.g. `const MARKER: &str = "tinker-test-case:";`).
 - A prose mention inside another comment, like `// tinker emits tinker-test-case: lines`.
+- A comment line whose reason is an angle-bracket placeholder — e.g. `// tinker-test-case: <one-line reason>` or `// tinker-test-case: <reason>`. These are format examples teaching the marker convention; real markers always carry a concrete reason.
 - Mentions in this project's own source describing the convention — typically in `src/cleanup.rs` (where the matcher and this very prompt live) and `src/tinker.rs` (where the convention is documented for tinker). Leave these intact.
 
 ## Files with real markers
@@ -295,6 +307,40 @@ mod tests {
     }
 
     #[test]
+    fn test_spec_placeholder_reason_exempt_from_cleanup() {
+        // Goal decision: markers whose reason text is an angle-bracket placeholder
+        // (e.g., `<one-line reason>`, `<reason>`) are format examples that document
+        // the marker convention — not real investigation markers. They must not be
+        // treated as real markers even when they appear in comment lines.
+        let fs = MockFs::new();
+        fs.add_dir(Path::new("/proj"));
+        fs.add_file(Path::new("/proj/prompt.rs"),
+            "// tinker-test-case: <one-line reason>\nfn example() {}\n",
+        );
+        let hits = find_marker_files(&fs, Path::new("/proj")).unwrap();
+        assert!(hits.is_empty(), "angle-bracket placeholder must not be treated as a real marker, got {hits:?}");
+
+        // Multiple placeholder forms must all be exempt.
+        let fs2 = MockFs::new();
+        fs2.add_dir(Path::new("/proj2"));
+        fs2.add_file(Path::new("/proj2/other.rs"),
+            "// tinker-test-case: <reason>\nfn other() {}\n",
+        );
+        let hits2 = find_marker_files(&fs2, Path::new("/proj2")).unwrap();
+        assert!(hits2.is_empty(), "`<reason>` placeholder must also be exempt, got {hits2:?}");
+
+        // A concrete reason must still match — placeholder rule must not over-exempt.
+        let fs3 = MockFs::new();
+        fs3.add_dir(Path::new("/proj3"));
+        fs3.add_file(Path::new("/proj3/real.rs"),
+            "// tinker-test-case: probe the retry loop\nfn real() {}\n",
+        );
+        let hits3 = find_marker_files(&fs3, Path::new("/proj3")).unwrap();
+        assert_eq!(hits3, vec![PathBuf::from("/proj3/real.rs")],
+            "concrete reason must still be treated as a real marker");
+    }
+
+    #[test]
     fn test_spec_marker_recognized_with_python_comment() {
         let fs = MockFs::new();
         fs.add_dir(Path::new("/proj"));
@@ -313,7 +359,7 @@ mod tests {
         // otherwise running tinker against itself mangles its own source.
         let fs = crate::realfs::RealFilesystem;
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        for name in ["src/cleanup.rs", "src/tinker.rs"] {
+        for name in ["src/cleanup.rs", "src/tinker.rs", "src/rummage.rs"] {
             let content = fs.read_to_string(&root.join(name)).unwrap();
             assert!(
                 !file_contains_marker(&content),
@@ -361,6 +407,21 @@ mod tests {
             "cleanup prompt should describe the in-place-modification shape:\n{prompt}");
         assert!(prompt.to_lowercase().contains("file-level"),
             "cleanup prompt should describe the file-level shape:\n{prompt}");
+    }
+
+    #[test]
+    fn test_spec_cleanup_prompt_names_placeholder_exemption() {
+        // Goal decision: markers whose reason text is an angle-bracket
+        // placeholder (e.g. `<one-line reason>`, `<reason>`) are format
+        // examples that teach the marker convention — not real investigation
+        // markers. The cleanup agent must know this so it does not attempt to
+        // remove those lines in teaching contexts (e.g. the rummage system
+        // prompt or this very source).
+        let prompt = build_cleanup_prompt(&[PathBuf::from("/proj/a.rs")]);
+        assert!(
+            prompt.contains("angle-bracket") || prompt.contains("<one-line reason>"),
+            "cleanup prompt must explain the placeholder-exemption rule:\n{prompt}",
+        );
     }
 
     #[test]
