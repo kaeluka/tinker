@@ -148,10 +148,18 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
                 ("rummage> ", Style::default().fg(Color::Magenta))
             }
         }
+        ActiveAgent::Jog => {
+            if app.jog_tasks > 0 {
+                ("… ", Style::default().fg(Color::DarkGray))
+            } else {
+                ("jog> ", Style::default().fg(Color::Blue))
+            }
+        }
     };
     let input_locked = match app.active_agent {
         ActiveAgent::Tinker => app.tinker_tasks > 0 || app.phase == Phase::Initializing,
         ActiveAgent::Rummage => app.rummage_tasks > 0,
+        ActiveAgent::Jog => app.jog_tasks > 0,
     };
     let input_text_style = if input_locked {
         Style::default().fg(Color::DarkGray)
@@ -183,6 +191,9 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     if !app.rummage_current_text.is_empty() {
         push_rummage_text(&mut lines, &app.rummage_current_text);
+    }
+    if !app.jog_current_text.is_empty() {
+        push_jog_text(&mut lines, &app.jog_current_text);
     }
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
     let total = paragraph.line_count(msg_area.width);
@@ -239,6 +250,9 @@ fn push_message_lines(lines: &mut Vec<Line<'static>>, msg: &crate::app::Message)
         Role::RummageAssistant => {
             push_rummage_text(lines, &msg.text);
         }
+        Role::JogAssistant => {
+            push_jog_text(lines, &msg.text);
+        }
         Role::System => {
             lines.push(Line::from(vec![
                 Span::styled("sys    ", Style::default().fg(Color::Yellow)),
@@ -257,6 +271,25 @@ fn push_rummage_text(lines: &mut Vec<Line<'static>>, text: &str) {
                     Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" "),
+                Span::raw(line.to_string()),
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::raw("       "),
+                Span::raw(line.to_string()),
+            ]));
+        }
+    }
+}
+
+fn push_jog_text(lines: &mut Vec<Line<'static>>, text: &str) {
+    for (i, line) in text.lines().enumerate() {
+        if i == 0 {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "jog    ",
+                    Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(line.to_string()),
             ]));
         } else {
@@ -1192,6 +1225,43 @@ mod tests {
         assert!(
             tui_rs.contains("tinker>"),
             "TUI source must contain the tinker> prompt tag string",
+        );
+    }
+
+    /// Spec (jog / tui): jog messages (Role::JogAssistant) must be rendered
+    /// with a `jog    ` speaker label in blue+bold so the user knows which agent
+    /// is speaking.
+    #[test]
+    fn test_spec_jog_messages_rendered_with_blue_jog_label() {
+        use crate::app::Message;
+        let msg = Message {
+            role: Role::JogAssistant,
+            text: "What do you believe this feature does?\nAnd why is that the right behavior?".to_string(),
+        };
+        let mut lines: Vec<Line> = vec![];
+        push_message_lines(&mut lines, &msg);
+        assert!(!lines.is_empty(), "jog message must produce lines");
+        let label_span = lines[0].spans.iter().find(|s| s.content.trim() == "jog");
+        assert!(label_span.is_some(), "first line must have a 'jog' label span");
+        let label = label_span.unwrap();
+        assert_eq!(label.style.fg, Some(Color::Blue), "jog label must be Blue");
+        assert!(
+            label.style.add_modifier.contains(Modifier::BOLD),
+            "jog label must be bold",
+        );
+        assert!(
+            !lines[1].spans.iter().any(|s| s.content.trim() == "jog"),
+            "continuation lines must not repeat the jog label",
+        );
+    }
+
+    /// Spec (jog / tui): The TUI source must contain the `jog>` prompt tag string.
+    #[test]
+    fn test_spec_jog_prompt_tag_in_tui_source() {
+        let tui_rs = include_str!("tui.rs");
+        assert!(
+            tui_rs.contains("jog>"),
+            "TUI source must contain the jog> prompt tag string",
         );
     }
 

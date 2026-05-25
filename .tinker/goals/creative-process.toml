@@ -140,3 +140,7 @@ reason = "The reflective-practitioner role and convention-engine role this goal 
 [[related]]
 id = "tinker"
 reason = "The hardness principle and the dual-duty sharpening (surface inflection AND refuse the easy path) defined in this goal's WHY are operationalized in `tinker` as two concrete interview behaviors: menu-avoidance and symmetric anchor-probing of bare user assertions. Principle lives here; operational form lives there."
+
+[[related]]
+id = "divergence-investigation"
+reason = "The skeptical divergence investigators (`rummage`, `jog`) ground their autonomous-vs-dialectical split in this goal's observability / human-as-termination principle, and instantiate 'the dialectic must continue after a goal is written' on the spec↔code and intent↔spec gaps. Principle lives here; the skeptical role that applies it lives there."

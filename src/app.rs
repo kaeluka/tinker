@@ -6,6 +6,7 @@ use std::path::PathBuf;
 pub enum ActiveAgent {
     Tinker,
     Rummage,
+    Jog,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -13,6 +14,7 @@ pub enum Role {
     User,
     Assistant,
     RummageAssistant,
+    JogAssistant,
     System,
 }
 
@@ -176,6 +178,12 @@ pub struct App {
     pub rummage_session_id: Option<String>,
     /// How many rummage LLM tasks are currently running.
     pub rummage_tasks: usize,
+    /// Streaming text buffer for the jog agent (analogous to `current_assistant_text`).
+    pub jog_current_text: String,
+    /// Jog session ID for in-process turn resumption.
+    pub jog_session_id: Option<String>,
+    /// How many jog LLM tasks are currently running.
+    pub jog_tasks: usize,
 }
 
 impl App {
@@ -219,6 +227,9 @@ impl App {
             rummage_current_text: String::new(),
             rummage_session_id: None,
             rummage_tasks: 0,
+            jog_current_text: String::new(),
+            jog_session_id: None,
+            jog_tasks: 0,
         }
     }
 
@@ -245,6 +256,17 @@ impl App {
         if !self.rummage_current_text.is_empty() {
             let text = std::mem::take(&mut self.rummage_current_text);
             self.messages.push(Message { role: Role::RummageAssistant, text });
+        }
+    }
+
+    pub fn append_jog_chunk(&mut self, chunk: &str) {
+        self.jog_current_text.push_str(chunk);
+    }
+
+    pub fn finalize_jog_message(&mut self) {
+        if !self.jog_current_text.is_empty() {
+            let text = std::mem::take(&mut self.jog_current_text);
+            self.messages.push(Message { role: Role::JogAssistant, text });
         }
     }
 

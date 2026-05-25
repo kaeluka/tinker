@@ -76,5 +76,6 @@ related = [
   { id = "coding-standards", reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link." },
   { id = "tinker", reason = "tinker chat and the batch messages it composes are the primary user-facing surfaces this standard governs." },
   { id = "rummage", reason = "rummage's documents and chat are user-facing output this standard governs — including the rule that pasted technical material is translated, not echoed." },
-  { id = "tui", reason = "tui renders user-facing text to the user; how that text is presented is governed by this standard." }
+  { id = "tui", reason = "tui renders user-facing text to the user; how that text is presented is governed by this standard." },
+  { id = "jog", reason = "jog's deepening conversation with the user is a user-facing surface this standard governs." }
 ]

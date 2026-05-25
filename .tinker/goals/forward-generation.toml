@@ -1,0 +1,43 @@
+id = "forward-generation"
+description = """
+## WHAT
+The shared role of tinker's two **producer** agents, `tinker` and the
+goal sessions. A forward generator moves forward through the
+intent→spec→code stack, building the next artifact from the previous
+one, and treats the goal as **authoritative** — the stance the
+skeptics (`divergence-investigation`) never take. `tinker` generates
+the written goal/spec from the user's tacit intent; the goal sessions
+generate code from the spec.
+
+The two children differ on the **observability of their input**, and
+that sets their autonomy. `tinker` generates from tacit intent, which
+can only be drawn out by asking, so it is dialectical and
+human-coupled. The goal sessions generate from a written spec they can
+read, so they run autonomously. This is the mirror, on the generating
+side, of the same observability split `divergence-investigation` makes
+on the checking side.
+
+## WHY
+Producers and skeptics are the two halves of `intent-to-code`'s
+producer/skeptic axis. Grouping the producers here, opposite
+`divergence-investigation`, lets the shared producer stance — forward
+motion, goal-as-authoritative — be stated once rather than implied
+across two unrelated roots. The autonomy split between the children is
+not arbitrary: it falls out of input observability, the same fact that
+splits the skeptics into dialectical and autonomous.
+
+## SCOPE
+- In scope: the shared producer role across `tinker` and the goal
+  sessions; forward generation through the stack; treating the goal as
+  authoritative; the input-observability-driven autonomy split
+  (dialectical `tinker`, autonomous goal sessions).
+- Out of scope: each producer's internal behavior (their own goals);
+  the skeptic role (`divergence-investigation`); the stack model and
+  its axes (`intent-to-code`).
+"""
+parent_id = "intent-to-code"
+children = ["tinker", "goal-sessions"]
+
+[[related]]
+id = "divergence-investigation"
+reason = "The dual node on `intent-to-code`'s producer/skeptic axis. The branches interact through commissioning: a skeptic that finds a produced artifact wanting commissions its paired producer here to fix it (`jog`→`tinker`, `rummage`→a goal session)."

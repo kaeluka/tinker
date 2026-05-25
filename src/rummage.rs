@@ -87,15 +87,22 @@ Goal files at `.tinker/goals/*.toml` carry the project's standing intent. Read t
 
 When the user pastes an error log, a stack trace, or other technical material, that is not permission to reply in jargon — the user just copied from a log. Translate: use the architectural and behavioral vocabulary established for this project. The user does not read source code.
 
-## Fixing
+## Fix dispatch
 
-You produce understanding. If a fix is needed, the route after the investigation concludes is a user-typed `/run <goal-id>` with the findings as context.
+When a debugging thread confirms **case 2** — the spec is correct but the code has diverged from it — act without waiting for the user:
+
+1. Write a durable failing test that pins the correct behavior, stated as the bug's positive reformulation (what the code *should* do). Do **not** add a `tinker-test-case:` marker — this test must survive the cleanup hook so the next goal session inherits a failing guardrail.
+2. Determine the owning goal by reading `.tinker/goals/`. Choose the goal whose scope most directly covers the divergent behavior.
+3. Emit `/run <owning-goal-id> <reason>` where `reason` is a declarative pointer to the failing test, not an imperative — e.g. `failing test test_spec_foo_bar pins correct behavior for X`.
+
+**Case 1** — when pinning the correct behavior would require a fresh intent decision not derivable from the spec — is not yours to act on. Recognize the case, surface the finding to the human, and leave the decision to tinker. Emitting `/run` or writing a test when the correct behavior is undecided would be inventing intent you do not own.
+
+Whether the test carries a `test_spec_` prefix (the bug violates a named goal commitment) or is an unmarked regression test (the bug lives in implementation territory the spec is silent on) is your judgment based on the bug's nature.
 
 ## Boundaries
 
 - Do not write to `.tinker/goals/`, `.tinker/notes/`, or `.tinker/state/`. These directories are owned by other parts of the system.
-- Do not read `.tinker/notes/notes.md` — that is the orchestrator's private log.
-- Do not emit `/run` commands — triggering goal sessions is the orchestrator's job, not yours."#.to_string()
+- Do not read `.tinker/notes/notes.md` — that is the orchestrator's private log."#.to_string()
 }
 
 /// Returns the content for the `rummage` opencode agent file.
@@ -308,6 +315,59 @@ mod tests {
         assert!(
             prompt.contains("vendor API") || prompt.contains("external library"),
             "rummage system prompt must distinguish system claims from external library lookup",
+        );
+    }
+
+    // spec (rummage): on a confirmed case-2 bug (spec is correct, code diverged),
+    // rummage must autonomously emit `/run <owning-goal-id>` with a declarative
+    // pointer reason. The system prompt must describe this path.
+    #[test]
+    fn test_spec_rummage_emits_run_on_case_2() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("/run"),
+            "rummage system prompt must describe emitting /run for a case-2 fix dispatch",
+        );
+    }
+
+    // spec (rummage): the system prompt must name case 2 as the action case —
+    // spec is correct, code diverged, rummage writes the durable test and dispatches.
+    #[test]
+    fn test_spec_rummage_case_2_fix_path_named() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("case 2") || prompt.contains("case-2"),
+            "rummage system prompt must name case 2 as the action case for fix dispatch",
+        );
+    }
+
+    // spec (rummage): the system prompt must name case 1 as the abstention case —
+    // correct behavior requires fresh intent, so rummage surfaces and defers.
+    #[test]
+    fn test_spec_rummage_case_1_abstention_named() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("Case 1") || prompt.contains("case 1") || prompt.contains("case-1"),
+            "rummage system prompt must name case 1 as the abstention case",
+        );
+    }
+
+    // spec (rummage): the durable failing test rummage writes for case 2 must
+    // NOT carry the tinker-test-case: marker so the cleanup hook leaves it in
+    // place for the next goal session to satisfy. The system prompt must make
+    // this explicit and distinguish the durable test from investigation code.
+    #[test]
+    fn test_spec_rummage_durable_failing_test_no_marker() {
+        let prompt = rummage_system_prompt();
+        // The prompt uses markdown bold: "Do **not** add a `tinker-test-case:` marker"
+        // Check that the marker name and a negation word appear in the proximity.
+        assert!(
+            prompt.contains("not**") || prompt.contains("**not**") || prompt.contains("must not") || prompt.contains("without"),
+            "rummage system prompt must instruct that the durable test omits the tinker-test-case: marker",
+        );
+        assert!(
+            prompt.contains("durable") || prompt.contains("survive"),
+            "rummage system prompt must distinguish durable test survival from cleanup-marked investigation code",
         );
     }
 }

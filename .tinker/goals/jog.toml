@@ -1,0 +1,110 @@
+id = "jog"
+description = """
+## WHAT
+`jog` is the **intent↔spec auditor**, one of the two divergence
+investigators defined by `divergence-investigation` (its sibling
+`rummage` audits the spec↔code gap). jog checks whether a written goal
+still says what the user actually means.
+
+The user invokes jog **on demand** (pull) by naming a topic in their
+own words — "jog me on logging" — and jog resolves that topic to the
+relevant claims across whatever goals it touches. The user never needs
+to know the goal structure or who authored what; jog does the
+navigation.
+
+jog then runs a **Socratic deepening** conversation. It asks the user
+to articulate, then probes related concepts, finer detail, and
+especially the *why* of a feature — making the user re-articulate
+rather than recite. Its instrument is **no-cue questioning**: it never
+leads the witness, because a leading question would manufacture the
+agreement jog exists to test. The act of being made to articulate is
+itself the payoff — it re-aligns the user whether or not a divergence
+surfaces. The deepening loop is open-ended; the user steps off when
+done.
+
+A finding takes one of two shapes. **"I didn't know"**: the user
+drifted from a goal that is actually right — re-articulating it may
+itself re-align them, and nothing happens to the goal. **"I know
+better"**: the user's understanding reveals the goal is thin or wrong.
+On "I know better" jog **commissions a spec change from `tinker`** — to
+fix, clarify, or enrich the goal — over the dedicated jog→tinker
+channel defined in `triggers` (distinct from `/run`). In v1 `tinker`
+applies that edit directly, without an interview, then shows a
+non-blocking "here's what changed" diff.
+
+jog is a sibling chat agent to `tinker` and `rummage`, one active at a
+time; the `/jog` slash command switches to it and the REPL prompt tag
+names the active agent. It runs on the strongest model tier (like
+`tinker` and `rummage`), because detecting subtle divergence and
+questioning without cueing demand full reasoning capability.
+
+## WHY
+Goals are a lossy bridge from intent to convention and drift as
+situations move; `creative-process` holds that the dialectic must
+continue after a goal is written. jog is the mechanism that continues
+it from the **intent side**: `tinker`'s write-time playback validates
+intent→goal at the moment of writing, and jog re-checks that match
+over time. "Just testing isn't useful" — a pass/fail flashcard would
+be worthless — so jog deepens: making the user re-articulate the *why*
+both surfaces subtle drift and strengthens the user's own alignment.
+
+Pull-only and no-cue keep v1 honest. Pull means jog never interrupts,
+so the tedium that makes a quizzing tool obnoxious never arises. No-cue
+means jog cannot lead the user into agreement, so what it finds is real
+divergence rather than fatigue-driven assent.
+
+Letting `tinker` apply a jog-commissioned edit **without a playback**
+deliberately papers over `tinker`'s rule that the playback is
+epistemically irreplaceable. The assumption holding it up is that jog's
+own conversation has already done the dialectical anchoring the
+playback otherwise provides. v1 is allowed to make that assumption; the
+"here's what changed" diff is the learning instrument that will expose
+where the assumption breaks, informing a v2 that most likely
+reintroduces an interview on the handoff.
+
+## SCOPE
+- In scope: pull invocation by a user-named topic; resolving a topic to
+  the relevant claims across goals (jog navigates, the user need not
+  know the structure); Socratic, no-cue deepening centered on the *why*;
+  the two findings ("I didn't know" / "I know better"); commissioning a
+  fix/clarify/enrich from `tinker` over the jog→tinker channel in
+  `triggers`; v1 direct-apply with a non-blocking diff; the `/jog`
+  sibling-agent shell on the strongest model tier; a single-author
+  assumption.
+- Out of scope:
+  - **Push / scheduled / spaced-repetition invocation** — parked; it
+    needs durable state jog does not keep in v1.
+  - **Any durable jog document or record** — parked together with push
+    (durable output is what a spaced-repetition mode would need).
+  - **Collaboration / multi-author governance** — out of scope for v1;
+    on a colleague-authored goal there is no past intent of the invoking
+    user's to drift from, which changes jog's nature. Flagged to revisit.
+  - **Writing goals itself** — only `tinker` writes goals; jog
+    commissions the edit.
+  - **Probing the running system** — jog's subject is the user, not the
+    code, so it writes no `tinker-test-case:` investigation code and has
+    no `cleanup-hook` involvement (unlike `rummage`).
+  - **The v2 interview on the jog→tinker handoff.**
+"""
+parent_id = "divergence-investigation"
+children = []
+
+[[related]]
+id = "triggers"
+reason = "jog commissions a spec edit from `tinker` over a dedicated jog→tinker channel defined in `triggers`, distinct from `/run`. Unlike `/run`'s declarative-reason rule, that channel carries a prescriptive instruction — allowed because its content is user-sourced intent gathered in jog's conversation, not laundered implementation."
+
+[[related]]
+id = "tinker"
+reason = "On an 'I know better' finding jog commissions `tinker` to fix/clarify/enrich a goal. In v1 tinker applies the edit without a playback — a deliberate, jog-specific exception to tinker's epistemically-irreplaceable-playback rule, resting on the assumption that jog's own conversation already did the anchoring."
+
+[[related]]
+id = "tui"
+reason = "jog joins the conversation pane as a third sibling chat agent; the `/jog` slash command and the active-agent prompt tag are rendered by `tui` alongside `/tinker` and `/rummage`."
+
+[[related]]
+id = "shared-language"
+reason = "jog's deepening conversation is user-facing prose; `shared-language` governs its vocabulary. Pull it when questioning or explaining to the user."
+
+[[related]]
+id = "coding-standards"
+reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."

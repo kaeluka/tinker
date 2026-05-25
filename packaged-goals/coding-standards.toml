@@ -21,16 +21,26 @@ Two checks against the recent batch:
    them as a system message if the fix would require non-trivial
    refactoring.
 
-2. **Spec-test coverage audit.** For every load-bearing decision
-   named in any project goal (the bullets under `## DECISIONS
-   (vetted)`), check whether at least one `fn test_spec_*` covers
-   it. Grep `fn test_spec_` across the codebase; cross-reference
-   against the decisions in every `.tinker/goals/*.toml` and
-   `packaged-goals/*.toml`. Each goal-decision without a
-   corresponding spec test is a coverage gap. Write the missing
-   test if you can; surface the gap as a system message if writing
-   it would require a non-trivial structural change first (the
-   behavior isn't currently reachable in isolation).
+2. **Spec-test coverage audit**, run in both directions. Goals no
+   longer enumerate decisions in a `## DECISIONS` section —
+   load-bearing commitments are woven into each goal's WHAT/WHY/SCOPE
+   prose — so this is read-and-judge, not a mechanical list-walk.
+   - *Forward (claims → tests):* read each goal's WHAT/WHY/SCOPE,
+     identify its load-bearing behavioral commitments (the things a
+     session implemented that a test could pin), and check at least
+     one `fn test_spec_*` covers each. Grep `fn test_spec_` across
+     the codebase; cross-reference against `.tinker/goals/*.toml` and
+     `packaged-goals/*.toml`. A commitment with no covering test is a
+     coverage gap.
+   - *Reverse (tests → claims):* for each `fn test_spec_*`, confirm
+     it still traces to a live commitment in some current goal. A
+     test asserting behavior or wording no goal still calls for is a
+     stale guardrail — flag it (it may be enforcing a removed
+     mechanism, the way a renamed test can keep passing against dead
+     behavior).
+   Write missing tests where you can; surface a coverage gap or a
+   stale test as a system message when fixing it needs a non-trivial
+   structural change first.
 
 If both checks pass with no gaps, stop and say so briefly.
 
