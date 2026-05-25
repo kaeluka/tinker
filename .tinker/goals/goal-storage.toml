@@ -34,7 +34,7 @@ that could drift from or override what the goal says.
 - Out of scope: nested goal subdirectories; runtime format
   migrations; persisting session state or history; a per-file
   `change_log` (pending work is triggered via `/run`, per
-  `tinker-triggers`, not recorded on the spec).
+  `triggers`, not recorded on the spec).
 
 """
 parent_id = ""

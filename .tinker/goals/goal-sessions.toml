@@ -119,11 +119,11 @@ session a tractable optimization target it rarely needs to question.
   - Persisting the pending queue across tinker restarts.
 
 """
-parent_id = ""
+parent_id = "forward-generation"
 children = ["cleanup-hook"]
 related = [
   { id = "coding-standards", reason = "Goal sessions write code subject to this standard; specifically, the structured-summary requirement to list `test_spec_*` functions exists to enforce coding-standards' 'Tests as guardrails'. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link." },
-  { id = "tinker-triggers", reason = "Goal sessions are dispatched by `/run` lines defined in `tinker-triggers`. The per-entry reason string, the multi-queueing semantics, and the manual-vs-tinker dispatch distinction all originate in the trigger syntax." },
+  { id = "triggers", reason = "Goal sessions are dispatched by `/run` lines defined in `triggers`. The per-entry reason string, the multi-queueing semantics, and the manual-vs-agent dispatch distinction all originate in the trigger syntax." },
   { id = "goal-craft", reason = "The 'mechanism is goal sparseness' phrase in the 'Pushback is exceptional' reasoning refers to the sparseness tactic defined in `goal-craft`. Sparse goals are what make the tractable-optimization-target assumption hold." },
   { id = "goal-structure-standard", reason = "The session's context model — its own goal plus a neighborhood table it traverses on demand — is built from the `parent_id`/`children`/`related` graph and the reason-per-link that `goal-structure-standard` defines. Without that graph there is no table to hand the session." }
 ]

@@ -8,9 +8,10 @@ height), the full **goal text** of the currently selected goal
 beneath it (50%), and the **session log** at the bottom (25%).
 
 In the conversation, an input-prompt tag names whichever agent will
-receive the next message (`tinker> ` or `rummage> `); input routes
-to that agent, and the `/rummage` and `/tinker` slash commands
-(defined in `rummage`) switch it. Tinker's tool calls (bash, read,
+receive the next message (`tinker> `, `rummage> `, or `jog> `); input
+routes to that agent, and the `/tinker`, `/rummage`, and `/jog` slash
+commands switch it (the switching mechanism and the first two are
+defined in `rummage`, `/jog` in `jog`). Tinker's tool calls (bash, read,
 edit, etc.) render in dim grey with payloads cropped to their first
 line, so multi-line output doesn't flood the thread. When tinker
 triggers follow-up goals via `/run` lines in its reply, the system
@@ -77,8 +78,8 @@ queue.
   trigger-reason dialog; bold trigger reasons in the session log;
   queue markers in the goal list and pending-invocation listing in
   the goal-text region; the active-agent input-prompt tag and
-  message routing; recognizing the `/rummage` and `/tinker` slash
-  commands defined in `rummage`.
+  message routing; recognizing the `/tinker`, `/rummage`, and `/jog`
+  slash commands that switch the active agent.
 - Out of scope: themes, syntax highlighting, layout
   configurability, syncing the interface to a remote viewer; any
   interactive manipulation of the queue (cancel, reorder, pause,
@@ -91,6 +92,10 @@ children = []
 [[related]]
 id = "rummage"
 reason = "Rummage's existence drives the multi-agent UX in the conversation pane. The agent-switching slash commands and the active-agent tag are defined in rummage; this goal renders them."
+
+[[related]]
+id = "jog"
+reason = "jog is a third sibling chat agent in the conversation pane; this goal renders its `/jog` slash command and active-agent prompt tag alongside `/tinker` and `/rummage`."
 
 [[related]]
 id = "coding-standards"

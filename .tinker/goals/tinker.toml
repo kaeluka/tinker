@@ -90,15 +90,27 @@ lines for downstream goals that should react, as part of its
 user-facing batch message. Triggering goal execution always happens
 through `/run` lines in chat, never a `change_log` on the spec.
 
-Five sub-goals carry the mechanism detail: `tinker-agent` is the
+Tinker also applies goal edits **commissioned by `jog`**. When jog's
+intent↔spec audit surfaces an "I know better" divergence, jog
+dispatches tinker over the jog→tinker channel (per `triggers`) to fix,
+clarify, or enrich the goal. In v1 tinker applies that edit directly
+and shows a non-blocking diff, **without** running the
+interview/playback — a deliberate, jog-specific exception to the
+epistemically-irreplaceable-playback rule below, on the assumption that
+jog's own conversation already supplied the dialectical anchoring. It
+is a known v1 compromise, not a revision of the principle; v2 is
+expected to restore an interview on the handoff.
+
+Four sub-goals carry the mechanism detail: `tinker-agent` is the
 custom `opencode` agent profile that mechanically enforces these
 boundaries; `goal-structure-standard` is the set of tree operations
 (Merge / Nest Down / Nest Up / New Root / Retire) and coherence rules
 tinker applies when shaping the goal tree; `tinker-notes` is the
 silent observation log tinker appends to as it works;
 `tinker-introspection` is the runtime log and state file tinker reads
-to know its own *is*; `tinker-triggers` is the `/run` slash-command
-protocol tinker emits to dispatch goal sessions.
+to know its own *is*. The `/run` dispatch protocol tinker emits to
+trigger goal sessions is no longer tinker's alone — it lives in the
+shared root goal `triggers`, which both tinker and rummage emit.
 
 ## WHY
 A conversational interface that just collects intent and dumps it
@@ -123,7 +135,10 @@ whether the articulated goal matches it. Tinker never substitutes
 confidence, paraphrase, or silence for that reaction, and never
 infers consent from a non-pushback follow-up or any other indirect
 signal. This is not a quality check; it is required, because the
-interview is dialectical discovery, not data collection.
+interview is dialectical discovery, not data collection. The one
+allowance is an edit commissioned by `jog`, whose own conversation
+already performed the dialectical anchoring the playback secures; even
+then v1 surfaces a diff, and v2 is expected to restore the interview.
 
 The menu-avoidance and anchor-probing behaviors, and the strict
 separation of user intent from implementation, all serve the same
@@ -140,15 +155,17 @@ packaging wearing user-vetted provenance.
   intercepting technical solution dictates to uncover the underlying
   user-domain intent; menu-avoidance and bare-assertion
   anchor-probing; triggering goal execution via `/run`; reactive
-  scheduling after a batch; reading the introspection log and state
-  file to answer questions about its own state without inference.
+  scheduling after a batch; applying `jog`-commissioned goal edits over
+  the jog→tinker channel (v1: directly, with a diff, no interview);
+  reading the introspection log and state file to answer questions
+  about its own state without inference.
 - Out of scope: writing production code directly; persisting any
   artifact other than a goal file; running the test suite as part of
   normal conversation.
 
 """
-parent_id = ""
-children = ["tinker-agent", "goal-structure-standard", "tinker-notes", "tinker-introspection", "tinker-triggers"]
+parent_id = "forward-generation"
+children = ["tinker-agent", "goal-structure-standard", "tinker-notes", "tinker-introspection"]
 
 [[related]]
 id = "goal-craft"
@@ -163,5 +180,13 @@ id = "coding-standards"
 reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
 
 [[related]]
+id = "triggers"
+reason = "The `/run` dispatch protocol tinker emits — for edited goals and reactive post-batch scheduling — lives in `triggers`. Tinker is its primary non-user emitter; the decision of *when* to emit lives here, the protocol itself lives there. Formerly a child of tinker, reparented to a shared root once rummage became a second emitter."
+
+[[related]]
 id = "shared-language"
 reason = "tinker's conversation and the batch messages it composes are user-facing prose; `shared-language` governs the vocabulary of every user-facing surface. Pull it when composing anything the user reads."
+
+[[related]]
+id = "jog"
+reason = "jog commissions tinker to fix/clarify/enrich a goal on an 'I know better' finding, over the jog→tinker channel. In v1 tinker applies the edit without a playback — a deliberate, jog-specific exception to the epistemically-irreplaceable-playback rule, justified by jog's own conversation having done the anchoring."

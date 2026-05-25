@@ -4,6 +4,7 @@ mod claude;
 mod cleanup;
 mod goal;
 mod goal_session;
+mod jog;
 mod logger;
 mod opencode;
 mod rummage;
@@ -48,7 +49,7 @@ async fn main() -> Result<()> {
     // cleanup for the pre-session tinker-test-case hook (cheapest).
     // With --default-model, all runners omit -m and let opencode pick its default.
     // With --claude, use ClaudeRunner with opus/sonnet/haiku tiers.
-    let (oc_tinker, oc_goal, oc_cleanup_runner, oc_rummage): (Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>) = if use_claude {
+    let (oc_tinker, oc_goal, oc_cleanup_runner, oc_rummage, oc_jog): (Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>) = if use_claude {
         // Claude backend: pass tinker persona via --system-prompt instead of agent file.
         // task/todowrite are denied mechanically via --disallowedTools to match the
         // identity-level enforcement in the opencode agent files for tinker and rummage.
@@ -60,6 +61,8 @@ async fn main() -> Result<()> {
             Arc::new(ClaudeRunner::new(CLAUDE_SCHEDULER_MODEL)),
             Arc::new(ClaudeRunner::with_system_prompt(CLAUDE_TINKER_MODEL, rummage::rummage_system_prompt())
                 .with_denied_tools(["task", "todowrite"])),
+            Arc::new(ClaudeRunner::with_system_prompt(CLAUDE_TINKER_MODEL, jog::jog_system_prompt())
+                .with_denied_tools(["task", "todowrite"])),
         )
     } else if use_default_model {
         (
@@ -67,6 +70,7 @@ async fn main() -> Result<()> {
             Arc::new(RealOpenCodeRunner::new_default()),
             Arc::new(RealOpenCodeRunner::new_default()),
             Arc::new(RealOpenCodeRunner::default_with_agent("rummage")), // smartest tier
+            Arc::new(RealOpenCodeRunner::default_with_agent("jog")), // smartest tier
         )
     } else {
         (
@@ -74,6 +78,7 @@ async fn main() -> Result<()> {
             Arc::new(RealOpenCodeRunner::new(OPENCODE_GOAL_MODEL)),
             Arc::new(RealOpenCodeRunner::new(OPENCODE_SCHEDULER_MODEL)),
             Arc::new(RealOpenCodeRunner::with_agent(OPENCODE_TINKER_MODEL, "rummage")),
+            Arc::new(RealOpenCodeRunner::with_agent(OPENCODE_TINKER_MODEL, "jog")),
         )
     };
 
@@ -103,6 +108,7 @@ async fn main() -> Result<()> {
         let _ = fs.mkdir_all(&agent_dir);
         let _ = fs.write(&agent_dir.join("tinker.md"), &tinker_agent_content());
         let _ = fs.write(&agent_dir.join("rummage.md"), &rummage::rummage_agent_content());
+        let _ = fs.write(&agent_dir.join("jog.md"), &jog::jog_agent_content());
     }
 
     // Discover all .tinker dirs from cwd up. Nearest first.
@@ -136,6 +142,8 @@ async fn main() -> Result<()> {
     let (run_tx, mut run_rx) = mpsc::channel::<(goal::Goal, Option<String>)>(4);
     let (rummage_orch_tx, mut rummage_orch_rx) = mpsc::channel::<TinkerEvent>(64);
     let (rummage_msg_tx, mut rummage_msg_rx) = mpsc::channel::<String>(16);
+    let (jog_orch_tx, mut jog_orch_rx) = mpsc::channel::<TinkerEvent>(64);
+    let (jog_msg_tx, mut jog_msg_rx) = mpsc::channel::<String>(16);
 
     // Tinker task — forwards messages to opencode and streams events back
     {
@@ -433,6 +441,22 @@ async fn main() -> Result<()> {
         });
     }
 
+    // Jog task — sits idle until the user switches to jog and sends a message.
+    // No init prompt; the first user message opens the session.
+    // Uses the strongest model tier (same as tinker and rummage) per the jog goal.
+    {
+        let app_ref = app.clone();
+        let work_dir = work_dir.clone();
+        let oc = oc_jog.clone();
+        let tx = jog_orch_tx.clone();
+        tokio::spawn(async move {
+            while let Some(msg) = jog_msg_rx.recv().await {
+                let sid = app_ref.lock().unwrap().jog_session_id.clone();
+                let _ = tinker::send_message(oc.clone(), &msg, sid.as_deref(), &work_dir, tx.clone()).await;
+            }
+        });
+    }
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -451,6 +475,8 @@ async fn main() -> Result<()> {
         log,
         &mut rummage_orch_rx,
         rummage_msg_tx,
+        &mut jog_orch_rx,
+        jog_msg_tx,
     )
     .await;
 
@@ -472,6 +498,8 @@ async fn run_loop(
     log: logger::LogSender,
     rummage_orch_rx: &mut mpsc::Receiver<TinkerEvent>,
     rummage_msg_tx: mpsc::Sender<String>,
+    jog_orch_rx: &mut mpsc::Receiver<TinkerEvent>,
+    jog_msg_tx: mpsc::Sender<String>,
 ) -> Result<()> {
     loop {
         // Draw
@@ -521,7 +549,12 @@ async fn run_loop(
 
         // Drain rummage events
         while let Ok(ev) = rummage_orch_rx.try_recv() {
-            handle_rummage_event(&mut app.lock().unwrap(), ev);
+            handle_rummage_event(&mut app.lock().unwrap(), ev, &run_tx, fs.as_ref(), &log);
+        }
+
+        // Drain jog events
+        while let Ok(ev) = jog_orch_rx.try_recv() {
+            handle_jog_event(&mut app.lock().unwrap(), ev, &msg_tx, fs.as_ref(), &log);
         }
 
         // Terminal events (50ms poll)
@@ -616,6 +649,9 @@ async fn run_loop(
                 KeyAction::SendToRummage(msg) => {
                     let _ = rummage_msg_tx.send(msg).await;
                 }
+                KeyAction::SendToJog(msg) => {
+                    let _ = jog_msg_tx.send(msg).await;
+                }
                 KeyAction::RunGoal(id, reason) => {
                     let goal = {
                         let a = app.lock().unwrap();
@@ -703,7 +739,13 @@ fn parse_run_commands(text: &str) -> Vec<(String, String)> {
     out
 }
 
-fn handle_rummage_event(app: &mut App, ev: TinkerEvent) {
+fn handle_rummage_event(
+    app: &mut App,
+    ev: TinkerEvent,
+    run_tx: &mpsc::Sender<(goal::Goal, Option<String>)>,
+    fs: &dyn Filesystem,
+    log: &logger::LogSender,
+) {
     match ev {
         TinkerEvent::SessionId(id) => {
             if app.rummage_session_id.is_none() {
@@ -715,7 +757,83 @@ fn handle_rummage_event(app: &mut App, ev: TinkerEvent) {
         }
         TinkerEvent::Done => {
             app.rummage_tasks = app.rummage_tasks.saturating_sub(1);
+            // Reload goals so /run commands rummage emits for case-2 fix dispatch
+            // can be resolved to Goal structs.
+            if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
+                app.goals = load.goals;
+            }
+            let run_commands = parse_run_commands(&app.rummage_current_text);
+            let mut triggered: Vec<(goal::Goal, Option<String>)> = Vec::new();
+            for (gid, reason) in run_commands {
+                if let Some(g) = app.goals.iter().find(|g| g.id == gid).cloned() {
+                    let reason_opt = if reason.is_empty() { None } else { Some(reason) };
+                    triggered.push((g, reason_opt));
+                }
+            }
             app.finalize_rummage_message();
+            for (g, reason_opt) in triggered {
+                start_or_confirm_goal(app, g, reason_opt, run_tx, log);
+            }
+        }
+    }
+}
+
+/// Parse `/jog-edit <goal-id> <instruction>` lines from a jog reply.
+/// Each matching line yields `(goal_id, instruction)`.
+/// The instruction is prescriptive — what tinker should fix, clarify, or enrich.
+fn parse_jog_edit_commands(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("/jog-edit ") {
+            let rest = rest.trim();
+            if let Some((gid, instruction)) = rest.split_once(char::is_whitespace) {
+                out.push((gid.to_string(), instruction.trim().to_string()));
+            }
+        }
+    }
+    out
+}
+
+fn handle_jog_event(
+    app: &mut App,
+    ev: TinkerEvent,
+    msg_tx: &mpsc::Sender<String>,
+    fs: &dyn Filesystem,
+    log: &logger::LogSender,
+) {
+    match ev {
+        TinkerEvent::SessionId(id) => {
+            if app.jog_session_id.is_none() {
+                app.jog_session_id = Some(id);
+            }
+        }
+        TinkerEvent::Text(chunk) => {
+            app.append_jog_chunk(&chunk);
+        }
+        TinkerEvent::Done => {
+            app.jog_tasks = app.jog_tasks.saturating_sub(1);
+            let edits = parse_jog_edit_commands(&app.jog_current_text);
+            app.finalize_jog_message();
+            // Reload goals so goal ids in /jog-edit lines can be validated.
+            if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
+                app.goals = load.goals;
+            }
+            for (gid, instruction) in edits {
+                let goal_exists = app.goals.iter().any(|g| g.id == gid);
+                if goal_exists {
+                    // Commission the edit from tinker. Jog's conversation has already
+                    // done the dialectical anchoring the playback otherwise provides,
+                    // so tinker applies the edit directly and shows a non-blocking diff.
+                    let tinker_msg = format!(
+                        "Jog audit — `{}`: {}. Apply this edit to the goal directly; jog's conversation has already provided the dialectical anchoring. After the edit, show what changed.",
+                        gid, instruction
+                    );
+                    app.tinker_tasks += 1;
+                    let _ = msg_tx.try_send(tinker_msg.clone());
+                    log.emit("jog", logger::LogEvent::TinkerSystemMessageReceived { content: tinker_msg });
+                }
+            }
         }
     }
 }
@@ -1022,6 +1140,7 @@ enum KeyAction {
     Quit,
     SendToTinker(String),
     SendToRummage(String),
+    SendToJog(String),
     ApproveNextGoal,
     /// Run a specific goal immediately, bypassing the scheduler. The optional
     /// reason mirrors tinker's `/run <id> <reason>` syntax and the
@@ -1213,10 +1332,10 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                     return KeyAction::None;
                 }
 
-                // Agent-switching slash commands (rummage goal).
+                // Agent-switching slash commands (rummage / jog goals).
                 if input == "/rummage" {
                     app.active_agent = ActiveAgent::Rummage;
-                    let msg = "switched to rummage — type to chat, /tinker to switch back";
+                    let msg = "switched to rummage — type to chat, /tinker or /jog to switch";
                     app.push_system_message(msg);
                     log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: msg.to_string() });
                     app.input.clear();
@@ -1224,7 +1343,15 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                 }
                 if input == "/tinker" {
                     app.active_agent = ActiveAgent::Tinker;
-                    let msg = "switched to tinker — type to chat, /rummage to switch back";
+                    let msg = "switched to tinker — type to chat, /rummage or /jog to switch";
+                    app.push_system_message(msg);
+                    log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: msg.to_string() });
+                    app.input.clear();
+                    return KeyAction::None;
+                }
+                if input == "/jog" {
+                    app.active_agent = ActiveAgent::Jog;
+                    let msg = "switched to jog — name a topic to audit, /tinker or /rummage to switch";
                     app.push_system_message(msg);
                     log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: msg.to_string() });
                     app.input.clear();
@@ -1235,6 +1362,7 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                 let active_busy = match app.active_agent {
                     ActiveAgent::Tinker => app.tinker_tasks > 0,
                     ActiveAgent::Rummage => app.rummage_tasks > 0,
+                    ActiveAgent::Jog => app.jog_tasks > 0,
                 };
                 if active_busy {
                     return KeyAction::None;
@@ -1253,6 +1381,10 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                     ActiveAgent::Rummage => {
                         app.rummage_tasks += 1;
                         KeyAction::SendToRummage(input)
+                    }
+                    ActiveAgent::Jog => {
+                        app.jog_tasks += 1;
+                        KeyAction::SendToJog(input)
                     }
                 }
             }
@@ -1327,7 +1459,7 @@ mod tests {
         assert!(prompt.to_lowercase().contains("try it"));
     }
 
-    // spec (tinker-triggers): the batch summary request must instruct
+    // spec (triggers): the batch summary request must instruct
     // tinker to emit /run lines for downstream reactive goals,
     // with them appearing after the prose — machine side of tinker-
     // owned scheduling.
@@ -1473,7 +1605,7 @@ mod tests {
         );
     }
 
-    // spec (tui, tinker-triggers): system messages emitted when /run
+    // spec (tui, triggers): system messages emitted when /run
     // lines are parsed must use "triggered:" format, not the retired
     // "Scheduler:" naming from the old scheduler component. The message is
     // a Role::System entry (rendered grey in the TUI) and must contain both
@@ -1501,8 +1633,8 @@ mod tests {
         assert!(summary.contains(reason), "reason must appear in message");
     }
 
-    // spec: tinker-triggers — covers all four DECISIONS for the
-    // `/run <goal-id> <reason>` trigger syntax. Calls the production
+    // spec (triggers): covers the `/run <goal-id> <reason>` trigger syntax.
+    // Calls the production
     // `parse_run_commands` function directly (extracted from the inline
     // parser that previously lived in `handle_orch_event::Done`).
     //
@@ -1843,6 +1975,46 @@ mod tests {
         );
     }
 
+    // spec (rummage): on a confirmed case-2 bug, rummage emits `/run <goal-id> <reason>`
+    // in its output. handle_rummage_event must parse those lines and dispatch the goal
+    // to run_tx, the same as tinker's /run dispatch does.
+    #[test]
+    fn test_spec_rummage_run_command_dispatched() {
+        use crate::test_utils::MockFs;
+        use std::path::PathBuf;
+
+        let (run_tx, mut run_rx) = mpsc::channel::<(goal::Goal, Option<String>)>(8);
+
+        let tinker_dir = PathBuf::from("/fake/.tinker");
+        let goals_dir = tinker_dir.join("goals");
+        let mock_fs = MockFs::new();
+        mock_fs.add_file(
+            &goals_dir.join("goal-sessions.toml"),
+            "id = \"goal-sessions\"\ndescription = \"runs goal sessions\"\nparent_id = \"\"\nchildren = []\n",
+        );
+
+        let mut app = App::new();
+        app.tinker_dirs = vec![tinker_dir];
+        app.rummage_current_text =
+            "Current best understanding: the bug is X.\n/run goal-sessions failing test test_spec_foo pins correct behavior\n"
+                .into();
+
+        handle_rummage_event(
+            &mut app,
+            TinkerEvent::Done,
+            &run_tx,
+            &mock_fs,
+            &logger::noop_sender(),
+        );
+
+        let dispatched = run_rx.try_recv().expect("rummage /run must dispatch to run_tx");
+        assert_eq!(dispatched.0.id, "goal-sessions");
+        assert_eq!(
+            dispatched.1.as_deref(),
+            Some("failing test test_spec_foo pins correct behavior"),
+        );
+    }
+
     // spec (tui): "When the user manually triggers a goal via Enter in the
     // goal tree (or `/run` without arguments), a modal text input dialog pops
     // up to collect the trigger reason."
@@ -2068,5 +2240,253 @@ mod tests {
             main_rs.contains("OPENCODE_TINKER_MODEL, \"rummage\""),
             "rummage opencode runner must use OPENCODE_TINKER_MODEL (strongest tier)",
         );
+    }
+
+    // spec (jog): "Jog runs on the strongest model tier." The composition root
+    // in main.rs must wire the jog runner to TINKER_MODEL (the smartest tier).
+    #[test]
+    fn test_spec_jog_wired_to_strongest_model_tier() {
+        let main_rs = include_str!("main.rs");
+        assert!(
+            main_rs.contains("CLAUDE_TINKER_MODEL, jog::jog_system_prompt()"),
+            "jog claude runner must use CLAUDE_TINKER_MODEL (strongest tier)",
+        );
+        assert!(
+            main_rs.contains("OPENCODE_TINKER_MODEL, \"jog\""),
+            "jog opencode runner must use OPENCODE_TINKER_MODEL (strongest tier)",
+        );
+    }
+
+    // spec (jog / tui): `/jog` slash command must switch active_agent to Jog and
+    // emit a system message naming jog.
+    #[test]
+    fn test_spec_slash_jog_switches_active_agent() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use crate::app::Role;
+        let mut app = App::new();
+        assert_eq!(app.active_agent, ActiveAgent::Tinker, "starts as Tinker");
+        app.input = "/jog".into();
+        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender());
+        assert!(
+            matches!(action, KeyAction::None),
+            "/jog must not dispatch a chat message; returns None",
+        );
+        assert_eq!(
+            app.active_agent,
+            ActiveAgent::Jog,
+            "/jog must switch active_agent to Jog",
+        );
+        assert!(app.input.is_empty(), "input must be cleared after /jog");
+        assert!(
+            app.messages.iter().any(|m| m.role == Role::System && m.text.contains("jog")),
+            "/jog must emit a system message naming jog",
+        );
+    }
+
+    // spec (jog / tui): messages route to Jog when active_agent is Jog.
+    #[test]
+    fn test_spec_message_routes_to_jog_when_active() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = Phase::Idle;
+        app.active_agent = ActiveAgent::Jog;
+        app.input = "jog me on logging".into();
+        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender());
+        assert!(
+            matches!(action, KeyAction::SendToJog(_)),
+            "message must route to Jog when active_agent is Jog; got {:?}",
+            std::mem::discriminant(&action),
+        );
+    }
+
+    // spec (triggers): parse_jog_edit_commands extracts goal-id and instruction from
+    // /jog-edit lines. Incomplete lines (no instruction) and lines where /jog-edit
+    // does not appear at the start are silently skipped.
+    #[test]
+    fn test_spec_parse_jog_edit_commands_syntax() {
+        let text = "/jog-edit rummage Clarify the case-2 durable test path.\nsome prose\n/jog-edit tui Document the active-agent prompt tag.\n";
+        let edits = parse_jog_edit_commands(text);
+        assert_eq!(edits.len(), 2, "two /jog-edit lines must each produce one edit");
+        assert_eq!(edits[0].0, "rummage");
+        assert_eq!(edits[0].1, "Clarify the case-2 durable test path.");
+        assert_eq!(edits[1].0, "tui");
+        assert_eq!(edits[1].1, "Document the active-agent prompt tag.");
+
+        // Incomplete line (goal-id only, no instruction) must be silently skipped.
+        let incomplete = "/jog-edit rummage\nsome prose\n";
+        assert!(
+            parse_jog_edit_commands(incomplete).is_empty(),
+            "incomplete /jog-edit (no instruction) must be skipped",
+        );
+
+        // /jog-edit not at line start must not parse.
+        let mid_line = "here is advice /jog-edit rummage not leading\n";
+        assert!(
+            parse_jog_edit_commands(mid_line).is_empty(),
+            "/jog-edit not at line start must not parse",
+        );
+
+        // Prose-only text must produce no edits.
+        assert!(
+            parse_jog_edit_commands("no commands here\n").is_empty(),
+            "prose-only must produce no edits",
+        );
+    }
+
+    // spec (jog / triggers): multiple /jog-edit lines in one jog reply must each
+    // fire a separate commission to tinker, one per line. tinker_tasks must
+    // increment once per commission.
+    #[test]
+    fn test_spec_jog_edit_multiple_lines_each_dispatch_to_tinker() {
+        use crate::test_utils::MockFs;
+        use std::path::PathBuf;
+
+        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
+
+        let tinker_dir = PathBuf::from("/fake/.tinker");
+        let goals_dir = tinker_dir.join("goals");
+        let mock_fs = MockFs::new();
+        mock_fs.add_file(
+            &goals_dir.join("rummage.toml"),
+            "id = \"rummage\"\ndescription = \"investigates\"\nparent_id = \"\"\nchildren = []\n",
+        );
+        mock_fs.add_file(
+            &goals_dir.join("tui.toml"),
+            "id = \"tui\"\ndescription = \"terminal ui\"\nparent_id = \"\"\nchildren = []\n",
+        );
+
+        let mut app = App::new();
+        app.tinker_dirs = vec![tinker_dir];
+        app.jog_current_text =
+            "Two findings here.\n/jog-edit rummage Clarify the case-2 durable test path.\n/jog-edit tui Document the active-agent prompt tag.\n"
+                .into();
+
+        handle_jog_event(
+            &mut app,
+            TinkerEvent::Done,
+            &msg_tx,
+            &mock_fs,
+            &logger::noop_sender(),
+        );
+
+        let first = msg_rx.try_recv().expect("first /jog-edit must dispatch to tinker");
+        assert!(first.contains("rummage"), "first commission must name rummage");
+        let second = msg_rx.try_recv().expect("second /jog-edit must dispatch to tinker");
+        assert!(second.contains("tui"), "second commission must name tui");
+        assert!(msg_rx.try_recv().is_err(), "no extra commissions beyond two /jog-edit lines");
+        assert_eq!(app.tinker_tasks, 2, "tinker_tasks must increment once per /jog-edit line");
+    }
+
+    // spec (triggers): if a /jog-edit line names a goal-id that does not exist in
+    // the loaded goal list, it is silently dropped — no commission sent to tinker.
+    #[test]
+    fn test_spec_jog_edit_unknown_goal_id_silently_skipped() {
+        use crate::test_utils::MockFs;
+        use std::path::PathBuf;
+
+        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
+
+        let tinker_dir = PathBuf::from("/fake/.tinker");
+        let mock_fs = MockFs::new();
+        mock_fs.add_dir(&tinker_dir.join("goals"));
+
+        let mut app = App::new();
+        app.tinker_dirs = vec![tinker_dir];
+        app.jog_current_text = "/jog-edit nonexistent This goal does not exist.\n".into();
+
+        handle_jog_event(
+            &mut app,
+            TinkerEvent::Done,
+            &msg_tx,
+            &mock_fs,
+            &logger::noop_sender(),
+        );
+
+        assert!(
+            msg_rx.try_recv().is_err(),
+            "unknown goal-id in /jog-edit must not dispatch any commission to tinker",
+        );
+        assert_eq!(app.tinker_tasks, 0, "tinker_tasks must not increment for unknown goal-id");
+    }
+
+    // spec (jog / triggers): the jog→tinker commission message must instruct
+    // tinker to apply the edit directly (v1: no playback interview) and to show
+    // what changed. This is the "non-blocking diff" requirement from the jog goal.
+    #[test]
+    fn test_spec_jog_edit_commission_instructs_direct_apply_and_show_diff() {
+        use crate::test_utils::MockFs;
+        use std::path::PathBuf;
+
+        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
+
+        let tinker_dir = PathBuf::from("/fake/.tinker");
+        let goals_dir = tinker_dir.join("goals");
+        let mock_fs = MockFs::new();
+        mock_fs.add_file(
+            &goals_dir.join("rummage.toml"),
+            "id = \"rummage\"\ndescription = \"investigates\"\nparent_id = \"\"\nchildren = []\n",
+        );
+
+        let mut app = App::new();
+        app.tinker_dirs = vec![tinker_dir];
+        app.jog_current_text =
+            "/jog-edit rummage The SCOPE section omits the jog→tinker channel.\n".into();
+
+        handle_jog_event(
+            &mut app,
+            TinkerEvent::Done,
+            &msg_tx,
+            &mock_fs,
+            &logger::noop_sender(),
+        );
+
+        let commission = msg_rx.try_recv().expect("commission must be sent");
+        assert!(
+            commission.to_lowercase().contains("directly"),
+            "commission must instruct tinker to apply the edit directly (no interview): {commission}",
+        );
+        assert!(
+            commission.to_lowercase().contains("what changed") || commission.to_lowercase().contains("changed"),
+            "commission must instruct tinker to show what changed: {commission}",
+        );
+    }
+
+    // spec (jog): on an "I know better" finding, jog emits `/jog-edit <goal-id>
+    // <instruction>` in its output. handle_jog_event must parse those lines and
+    // forward a prescriptive commission to tinker via msg_tx.
+    #[test]
+    fn test_spec_jog_edit_command_dispatched_to_tinker() {
+        use crate::test_utils::MockFs;
+        use std::path::PathBuf;
+
+        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
+
+        let tinker_dir = PathBuf::from("/fake/.tinker");
+        let goals_dir = tinker_dir.join("goals");
+        let mock_fs = MockFs::new();
+        mock_fs.add_file(
+            &goals_dir.join("rummage.toml"),
+            "id = \"rummage\"\ndescription = \"investigates program behavior\"\nparent_id = \"\"\nchildren = []\n",
+        );
+
+        let mut app = App::new();
+        app.tinker_dirs = vec![tinker_dir];
+        app.jog_current_text =
+            "I know better — the scope section omits the jog→tinker channel.\n/jog-edit rummage Add jog→tinker channel description to the SCOPE section.\n"
+                .into();
+
+        handle_jog_event(
+            &mut app,
+            TinkerEvent::Done,
+            &msg_tx,
+            &mock_fs,
+            &logger::noop_sender(),
+        );
+
+        let dispatched = msg_rx.try_recv().expect("jog /jog-edit must dispatch to msg_tx (tinker)");
+        assert!(dispatched.contains("rummage"), "tinker commission must name the goal id");
+        assert!(dispatched.contains("Add jog"), "tinker commission must carry the instruction");
+        assert_eq!(app.jog_tasks, 0, "jog_tasks must decrement on Done");
+        assert_eq!(app.tinker_tasks, 1, "tinker_tasks must increment for the commission");
     }
 }

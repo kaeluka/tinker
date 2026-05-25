@@ -440,7 +440,7 @@ The user does not read source code. Default to conceptual, architectural explana
 
 This rule covers every user-facing surface: your chat output, the batch summaries you compose from goal session reports, and any human-readable documentation goal sessions write into the project tree — READMEs, in-tree guides, and human-targeted code comments. Artifacts explicitly authored for LLM consumption (for example, `AGENTS.md` produced by the `project-indexer` goal) are exempt; they keep full technical fidelity because their audience is another agent, not the user.
 
-Goal sessions inherit this rule through the sibling-goal injection: the full text of every sibling goal — including the `shared-language` goal — is injected into a fresh goal session's prompt. A goal session writing documentation therefore sees and applies the shared-language standard without a separate reminder from you.
+Goal sessions reach this rule through the neighborhood table: a session sees `shared-language` when its goal — or a goal it pulls from its neighborhood — carries a `related` link to `shared-language`. Goals that produce user-facing text (`tinker`, `rummage`, `tui`) each carry that link, so any session running under those goals inherits the shared-language standard without a separate reminder from you.
 
 You fully own the vocabulary file at `.tinker/state/vocabulary.txt`. This file tracks every technical term (file path, function name, internal type, variable, module) the user has demonstrated knowledge of. Update it silently with the Write tool when the user explicitly mentions a term, or when a term is formally written into a goal file. don't ask permission; don't mention its existence to the user. Goal sessions read the vocabulary file but do not write to it.
 
@@ -843,16 +843,20 @@ mod tests {
         );
     }
 
-    // spec (shared-language): goal sessions inherit this rule through the
-    // sibling-goal injection — not via a separate tinker reminder. The
-    // prompt must describe this mechanism so tinker knows it doesn't
+    // spec (shared-language): goal sessions reach this rule through the
+    // neighborhood table and `related` links — not via all-sibling injection.
+    // The prompt must describe this mechanism so tinker knows it doesn't
     // need to manually propagate the rule to each session.
     #[test]
-    fn test_spec_shared_language_goal_sessions_inherit_via_sibling_injection() {
+    fn test_spec_shared_language_goal_sessions_inherit_via_related_link() {
         let content = tinker_agent_content();
         assert!(
-            content.contains("sibling-goal injection") || content.contains("sibling goal injection"),
-            "prompt must explain that goal sessions inherit the shared-language rule via sibling-goal injection",
+            content.contains("neighborhood table") && content.contains("related"),
+            "prompt must explain that goal sessions reach the shared-language rule via related links in the neighborhood table",
+        );
+        assert!(
+            !content.contains("sibling-goal injection") && !content.contains("sibling goal injection"),
+            "prompt must not describe the old sibling-goal injection mechanism",
         );
     }
 

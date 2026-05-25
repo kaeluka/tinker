@@ -12,7 +12,7 @@ Tinker folds significant observations into
 `.tinker/notes/cost-observations.md` so subsequent runs have
 continuity. Those entries are observation-shaped (what was seen),
 not TODO-shaped (what to do) — avoiding the drift that retired the
-`change_log` (see `tinker-triggers`).
+`change_log` (see `triggers`).
 
 Findings never become new goal files on their own. They surface only
 through the session's summary, which tinker folds into the

@@ -71,3 +71,7 @@ children = ["user-persona", "shared-language", "implementation-ownership"]
 [[related]]
 id = "tinker-introspection"
 reason = "That goal is the in-tinker mechanism by which tinker — itself a part of tinker — gains structured access to the *is* this principle defines tinker as holding. Without it, the verify-by-observation rule applies to the user-facing surface but tinker's own reasoning stays inference-based, leaving the principle only half-realized."
+
+[[related]]
+id = "intent-to-code"
+reason = "`intent-to-code`'s three-layer stack (intent / spec / code) is the layered form of this goal's should/is split: layer 1 is the *should*, layers 2–3 the *is*. Its human-coupling axis — which agents may touch the intent layer — is the agent-architecture consequence of this boundary."
