@@ -23,8 +23,13 @@ tinker persona its own way:
   parses streaming JSON (`--output-format stream-json --verbose`);
   and, because it bypasses the agent file, must re-impose the same
   `task`/`todowrite` denials mechanically via `--disallowedTools` —
-  the parity `tinker-agent` and `rummage` rely on. It is a boolean
-  startup flag with no config persistence.
+  the parity `tinker-agent` and `rummage` rely on. The backend choice
+  is a boolean startup flag and is not persisted.
+
+Which model fills each tier, per backend, is overridable at runtime
+through `model-config`, a `.tinker/config.toml` file; the per-backend
+mappings above are the built-in defaults each tier falls back to when
+the config leaves a slot unset.
 
 Tool calls from either backend render in the TUI as compact
 one-liners.
@@ -44,17 +49,19 @@ backend explicit and small.
 - In scope: the runner-trait abstraction with real implementations
   wired only at the composition root; the two current backends
   (opencode default, claude via `--claude`); per-backend model-tier
-  mapping and persona delivery; `--resume` session resumption and
-  streaming-JSON parsing on the claude path; compact one-liner
+  mapping (the built-in defaults, overridable per tier via
+  `model-config`) and persona delivery; `--resume` session resumption
+  and streaming-JSON parsing on the claude path; compact one-liner
   tool-call rendering; mechanical `task`/`todowrite` denial parity on
   the claude path, which bypasses the opencode agent file.
-- Out of scope: persisting the backend choice in config (it's a
-  startup flag); auto-detecting which CLI is installed; backends
+- Out of scope: persisting the backend *choice* (`--claude` is a
+  startup flag — per-tier model overrides, by contrast, are persisted
+  in `model-config`); auto-detecting which CLI is installed; backends
   beyond opencode and claude until one is actually added.
 
 """
 parent_id = ""
-children = []
+children = ["model-config"]
 
 [[related]]
 id = "tinker-agent"
