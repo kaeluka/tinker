@@ -20,11 +20,20 @@ user-facing batch message; acting on any finding requires a fresh
 interview, same as any goal creation. (This is partly enforced
 mechanically — goal sessions cannot write to `.tinker/goals/`.)
 
-The measurement substrate is in place: the Claude CLI output parser
-in `src/claude.rs` captures the per-message `usage` field
+The measurement substrate's purpose is **attribution**: tying spend
+to its cause. The investigation must decompose token usage by prompt
+component and attribute the cost to where it originates —
+distinguishing the fixed scaffolding that ships every turn regardless
+(the persona, the standing instructions) from the parts that grow per
+turn (conversation history, the goal list shipped fresh each turn) —
+and identifying which component dominates (e.g. which template input
+is largest). Raw per-message totals cannot surface that pattern, and
+the pattern is exactly what the user needs to judge whether a finding
+is worth acting on. The first step is in place: the Claude CLI output
+parser in `src/claude.rs` captures the per-message `usage` field
 (input/output tokens plus cache reads/creations) that was previously
-discarded, and the numbers render in the TUI. Further investigation
-builds on that data.
+discarded, and the numbers render in the TUI. The decomposition and
+attribution build on that capture.
 
 ## WHY
 Tinker works well but is expensive to use — the user grounded this in
@@ -52,8 +61,10 @@ conventions every turn, so its per-turn cost is high. Pushing recon
 onto a cheaper tier is itself a cost-aware move.
 
 ## SCOPE
-- In scope: standing investigation of how tinker uses LLMs; the
-  Claude CLI `usage` events as primary data source; identifying and
+- In scope: standing investigation of how tinker uses LLMs;
+  decomposing token spend by prompt component and attributing it to
+  fixed scaffolding versus per-turn growth (with the Claude CLI
+  `usage` events as the primary data source); identifying and
   surfacing cuts (cache layout, prompt size, session lifecycle, model
   tiering, goal-session context injection, conversation-history growth);
   maintaining the measurement substrate; persisting observations to

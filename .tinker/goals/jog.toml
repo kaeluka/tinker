@@ -32,6 +32,16 @@ channel defined in `triggers` (distinct from `/run`). In v1 `tinker`
 applies that edit directly, without an interview, then shows a
 non-blocking "here's what changed" diff.
 
+A commission is **terminal for a thread**: jog emits a `/jog-edit` line
+only in a turn where it has no open question left for the user. If jog
+still wants to check or hear anything before committing, it asks and
+waits — and commissions in a later turn, once the answer is in. It
+never poses a question and emits the commission in the same reply. The
+discipline lives in jog itself because the channel has no wait on the
+system side: the moment a `/jog-edit` line is in jog's finalized
+reply, the trigger fires, so a question asked alongside it gets no
+chance to be answered first.
+
 jog is a sibling chat agent to `tinker` and `rummage`, one active at a
 time; the `/jog` slash command switches to it and the REPL prompt tag
 names the active agent. It runs on the strongest model tier (like
@@ -57,10 +67,15 @@ Letting `tinker` apply a jog-commissioned edit **without a playback**
 deliberately papers over `tinker`'s rule that the playback is
 epistemically irreplaceable. The assumption holding it up is that jog's
 own conversation has already done the dialectical anchoring the
-playback otherwise provides. v1 is allowed to make that assumption; the
+playback otherwise provides. The terminal-commission rule is what keeps
+that assumption true: a commission emitted while a question to the user
+is still open would, by definition, anchor on an unfinished
+conversation — the edit would land before the user could answer the
+very thing jog said it needed. So jog must finish hearing back before
+it commits. v1 is allowed to make the no-playback assumption; the
 "here's what changed" diff is the learning instrument that will expose
-where the assumption breaks, informing a v2 that most likely
-reintroduces an interview on the handoff.
+where it breaks, informing a v2 that most likely reintroduces an
+interview on the handoff.
 
 ## SCOPE
 - In scope: pull invocation by a user-named topic; resolving a topic to
@@ -68,7 +83,9 @@ reintroduces an interview on the handoff.
   know the structure); Socratic, no-cue deepening centered on the *why*;
   the two findings ("I didn't know" / "I know better"); commissioning a
   fix/clarify/enrich from `tinker` over the jog→tinker channel in
-  `triggers`; v1 direct-apply with a non-blocking diff; the `/jog`
+  `triggers`, terminal for a thread (never emitted in the same turn as
+  an open question to the user); v1 direct-apply with a non-blocking
+  diff; the `/jog`
   sibling-agent shell on the strongest model tier; a single-author
   assumption.
 - Out of scope:

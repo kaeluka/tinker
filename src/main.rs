@@ -195,6 +195,7 @@ async fn main() -> Result<()> {
             // Log the session start — goal-list hash lets us detect persona/goal drift.
             log_orch.emit("tinker", logger::LogEvent::TinkerSessionStarted {
                 system_prompt_chars: tinker_agent_content().len(),
+                goal_list_chars: goals_summary.len(),
                 goal_list_hash: logger::hash_string(&goals_summary),
                 backend: backend_name_orch.clone(),
             });
@@ -208,6 +209,7 @@ async fn main() -> Result<()> {
                 .unwrap_or_default();
             log_orch.emit("tinker", logger::LogEvent::TinkerTurnEnd {
                 duration_ms: t0.elapsed().as_millis() as u64,
+                message_chars: init.len(),
                 usage: logger::parse_usage_from_text(&full_reply),
                 backend: backend_name_orch.clone(),
             });
@@ -241,6 +243,7 @@ async fn main() -> Result<()> {
                 .unwrap_or_default();
                 log_orch.emit("tinker", logger::LogEvent::TinkerTurnEnd {
                     duration_ms: t0.elapsed().as_millis() as u64,
+                    message_chars: msg.len(),
                     usage: logger::parse_usage_from_text(&full_reply),
                     backend: backend_name_orch.clone(),
                 });
@@ -278,6 +281,7 @@ async fn main() -> Result<()> {
                 log_goal.emit("goal_session", logger::LogEvent::GoalSessionDispatched {
                     goal_id: goal.id.clone(),
                     reason: reason.clone(),
+                    init_message_chars: goal_session::goal_init_message(&goal, reason.as_deref()).len(),
                     backend: backend_name_goal.clone(),
                 });
 

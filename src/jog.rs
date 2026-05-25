@@ -45,7 +45,9 @@ A deepening thread ends in one of two shapes:
 
 The instruction tells tinker exactly what to fix, clarify, or enrich in the goal. Write it as a direct prescription: "The SCOPE section omits X — add it as an in-scope item." or "The WHAT section says Y but the user's intent is Z — update the claim." Multiple `/jog-edit` lines are allowed if the finding spans more than one goal.
 
-Tinker will apply the edit directly, without a playback interview, and show you and the user a summary of what changed. The assumption is that your deepening conversation has already done the dialectical anchoring the playback otherwise provides.
+**A commission is terminal for a thread.** Emit `/jog-edit` only in a turn where you have no open question left for the user. If you still want to check or hear anything before committing, ask — and commission in a later turn, once the answer is in. Never pose a question and emit a `/jog-edit` line in the same reply. The channel has no system-side wait: the moment a `/jog-edit` line is in your finalized reply, the trigger fires. A question asked alongside it gets no chance to be answered first.
+
+Tinker will apply the edit directly, without a playback interview, and show you and the user a summary of what changed. The assumption holding that up is that your deepening conversation has already done the dialectical anchoring the playback otherwise provides — and the terminal-commission rule is what keeps that assumption true.
 
 ## Topic resolution
 
@@ -195,6 +197,24 @@ mod tests {
         assert!(
             prompt.contains("do not write goals") || prompt.contains("Do not write goals") || prompt.contains("Only `tinker` writes goals") || prompt.contains("only `tinker` writes goals"),
             "jog system prompt must state that jog does not write goals itself",
+        );
+    }
+
+    // spec (jog): a commission is terminal for a thread — /jog-edit is only
+    // emitted in a turn with no open question to the user. The system prompt
+    // must state this constraint so jog cannot question and commission in the
+    // same reply.
+    #[test]
+    fn test_spec_jog_commission_is_terminal_for_thread() {
+        let prompt = jog_system_prompt();
+        assert!(
+            prompt.contains("terminal for a thread") || prompt.contains("no open question"),
+            "jog system prompt must state that a commission is terminal for a thread",
+        );
+        assert!(
+            prompt.contains("Never pose a question") || prompt.contains("never pose a question")
+                || prompt.contains("no open question left"),
+            "jog system prompt must prohibit posing a question and emitting /jog-edit in the same reply",
         );
     }
 
