@@ -2,6 +2,7 @@ mod app;
 mod cap;
 mod claude;
 mod cleanup;
+mod config;
 mod goal;
 mod goal_session;
 mod jog;
@@ -44,6 +45,24 @@ async fn main() -> Result<()> {
     let use_default_model = std::env::args().any(|a| a == "--default-model");
     let use_claude = std::env::args().any(|a| a == "--claude");
 
+    let work_dir = std::env::current_dir()?;
+    let primary_tinker_dir = work_dir.join(".tinker");
+    fs.mkdir_all(&primary_tinker_dir.join("goals"))?;
+    fs.mkdir_all(&primary_tinker_dir.join("state"))?;
+    fs.mkdir_all(&primary_tinker_dir.join("notes"))?;
+    fs.mkdir_all(&primary_tinker_dir.join("logs"))?;
+
+    // Write a self-documenting starter config only when none exists yet;
+    // then load whatever is present (or default if still absent/invalid).
+    let config_path = primary_tinker_dir.join("config.toml");
+    config::write_starter_template(
+        fs.as_ref(),
+        &config_path,
+        [CLAUDE_TINKER_MODEL, CLAUDE_GOAL_MODEL, CLAUDE_SCHEDULER_MODEL],
+        [OPENCODE_TINKER_MODEL, OPENCODE_GOAL_MODEL, OPENCODE_SCHEDULER_MODEL],
+    )?;
+    let model_config = config::load_model_config(fs.as_ref(), &config_path);
+
     // Three runner instances bound to different models — tinker for
     // interview + batch summary (smartest), goal sessions for code production,
     // cleanup for the pre-session tinker-test-case hook (cheapest).
@@ -53,15 +72,18 @@ async fn main() -> Result<()> {
         // Claude backend: pass tinker persona via --system-prompt instead of agent file.
         // task/todowrite are denied mechanically via --disallowedTools to match the
         // identity-level enforcement in the opencode agent files for tinker and rummage.
+        let tinker_m = model_config.claude_high(CLAUDE_TINKER_MODEL);
+        let goal_m = model_config.claude_mid(CLAUDE_GOAL_MODEL);
+        let cleanup_m = model_config.claude_low(CLAUDE_SCHEDULER_MODEL);
         let tinker_prompt = tinker_agent_content();
         (
-            Arc::new(ClaudeRunner::with_system_prompt(CLAUDE_TINKER_MODEL, tinker_prompt)
+            Arc::new(ClaudeRunner::with_system_prompt(tinker_m, tinker_prompt)
                 .with_denied_tools(["task", "todowrite"])),
-            Arc::new(ClaudeRunner::new(CLAUDE_GOAL_MODEL)),
-            Arc::new(ClaudeRunner::new(CLAUDE_SCHEDULER_MODEL)),
-            Arc::new(ClaudeRunner::with_system_prompt(CLAUDE_TINKER_MODEL, rummage::rummage_system_prompt())
+            Arc::new(ClaudeRunner::new(goal_m)),
+            Arc::new(ClaudeRunner::new(cleanup_m)),
+            Arc::new(ClaudeRunner::with_system_prompt(tinker_m, rummage::rummage_system_prompt())
                 .with_denied_tools(["task", "todowrite"])),
-            Arc::new(ClaudeRunner::with_system_prompt(CLAUDE_TINKER_MODEL, jog::jog_system_prompt())
+            Arc::new(ClaudeRunner::with_system_prompt(tinker_m, jog::jog_system_prompt())
                 .with_denied_tools(["task", "todowrite"])),
         )
     } else if use_default_model {
@@ -73,21 +95,17 @@ async fn main() -> Result<()> {
             Arc::new(RealOpenCodeRunner::default_with_agent("jog")), // smartest tier
         )
     } else {
+        let tinker_m = model_config.opencode_high(OPENCODE_TINKER_MODEL);
+        let goal_m = model_config.opencode_mid(OPENCODE_GOAL_MODEL);
+        let cleanup_m = model_config.opencode_low(OPENCODE_SCHEDULER_MODEL);
         (
-            Arc::new(RealOpenCodeRunner::with_agent(OPENCODE_TINKER_MODEL, "tinker")),
-            Arc::new(RealOpenCodeRunner::new(OPENCODE_GOAL_MODEL)),
-            Arc::new(RealOpenCodeRunner::new(OPENCODE_SCHEDULER_MODEL)),
-            Arc::new(RealOpenCodeRunner::with_agent(OPENCODE_TINKER_MODEL, "rummage")),
-            Arc::new(RealOpenCodeRunner::with_agent(OPENCODE_TINKER_MODEL, "jog")),
+            Arc::new(RealOpenCodeRunner::with_agent(tinker_m, "tinker")),
+            Arc::new(RealOpenCodeRunner::new(goal_m)),
+            Arc::new(RealOpenCodeRunner::new(cleanup_m)),
+            Arc::new(RealOpenCodeRunner::with_agent(tinker_m, "rummage")),
+            Arc::new(RealOpenCodeRunner::with_agent(tinker_m, "jog")),
         )
     };
-
-    let work_dir = std::env::current_dir()?;
-    let primary_tinker_dir = work_dir.join(".tinker");
-    fs.mkdir_all(&primary_tinker_dir.join("goals"))?;
-    fs.mkdir_all(&primary_tinker_dir.join("state"))?;
-    fs.mkdir_all(&primary_tinker_dir.join("notes"))?;
-    fs.mkdir_all(&primary_tinker_dir.join("logs"))?;
 
     let backend_name = if use_claude { "claude" } else { "opencode" };
     let log = logger::start_logger(
@@ -782,9 +800,8 @@ fn handle_rummage_event(
     }
 }
 
-/// Parse `/jog-edit <goal-id> <instruction>` lines from a jog reply.
-/// Each matching line yields `(goal_id, instruction)`.
-/// The instruction is prescriptive — what tinker should fix, clarify, or enrich.
+// The instruction field is prescriptive (user-sourced intent from jog's deepening),
+// unlike /run reasons which are declarative spec-delta pointers.
 fn parse_jog_edit_commands(text: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for line in text.lines() {
@@ -2229,35 +2246,50 @@ mod tests {
 
     // spec (rummage): "Rummage uses the strongest model available for the chosen
     // backend." The composition root in main.rs must wire the rummage runner to
-    // TINKER_MODEL (the smartest tier), not SCHEDULER_MODEL or GOAL_MODEL.
+    // the tinker tier (the smartest tier), not SCHEDULER_MODEL or GOAL_MODEL.
     // Verified via source inspection since the wiring is inside main().
+    //
+    // The model-config layer resolves the actual model string through `tinker_m`
+    // (bound to model_config.*_tinker(TINKER_MODEL)), so we check that rummage
+    // uses the same `tinker_m` variable that tinker itself uses — never goal_m or
+    // cleanup_m.
     #[test]
     fn test_spec_rummage_wired_to_strongest_model_tier() {
         let main_rs = include_str!("main.rs");
-        // The rummage runner must use CLAUDE_TINKER_MODEL on the Claude backend.
+        // Both backends bind the tinker-tier model to `tinker_m` with the built-in
+        // constant as fallback, then use it for rummage and jog as well.
         assert!(
-            main_rs.contains("CLAUDE_TINKER_MODEL, rummage::rummage_system_prompt()"),
-            "rummage claude runner must use CLAUDE_TINKER_MODEL (strongest tier)",
+            main_rs.contains("tinker_m, rummage::rummage_system_prompt()"),
+            "rummage claude runner must use tinker_m (strongest tier)",
         );
-        // The rummage runner must use OPENCODE_TINKER_MODEL on the opencode backend.
         assert!(
-            main_rs.contains("OPENCODE_TINKER_MODEL, \"rummage\""),
-            "rummage opencode runner must use OPENCODE_TINKER_MODEL (strongest tier)",
+            main_rs.contains("tinker_m, \"rummage\""),
+            "rummage opencode runner must use tinker_m (strongest tier)",
+        );
+        // The tinker_m variable on the Claude path must default to CLAUDE_TINKER_MODEL.
+        assert!(
+            main_rs.contains("model_config.claude_high(CLAUDE_TINKER_MODEL)"),
+            "claude tinker_m must fall back to CLAUDE_TINKER_MODEL",
+        );
+        // The tinker_m variable on the opencode path must default to OPENCODE_TINKER_MODEL.
+        assert!(
+            main_rs.contains("model_config.opencode_high(OPENCODE_TINKER_MODEL)"),
+            "opencode tinker_m must fall back to OPENCODE_TINKER_MODEL",
         );
     }
 
     // spec (jog): "Jog runs on the strongest model tier." The composition root
-    // in main.rs must wire the jog runner to TINKER_MODEL (the smartest tier).
+    // in main.rs must wire the jog runner to the tinker tier (the smartest tier).
     #[test]
     fn test_spec_jog_wired_to_strongest_model_tier() {
         let main_rs = include_str!("main.rs");
         assert!(
-            main_rs.contains("CLAUDE_TINKER_MODEL, jog::jog_system_prompt()"),
-            "jog claude runner must use CLAUDE_TINKER_MODEL (strongest tier)",
+            main_rs.contains("tinker_m, jog::jog_system_prompt()"),
+            "jog claude runner must use tinker_m (strongest tier)",
         );
         assert!(
-            main_rs.contains("OPENCODE_TINKER_MODEL, \"jog\""),
-            "jog opencode runner must use OPENCODE_TINKER_MODEL (strongest tier)",
+            main_rs.contains("tinker_m, \"jog\""),
+            "jog opencode runner must use tinker_m (strongest tier)",
         );
     }
 

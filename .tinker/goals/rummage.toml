@@ -179,8 +179,7 @@ The strongest-model-tier choice follows from rummage's role as
 active investigator. Cheap-tier investigators produce worse
 hypotheses and weaker falsification attempts; the cost savings
 would land back on the user's plate as document errors they
-cannot verify. (A future `--cheap` flag, separate goal, would
-shift rummage to sonnet on Claude.)
+cannot verify.
 
 ## SCOPE
 - In scope: chat-based investigation of program behavior in the
