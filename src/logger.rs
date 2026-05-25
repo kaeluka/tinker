@@ -77,12 +77,14 @@ impl Default for StateSnapshot {
 pub enum LogEvent {
     TinkerSessionStarted {
         system_prompt_chars: usize,
+        goal_list_chars: usize,
         goal_list_hash: String,
         backend: String,
     },
     TinkerTurnStart,
     TinkerTurnEnd {
         duration_ms: u64,
+        message_chars: usize,
         usage: Option<UsageInfo>,
         backend: String,
     },
@@ -98,6 +100,7 @@ pub enum LogEvent {
     GoalSessionDispatched {
         goal_id: String,
         reason: Option<String>,
+        init_message_chars: usize,
         backend: String,
     },
     GoalSessionStarted {
@@ -473,6 +476,7 @@ mod tests {
                 "tinker_session_started",
                 LogEvent::TinkerSessionStarted {
                     system_prompt_chars: 100,
+                    goal_list_chars: 200,
                     goal_list_hash: "abc".to_string(),
                     backend: "claude".to_string(),
                 },
@@ -858,5 +862,77 @@ mod tests {
             main_rs.contains("prev_goal_hash"),
             "main.rs must compare against a previous hash to detect changes",
         );
+    }
+
+    // spec (cost-reduction): TinkerSessionStarted must carry goal_list_chars
+    // so the decomposition substrate can attribute cache_write on the first turn
+    // between the system prompt and the goals list.
+    #[test]
+    fn test_spec_cost_reduction_tinker_session_started_carries_goal_list_chars() {
+        let event = LogEvent::TinkerSessionStarted {
+            system_prompt_chars: 12000,
+            goal_list_chars: 3500,
+            goal_list_hash: "abc123".to_string(),
+            backend: "claude".to_string(),
+        };
+        let entry = LogEntry {
+            ts: "2026-05-25T00:00:00Z".to_string(),
+            source: "tinker".to_string(),
+            event,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["system_prompt_chars"], 12000);
+        assert_eq!(val["goal_list_chars"], 3500);
+    }
+
+    // spec (cost-reduction): TinkerTurnEnd must carry message_chars so the
+    // decomposition substrate can attribute each turn's cache_write between
+    // the new user message and the prior conversation history growth.
+    #[test]
+    fn test_spec_cost_reduction_tinker_turn_end_carries_message_chars() {
+        let event = LogEvent::TinkerTurnEnd {
+            duration_ms: 1234,
+            message_chars: 500,
+            usage: None,
+            backend: "claude".to_string(),
+        };
+        let entry = LogEntry {
+            ts: "2026-05-25T00:00:00Z".to_string(),
+            source: "tinker".to_string(),
+            event,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["message_chars"], 500);
+        assert_eq!(val["duration_ms"], 1234);
+    }
+
+    // spec (cost-reduction): GoalSessionDispatched must carry init_message_chars
+    // so the decomposition substrate can see how large each goal session's initial
+    // context is — the primary driver for that session's first-turn cache_write.
+    #[test]
+    fn test_spec_cost_reduction_goal_session_dispatched_carries_init_message_chars() {
+        let event = LogEvent::GoalSessionDispatched {
+            goal_id: "tui".to_string(),
+            reason: Some("user edited goal".to_string()),
+            init_message_chars: 4200,
+            backend: "claude".to_string(),
+        };
+        let entry = LogEntry {
+            ts: "2026-05-25T00:00:00Z".to_string(),
+            source: "goal_session".to_string(),
+            event: event.clone(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["init_message_chars"], 4200);
+        assert_eq!(val["goal_id"], "tui");
+
+        // Must still flow into the state queue via apply_to_state.
+        let mut state = StateSnapshot::default();
+        let changed = apply_to_state(&entry, &mut state);
+        assert!(changed, "GoalSessionDispatched must mark state dirty");
+        assert_eq!(state.queue.len(), 1);
     }
 }

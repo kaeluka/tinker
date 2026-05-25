@@ -99,7 +99,7 @@ fn build_neighborhood_table(goal: &Goal) -> String {
     table
 }
 
-fn goal_init_message(goal: &Goal, reason: Option<&str>) -> String {
+pub(crate) fn goal_init_message(goal: &Goal, reason: Option<&str>) -> String {
     let table = build_neighborhood_table(goal);
     let neighbors_section = if table.is_empty() {
         String::new()
