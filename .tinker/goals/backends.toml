@@ -1,4 +1,5 @@
 id = "backends"
+summary = "governs: pluggable LLM backend abstraction (runner trait at composition root); opencode default (agent files) vs claude --claude (--system-prompt, --disallowedTools parity); per-backend model-tier defaults overridable via model-config | triggers: backend implementation; persona/tool-denial parity between backends; adding third backend"
 description = """
 ## WHAT
 Tinker runs against a **pluggable backend** — the LLM CLI it shells

@@ -44,6 +44,7 @@ async fn main() -> Result<()> {
 
     let use_default_model = std::env::args().any(|a| a == "--default-model");
     let use_claude = std::env::args().any(|a| a == "--claude");
+    let use_full_goal_context = std::env::args().any(|a| a == "--tinker-full-goal-context");
 
     let work_dir = std::env::current_dir()?;
     let primary_tinker_dir = work_dir.join(".tinker");
@@ -75,7 +76,11 @@ async fn main() -> Result<()> {
         let tinker_m = model_config.claude_high(CLAUDE_TINKER_MODEL);
         let goal_m = model_config.claude_mid(CLAUDE_GOAL_MODEL);
         let cleanup_m = model_config.claude_low(CLAUDE_SCHEDULER_MODEL);
-        let tinker_prompt = tinker_agent_content();
+        let tinker_prompt = if use_full_goal_context {
+            tinker::tinker_agent_content_full_context()
+        } else {
+            tinker_agent_content()
+        };
         (
             Arc::new(ClaudeRunner::with_system_prompt(tinker_m, tinker_prompt)
                 .with_denied_tools(["task", "todowrite"])),
@@ -124,7 +129,12 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|| PathBuf::from("~"));
         let agent_dir = home.join(".config/opencode/agents");
         let _ = fs.mkdir_all(&agent_dir);
-        let _ = fs.write(&agent_dir.join("tinker.md"), &tinker_agent_content());
+        let tinker_md = if use_full_goal_context {
+            tinker::tinker_agent_content_full_context()
+        } else {
+            tinker_agent_content()
+        };
+        let _ = fs.write(&agent_dir.join("tinker.md"), &tinker_md);
         let _ = fs.write(&agent_dir.join("rummage.md"), &rummage::rummage_agent_content());
         let _ = fs.write(&agent_dir.join("jog.md"), &jog::jog_agent_content());
     }
@@ -174,39 +184,12 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             let goals_summary = {
                 let a = app_ref.lock().unwrap();
-                if a.goals.is_empty() {
-                    "(none yet)".to_string()
+                if use_full_goal_context {
+                    if a.goals.is_empty() { String::new() } else { goal::build_full_text_index(&a.goals) }
+                } else if a.goals.is_empty() {
+                    "[]".to_string()
                 } else {
-                    a.goals
-                        .iter()
-                        .map(|g| {
-                            let path_note = match &g.source_path {
-                                Some(p) => format!(" [at {}]", p.display()),
-                                None => String::new(),
-                            };
-                            let parents = if g.parent_id.is_empty() {
-                                String::new()
-                            } else {
-                                format!(" [parent: {}]", g.parent_id)
-                            };
-                            let children = if g.children.is_empty() {
-                                String::new()
-                            } else {
-                                format!(" [children: {}]", g.children.join(", "))
-                            };
-                            let related = if g.related.is_empty() {
-                                String::new()
-                            } else {
-                                let links = g.related.iter()
-                                    .map(|r| format!("{}: \"{}\"", r.id, r.reason))
-                                    .collect::<Vec<_>>()
-                                    .join(", ");
-                                format!(" [related: {}]", links)
-                            };
-                            format!("- `{}` — {}{}{}{}{}", g.id, g.description, parents, children, related, path_note)
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n")
+                    goal::build_compact_index(&a.goals)
                 }
             };
 
@@ -218,7 +201,11 @@ async fn main() -> Result<()> {
                 backend: backend_name_orch.clone(),
             });
 
-            let init = tinker_init_prompt(&goals_summary);
+            let init = if use_full_goal_context {
+                tinker::tinker_init_prompt_full_context(&goals_summary)
+            } else {
+                tinker_init_prompt(&goals_summary)
+            };
             log_orch.emit("tinker", logger::LogEvent::TinkerTurnStart);
             log_orch.emit("tinker", logger::LogEvent::TinkerUserMessageReceived { text: init.clone() });
             let t0 = std::time::Instant::now();
@@ -1758,6 +1745,7 @@ mod tests {
         let mut app = App::new();
         app.goals = vec![goal::Goal {
             id: "tui".into(),
+            summary: String::new(),
             description: "build the tui".into(),
             parent_id: String::new(),
             children: vec![],
@@ -1788,6 +1776,7 @@ mod tests {
         let mut app = App::new();
         app.goals = vec![goal::Goal {
             id: "tui".into(),
+            summary: String::new(),
             description: "build the tui".into(),
             parent_id: String::new(),
             children: vec![],
@@ -1817,6 +1806,7 @@ mod tests {
 
         let second = goal::Goal {
             id: "second".into(),
+            summary: String::new(),
             description: "second goal".into(),
             parent_id: String::new(),
             children: vec![],
@@ -1864,6 +1854,7 @@ mod tests {
     fn test_spec_queue_preserves_same_goal_id_no_dedup_fifo() {
         let alpha = goal::Goal {
             id: "alpha".into(),
+            summary: String::new(),
             description: "alpha goal".into(),
             parent_id: String::new(),
             children: vec![],
@@ -1906,6 +1897,7 @@ mod tests {
 
         let alpha = goal::Goal {
             id: "alpha".into(),
+            summary: String::new(),
             description: "alpha goal".into(),
             parent_id: String::new(),
             children: vec![],
@@ -2047,6 +2039,7 @@ mod tests {
         let mut app = App::new();
         app.goals = vec![goal::Goal {
             id: "tui".into(),
+            summary: String::new(),
             description: "build the tui".into(),
             parent_id: String::new(),
             children: vec![],
@@ -2125,20 +2118,43 @@ mod tests {
             "goal_text_scroll must not move when cursor is in log pane");
     }
 
-    // spec (goal-structure-standard): the goals_summary injected into
-    // tinker's context must surface related-link data so cross-goal
-    // alignment can act on it. Verified via source inspection — the summary
-    // is built in an async task, so we assert on the source text directly.
+    // spec (goal-structure-standard, compact-goal-context): the compact goal
+    // index injected into tinker's context must include related-link data and
+    // be produced by build_compact_index. Verified via source inspection —
+    // the index is built in an async task.
     #[test]
     fn test_spec_goals_summary_includes_related_links() {
         let main_rs = include_str!("main.rs");
         assert!(
-            main_rs.contains("g.related"),
-            "main.rs goals_summary must read g.related",
+            main_rs.contains("build_compact_index"),
+            "main.rs must delegate goal index to build_compact_index",
+        );
+        // build_compact_index serializes related links as JSON "related" arrays
+        // (verified in goal.rs tests); here we confirm main.rs calls it.
+        assert!(
+            main_rs.contains("goal::build_compact_index"),
+            "main.rs must call goal::build_compact_index to produce the index",
+        );
+    }
+
+    // spec (compact-goal-context): the --tinker-full-goal-context flag must
+    // cause main.rs to use build_full_text_index (not build_compact_index) for
+    // the goals summary passed to tinker, and to call tinker_init_prompt_full_context
+    // rather than tinker_init_prompt.
+    #[test]
+    fn test_spec_full_goal_context_flag_routes_to_full_text_index() {
+        let main_rs = include_str!("main.rs");
+        assert!(
+            main_rs.contains("goal::build_full_text_index"),
+            "main.rs must call build_full_text_index on the full-context path",
         );
         assert!(
-            main_rs.contains("[related:"),
-            "main.rs goals_summary must surface related links in the rendered listing",
+            main_rs.contains("tinker_init_prompt_full_context"),
+            "main.rs must call tinker_init_prompt_full_context on the full-context path",
+        );
+        assert!(
+            main_rs.contains("use_full_goal_context"),
+            "main.rs must gate the full-text path on the --tinker-full-goal-context flag",
         );
     }
 

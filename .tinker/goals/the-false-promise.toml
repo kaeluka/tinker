@@ -1,4 +1,5 @@
 id = "the-false-promise"
+summary = "governs: foundational diagnosis; cognitive debt from AI laundering implementation as quasi-spec; necessity of durable intent layer (goals) separate from code | triggers: architecture questions; why goals exist; why tinker separates intent from implementation"
 description = """
 ## WHAT
 The foundational diagnosis that justifies tinker's architecture.

@@ -1,4 +1,5 @@
 id = "goal-sessions"
+summary = "governs: goal session dispatch (one at a time; fresh per trigger; no resumption); neighborhood table injected (parents/children/related as id+reason rows); on-demand full-text pull; explicit trigger reason; structured summary listing test_spec_ functions; non-dedup FIFO queue; block if cleanup fails | triggers: session context model; what sessions receive; summary requirements; queue semantics"
 description = """
 ## WHAT
 When a goal is created or edited — or when tinker triggers it

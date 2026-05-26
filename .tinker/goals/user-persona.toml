@@ -1,83 +1,48 @@
 id = "user-persona"
+summary = "governs: user persona; experienced dev who doesn't read source code; needs design-partner posture (observations+questions, not verdicts); named trade-off axes not conclusions | triggers: communication style decisions; jargon avoidance; framing recommendations as Pareto trade-offs"
 description = """
 ## WHAT
-The user persona driving tinker's architecture: an experienced
-software developer who uses AI tools extensively but no longer reads
-source code. Tinker acts as a compiler; the user interacts with the
-system strictly through goals, observable behavior, and
-architectural concepts.
+The user persona: an experienced software developer who uses AI tools
+extensively but no longer reads source code. They interact with the
+system through goals, observable behavior, and architectural concepts.
+Because they don't read source, communication must stay in terms they
+already command — raw code identifiers, file paths, and internal
+symbols are inaccessible to them. This is the user-side anchor for
+`shared-language`'s vocabulary and form rules.
 
-Four communication consequences follow for tinker:
-
-- **No-margin-of-error explanation.** Tinker must explain the code
-  it builds with (almost) no margin of error. This is not a quality
-  bar — it's structural: because the user never reads source, an
-  undetectable error in tinker's explanation can't be caught from
-  the user's side (see WHY).
-- **Prove by tinkering, never "trust me."** Tinker proves its
-  conceptual explanations correct by running actual code, never by
-  reading source and asserting. Tinkering here is a reflective
-  design practice — interacting with what's built to understand what
-  to build next, surfacing tacit knowledge — not merely a debugging
-  mechanism. It is the user-side instance of the
-  reflective-practitioner pattern from `creative-process`.
-- **Design-partner posture.** When reporting observations, tinker
-  pairs each execution result with a question or a proposed
-  alternative, rather than delivering conclusions as a reporter
-  would.
-- **Multi-variable optimization framing.** The goal system models
-  software design as multi-variable optimization. During interviews,
-  tinker names the trade-offs between goals and, ideally, models the
-  Pareto frontier of the design space.
+Two things follow about what the user needs from any agent: trade-offs
+named rather than conclusions delivered — they bring situated judgment,
+and their judgment needs real axes to land on; and a design-partner
+posture, not a reporter's — an agent that pairs observations with
+questions or proposed alternatives rather than delivering finished
+verdicts.
 
 ## WHY
-This goal carries the *persona-specific* consequences; the broader
-principles live in its two parents.
-
-`user-system-interaction` defines what state is exposed to the user
-and what tinker holds. Because the user does not look at source
-code, any explanation tinker gives about its internals is the user's
-only window into the *is* — so an undetected error in that
-explanation cannot be caught from the user's side. That is why the
-no-margin-of-error requirement is structural rather than a quality
-bar, and why prove-by-tinkering exists: running the code is how
-tinker earns the explanation instead of asserting it.
-
-`creative-process` defines how the user and tinker collaborate. The
-user operates as Schön's reflective practitioner — building,
-observing, reframing — and that reflection runs on the observations
-and explanations tinker provides. Undetectable errors break the
-reflective loop because the user would be reflecting on false
-premises. The design-partner posture and the Pareto-frontier framing
-are what the dialectic looks like for this specific persona: tinker
-contributes the convention-engine view (trade-offs across the goal
-set) so the user's judgment lands on real axes.
-
-This goal does not re-articulate the dialectical process, tinker's
-convention-engine role, or the state-ownership split — those live in
-the parents. It specifies only what each implies for communicating
-with this user.
+These expectations follow directly from the persona. Because the user
+doesn't verify by reading source, they verify by judgment on what they
+are shown. Trade-off framing is what makes that judgment real —
+conclusions without axes can't be evaluated. Design-partner posture is
+what keeps the dialectic honest. `creative-process` establishes the
+reflective-practitioner role; `shared-language` operationalizes the
+no-jargon and form consequences; this goal names what those principles
+mean for who this specific user is.
 
 ## SCOPE
-- In scope: who the user is; the no-error-explanation requirement
-  and why it is structural rather than a quality bar; tinker's
-  prove-by-running stance toward its own claims; tinker's design-
-  partner communication posture toward this user; the multi-
-  variable optimization framing of the goal system as it relates
-  to how this user thinks about design.
-- Out of scope: the state-ownership split itself (handled by
-  `user-system-interaction`); the dialectical interaction pattern,
-  the convention-engine framing of tinker, the
-  inflection-point surfacing duty, the irreplaceability of the
-  human stakeholder, and the role of goals as the bridge between
-  intuition and convention (all handled by `creative-process`);
-  what specifically gets exposed to the user vs. held by tinker
-  (handled by the two-surfaces decision in
-  `user-system-interaction`).
-
+- In scope: who the user is; the no-jargon need and why it follows
+  from not reading source; the design-partner expectation; the
+  trade-off/Pareto framing as a user need.
+- Out of scope: the state-ownership split itself
+  (`user-system-interaction`); the dialectical process,
+  convention-engine framing, inflection-point surfacing duty, and
+  irreplaceability of the human stakeholder (`creative-process`);
+  the two exposure surfaces (`user-system-interaction`);
+  agent-specific communication rules — those live in each agent's
+  own goal and in `shared-language`; the operational vocabulary and
+  form rules themselves (`shared-language`).
 """
 parent_id = "user-system-interaction"
 children = []
 related = [
-  { id = "creative-process", reason = "The user as 'reflective practitioner with knowing-in-action,' and tinker's dual duty of executing conventions while surfacing inflection points, both originate in `creative-process`. This goal applies those framings to the specific persona — what they imply for explanation quality, design-partner posture, and the Pareto-frontier framing." }
+  { id = "creative-process", reason = "The user as 'reflective practitioner with knowing-in-action' originates in `creative-process`. This goal applies that framing to the specific persona — what it implies for the design-partner expectation and the trade-off framing the user needs." },
+  { id = "shared-language", reason = "`shared-language`'s vocabulary and form rules are grounded in this persona: because the user doesn't read source, raw identifiers and formulaic responses are both inaccessible or unusable. This goal is the anchor; `shared-language` is the operational rule that follows." }
 ]

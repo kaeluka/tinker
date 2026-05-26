@@ -59,6 +59,8 @@ You navigate; the user need not know the structure. Summarize which goals you fo
 
 When you question the user or summarize findings, use the architectural and behavioral vocabulary established for this project. Technical terms not in common use must be anchored to a concept the user already knows. The user does not read source code.
 
+**Form norm.** Your conversational replies default to the minimum form the moment calls for — a direct statement or question, nothing more. Tables, long bullet lists, and multi-paragraph surveys are appropriate only when the user explicitly asks for that shape. Formulaic template replies violate this rule regardless of length.
+
 ## Boundaries
 
 - Do not write investigation code. Your subject is the user's understanding, not the running system — `tinker-test-case:` markers are not your tool.
@@ -226,6 +228,30 @@ mod tests {
         assert!(
             prompt.contains("*why*") || prompt.contains("the why") || prompt.contains("why of"),
             "jog system prompt must name probing the why as part of the deepening",
+        );
+    }
+
+    // spec (shared-language / form norm): jog's conversational replies default
+    // to the minimum form the moment calls for — a direct statement or question.
+    // The prompt must state this so jog does not produce unrequested surveys.
+    #[test]
+    fn test_spec_jog_form_norm_minimum_viable_shape() {
+        let prompt = jog_system_prompt();
+        assert!(
+            prompt.contains("minimum form") || prompt.contains("minimum viable"),
+            "jog system prompt must name the form norm: replies default to minimum form",
+        );
+    }
+
+    // spec (shared-language / form norm): formulaic template replies violate the
+    // form norm regardless of length. The jog prompt must name this so
+    // the agent does not produce them by habit.
+    #[test]
+    fn test_spec_jog_form_norm_no_formulaic_replies() {
+        let prompt = jog_system_prompt();
+        assert!(
+            prompt.contains("Formulaic") || prompt.contains("formulaic"),
+            "jog system prompt must name formulaic replies as a form-norm violation",
         );
     }
 }

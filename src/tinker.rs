@@ -41,11 +41,23 @@ pub async fn send_message(
     res.map(|_| reply)
 }
 
-/// Returns the content for the `tinker` opencode agent file.
+/// Returns the content for the `tinker` opencode agent file (compact-index mode).
 /// This is the static system prompt — persona, procedures, tinkering rules.
 /// The dynamic state (current goals) is passed separately over stdin.
 pub fn tinker_agent_content() -> String {
-    r#"---
+    tinker_agent_content_impl(false)
+}
+
+/// Same as `tinker_agent_content` but suppresses the compact-index section.
+/// When --tinker-full-goal-context is set, full goal text is injected instead
+/// of the compact index, making the pull-when-in-doubt instructions irrelevant.
+/// The summary write protocol is kept regardless.
+pub fn tinker_agent_content_full_context() -> String {
+    tinker_agent_content_impl(true)
+}
+
+fn tinker_agent_content_impl(full_context: bool) -> String {
+    let content = r#"---
 description: >-
   Tinker — manages goals, interviews the user, tinkers
   with scratch code to answer questions from execution, and watches for
@@ -93,6 +105,20 @@ Inflection points are not interruptions — they are the correction mechanism th
 
 Goals are ongoing — they have no definition of done and are never auto-retired. They describe standing intent that goal sessions act on when relevant. The user removes a goal explicitly when they no longer want it, OR you propose retirement when a reframe makes the goal obsolete (see "Reframing").
 
+## Goal index
+
+The "Current goals" block you receive each turn is a **compact JSON index** — not the full goal text. Each entry contains:
+
+- `id` — the goal identifier; use it to pull the file with `Read`
+- `summary` — terse LLM-legible description: `governs: [domain]` | `triggers: [situations]`
+- `path` — absolute path to the full TOML file
+- `children` — nested child goals (same structure, recursively)
+- `related` — cross-cutting links with reasons (use reasons to decide whether to pull)
+
+**Pull strategy.** Pull the full text of any goal whose summary doesn't clearly resolve your question. Summaries exist only to let you confidently skip goals that are *clearly* irrelevant — for everything else, pull. A pulled goal stays in context for the session (goals are static; only you write them).
+
+**Write protocol for `summary`.** When you create a goal or make a substantive edit that changes its scope or domain, write or update its `summary` field in the same write turn. Format: `governs: [domain/concepts covered]; triggers: [situations that warrant pulling the full text]`. Grammar-stripped, keyword-dense — the audience is an LLM navigating by relevance, not a human reader. Do not use prose filler.
+
 ## Goal CRUD
 
 - Create new goals at `.tinker/goals/<id>.toml` (resolves to the current directory's `.tinker`; short kebab-case IDs)
@@ -135,6 +161,7 @@ Every goal file has exactly these top-level keys, in this order:
 
 ```toml
 id = "..."
+summary = "governs: ...; triggers: ..."   # update when scope/domain changes substantially
 description = """
 multi-line description text
 """
@@ -197,6 +224,7 @@ Do not emit `/run` speculatively. If nothing should react, emit no `/run` lines.
 Before:
 ```toml
 id = "calc"
+summary = "governs: arithmetic calculator; triggers: adding operations, operator behavior"
 description = """
 A calculator that supports +, -, *, /.
 """
@@ -209,6 +237,7 @@ User: "also add modulo support."
 After (complete file you Write):
 ```toml
 id = "calc"
+summary = "governs: arithmetic calculator; triggers: adding operations, operator behavior, modulo"
 description = """
 A calculator that supports +, -, *, /, modulo.
 """
@@ -223,6 +252,7 @@ Then in your reply, include:
 Goal file format (minimal shape, full description structure documented in Phase 4):
 ```toml
 id = "short-kebab-id"
+summary = "governs: [domain]; triggers: [situations]"
 description = "What this goal accomplishes"
 parent_id = ""
 children = []
@@ -313,6 +343,8 @@ Wait for the user to react to this playback. Write the file only after every fla
 This wait is not a quality check — it is epistemically required. The interview generates intent through dialogue; intent does not arrive fully formed. Each question changes what the user thinks they want, and the playback tests whether the result is something the user actually recognizes as theirs. Only the user holds the original intent, so only the user can validate the match. You cannot substitute confidence, paraphrase, or an absence of pushback for that reaction.
 
 ### Phase 4 — Write the TOML
+
+Write or update the `summary` field in the same write turn. Format: `governs: [domain]; triggers: [situations that warrant pulling this goal's full text]`. Grammar-stripped, keyword-dense — written for LLM navigation, not human reading.
 
 The `description` field has three sections — WHAT, WHY, SCOPE — written as synthesized prose, not as a list of decisions.
 
@@ -428,12 +460,6 @@ When you reframe the conversation itself — introduce a new distinction, shift 
 
 **Downstream applications.** The "Shared language and vocabulary" section below is the specific filtering mechanism for the second surface — it defines the vocabulary file and how the filtering works in practice. The user-persona (an experienced software developer who does not read source code) is the specific account of who the user is and how tinker positions itself cognitively. Both are downstream applications of this broader principle.
 
-**User-persona communication rules.** Because the user does not read source code, tinker's explanations are their only window into the *is*. Three rules follow from this and apply to all user-facing communication — not only tinkering reports or cross-goal alignment:
-
-1. *Verify before explaining.* Before stating a non-trivial behavioral claim, verify it by observation first. The prove-by-execution principle is a general communication rule for this user, not a tinkering-only rule.
-2. *Surface trade-offs, not conclusions.* When viable options exist, name the axes and let the user choose rather than delivering a single conclusion. This applies to all design discussions and observations, not only cross-goal structural decisions.
-3. *Design-partner posture.* Every significant observation should be paired with a question or a proposed alternative, not delivered as a concluded result.
-
 ## Shared language and vocabulary
 
 The user does not read source code. Default to conceptual, architectural explanations — business logic, external systems, active goals — not file paths, function names, or internal variables. Only use a technical term if you are certain the user knows it.
@@ -447,6 +473,8 @@ You fully own the vocabulary file at `.tinker/state/vocabulary.txt`. This file t
 When you must reference a technical term not in the vocabulary file, you need a strong reason. In that case, anchor the term to a known architectural or feature concept alongside it. Example: instead of "the `Foo` struct in `bar.rs`", say "the `Foo` type, which represents the connection state".
 
 Documentation goal sessions produce may go more technical in deeper sections — reference material, edge-case explanations — but every technical term must be anchored to a known concept on first use. The vocabulary file at `.tinker/state/vocabulary.txt` is the single source of truth for all in-scope surfaces; there is no separate doc vocabulary.
+
+**Form norm.** Your conversational replies default to the minimum form the moment calls for — a direct statement or question, nothing more. Tables, long bullet lists, and multi-paragraph surveys are appropriate only when the user explicitly asks for that shape. Formulaic template replies violate this rule regardless of length. Rummage's investigation documents are exempt — those grow as understanding does, by design.
 
 Respond concisely. Goal CRUD writes only inside `.tinker/`. Tinkering may write or modify code anywhere in the project, provided every change carries a `tinker-test-case:` marker. The line between tinkering and building is whether you produce a persistent artifact — goal sessions produce those; you produce goals.
 
@@ -472,14 +500,36 @@ Format each entry as:
 Do not talk about taking a note. Do not interrupt the user's chain of thought. Write the note and keep the conversation moving — same pattern as silently updating `.tinker/state/vocabulary.txt`.
 
 {vcs_rules}
-    "#.replace("{vcs_rules}", crate::goal_session::VCS_RULES)
+    "#.replace("{vcs_rules}", crate::goal_session::VCS_RULES);
+    if full_context { suppress_compact_index_section(&content) } else { content }
 }
 
-/// Build the dynamic stdin prompt for tinker — just the current goals list.
+fn suppress_compact_index_section(content: &str) -> String {
+    // Remove "## Goal index" through the Pull strategy paragraph.
+    // "Write protocol for `summary`" stays — it's active regardless of context mode.
+    let section_start = "## Goal index\n";
+    let keep_from = "**Write protocol for `summary`.**";
+    match (content.find(section_start), content.find(keep_from)) {
+        (Some(s), Some(e)) if e > s => format!("{}{}", &content[..s], &content[e..]),
+        _ => content.to_string(),
+    }
+}
+
+/// Build the dynamic stdin prompt for tinker — the compact goal index.
 /// The static system prompt lives in the agent file (`tinker.md`).
 pub fn tinker_init_prompt(goals_summary: &str) -> String {
     format!(
-        r#"## Current goals
+        r#"## Current goals (compact index — pull full text on demand)
+{goals_summary}"#
+    )
+}
+
+/// Build the dynamic stdin prompt for tinker in full-context mode.
+/// Used with --tinker-full-goal-context: full goal text is already included,
+/// so the label reflects that rather than referencing the compact index.
+pub fn tinker_init_prompt_full_context(goals_summary: &str) -> String {
+    format!(
+        r#"## Current goals (full text)
 {goals_summary}"#
     )
 }
@@ -771,21 +821,21 @@ mod tests {
         );
     }
 
-    // spec (user-persona): Tinker proves conceptual claims by running actual
-    // code, never by reading source and asserting "trust me bro". The prompt
-    // must contain an explicit prohibition on inference-from-source dressed up
-    // as observation.
+    // spec (tinker/tinkering): tinker answers questions about behavior from
+    // execution, not from reading source. The user cannot verify claims by
+    // reading code — they've handed that off to tinker. The prompt must state
+    // both the positive rule and the explicit failure mode it prevents.
     #[test]
-    fn test_spec_tinker_prompt_prohibits_trust_me_bro_from_reading_source() {
+    fn test_spec_tinker_proves_by_execution_not_reading_source() {
         let content = tinker_agent_content();
         assert!(
             content.contains("answer from execution, not from reading source")
                 || content.contains("Prove conceptual claims by running them"),
-            "prompt must direct tinker to prove claims by running code, not reading it",
+            "prompt must direct tinker to answer from execution, not from reading source",
         );
         assert!(
             content.contains("Reading source and claiming it works a certain way is not enough"),
-            "prompt must explicitly reject the read-source-and-claim failure mode",
+            "prompt must explicitly name the read-source-and-claim failure mode",
         );
     }
 
@@ -898,6 +948,58 @@ mod tests {
         assert!(
             content.contains("single source of truth") || content.contains("no separate doc vocabulary"),
             "prompt must state the vocabulary file is the single source of truth (no separate doc vocabulary)",
+        );
+    }
+
+    // spec (shared-language): the form norm — replies default to the minimum
+    // form the moment calls for. The prompt must name this constraint so tinker
+    // does not default to tables and bullet surveys when a sentence would serve.
+    #[test]
+    fn test_spec_shared_language_form_norm_minimum_viable_shape() {
+        let content = tinker_agent_content();
+        assert!(
+            content.contains("minimum form") || content.contains("minimum viable"),
+            "prompt must name the form norm: replies default to the minimum form",
+        );
+    }
+
+    // spec (shared-language): tables, long bullet lists, and multi-paragraph
+    // surveys are gated on an explicit user request. The prompt must state the
+    // gate so tinker does not produce them by default.
+    #[test]
+    fn test_spec_shared_language_form_norm_no_unrequested_tables_or_lists() {
+        let content = tinker_agent_content();
+        assert!(
+            content.contains("user asks") || content.contains("user explicitly asks") || content.contains("explicitly asks"),
+            "prompt must state tables/lists are appropriate only when the user explicitly asks",
+        );
+        assert!(
+            content.contains("Tables") || content.contains("bullet lists"),
+            "prompt must name tables or bullet lists as the forms gated on user request",
+        );
+    }
+
+    // spec (shared-language): formulaic template replies violate the form norm
+    // regardless of length. The prompt must name this explicitly.
+    #[test]
+    fn test_spec_shared_language_form_norm_no_formulaic_replies() {
+        let content = tinker_agent_content();
+        assert!(
+            content.contains("Formulaic") || content.contains("formulaic"),
+            "prompt must name formulaic template replies as a form-norm violation",
+        );
+    }
+
+    // spec (shared-language): rummage's investigation documents are exempt from
+    // the form norm — they grow as understanding does. The tinker prompt must
+    // name this exemption so it is not misapplied when composing batch messages.
+    #[test]
+    fn test_spec_shared_language_form_norm_rummage_documents_exempt() {
+        let content = tinker_agent_content();
+        assert!(
+            (content.contains("Rummage") || content.contains("rummage"))
+                && content.contains("exempt"),
+            "prompt must state rummage investigation documents are exempt from the form norm",
         );
     }
 
@@ -1400,75 +1502,107 @@ mod tests {
         );
     }
 
-    // spec (tinker): "… `src/main.rs` must include `parent_id` and
-    // `children` in the text it feeds into `goals_summary` so the
-    // tinker can actually see the structure." The goals_summary block
-    // is inlined in an async task in main.rs, so we assert against the source
-    // directly rather than refactoring production code to expose it.
+    // spec (compact-goal-context): main.rs must delegate goal index building to
+    // build_compact_index, which produces a nested JSON structure representing
+    // the parent/child hierarchy (children nested) and related links.
     #[test]
     fn test_spec_main_feeds_parent_id_and_children_into_goals_summary() {
         let main_rs = include_str!("main.rs");
         assert!(
-            main_rs.contains("g.parent_id"),
-            "main.rs goals_summary must read g.parent_id",
+            main_rs.contains("build_compact_index"),
+            "main.rs must call build_compact_index to build the goal index",
         );
+        // build_compact_index uses build_tree (which uses parent_id) and
+        // serializes children nested and related as arrays — verified in goal.rs.
         assert!(
-            main_rs.contains("g.children"),
-            "main.rs goals_summary must read g.children",
-        );
-        assert!(
-            main_rs.contains("[parent:"),
-            "main.rs goals_summary must surface parent_id in the rendered listing",
-        );
-        assert!(
-            main_rs.contains("[children:"),
-            "main.rs goals_summary must surface children in the rendered listing",
+            main_rs.contains("goal::build_compact_index"),
+            "main.rs must call goal::build_compact_index with the goals list",
         );
     }
 
-    // spec (user-persona): "verify by observation before explaining" is a
-    // general communication rule for this user — not scoped only to tinkering
-    // probe reports. The prompt must state this explicitly so tinker
-    // applies it to all behavioral claims, not just probe results.
+    // spec (compact-goal-context): the system prompt must describe the compact
+    // index, the pull-when-in-doubt strategy, and the summary write protocol.
     #[test]
-    fn test_spec_user_persona_verify_before_explaining_is_general_rule() {
+    fn test_spec_tinker_prompt_describes_compact_goal_index() {
         let content = tinker_agent_content();
         assert!(
-            content.contains("general communication rule for this user, not a tinkering-only rule"),
-            "prompt must state verify-before-explaining as a general rule, not only in the tinkering section",
+            content.contains("compact JSON index"),
+            "prompt must describe the compact goal index format",
+        );
+        assert!(
+            content.contains("Pull strategy"),
+            "prompt must describe the pull-when-in-doubt strategy",
+        );
+        assert!(
+            content.contains("governs:"),
+            "prompt must show the summary format (governs: ...)",
+        );
+        assert!(
+            content.contains("triggers:"),
+            "prompt must show the summary format (... triggers: ...)",
         );
     }
 
-    // spec (user-persona): "surface trade-offs, not conclusions" applies to all
-    // design discussions — not only cross-goal structural alignment. The prompt
-    // must state this as a general principle and name the wider scope.
+    // spec (compact-goal-context): the prompt's TOML schema examples must
+    // include the `summary` field so tinker writes it on every goal edit.
     #[test]
-    fn test_spec_user_persona_surface_tradeoffs_not_only_cross_goal() {
+    fn test_spec_tinker_prompt_toml_examples_include_summary_field() {
         let content = tinker_agent_content();
         assert!(
-            content.contains("Surface trade-offs, not conclusions"),
-            "prompt must state the surface-trade-offs-not-conclusions principle by name",
-        );
-        assert!(
-            content.contains("not only cross-goal structural decisions"),
-            "prompt must state this rule applies beyond cross-goal alignment",
+            content.contains("summary = "),
+            "TOML examples in the prompt must show the summary field",
         );
     }
 
-    // spec (user-persona): the design-partner posture is a general
-    // communication rule applying to all significant observations, not only to
-    // tinkering probe reports. The prompt must enumerate it in the general
-    // user-persona context alongside the other two persona rules.
+    // spec (compact-goal-context): Phase 4 must instruct tinker to write or
+    // update the `summary` field as part of the write turn.
     #[test]
-    fn test_spec_user_persona_design_partner_posture_is_general_rule() {
+    fn test_spec_tinker_phase4_instructs_summary_write() {
         let content = tinker_agent_content();
         assert!(
-            content.contains("not only tinkering reports or cross-goal alignment"),
-            "prompt must introduce the three persona rules as general, not context-specific",
+            content.contains("Write or update the `summary` field"),
+            "Phase 4 must instruct writing the summary field",
+        );
+    }
+
+    // spec (compact-goal-context): --tinker-full-goal-context suppresses the
+    // compact-index format description and pull strategy in the system prompt.
+    #[test]
+    fn test_spec_full_goal_context_suppresses_compact_index_section() {
+        let content = tinker_agent_content_full_context();
+        assert!(
+            !content.contains("compact JSON index"),
+            "full-goal-context prompt must not describe the compact JSON index format",
         );
         assert!(
-            content.contains("not delivered as a concluded result"),
-            "prompt must state design-partner posture applies to all significant observations",
+            !content.contains("Pull strategy"),
+            "full-goal-context prompt must not describe the pull-when-in-doubt strategy",
+        );
+    }
+
+    // spec (compact-goal-context): --tinker-full-goal-context keeps the summary
+    // write protocol active — summaries are maintained regardless of context mode.
+    #[test]
+    fn test_spec_full_goal_context_keeps_summary_write_protocol() {
+        let content = tinker_agent_content_full_context();
+        assert!(
+            content.contains("Write protocol for `summary`"),
+            "full-goal-context prompt must still include the summary write protocol",
+        );
+    }
+
+    // spec (compact-goal-context): full-context init prompt labels the block
+    // as full text, not as a compact index.
+    #[test]
+    fn test_spec_tinker_init_prompt_full_context_label() {
+        let prompt = tinker_init_prompt_full_context("### root\ndescription here");
+        assert!(
+            prompt.contains("full text"),
+            "full-context init prompt must label goals as full text",
+        );
+        assert!(
+            !prompt.contains("compact"),
+            "full-context init prompt must not reference the compact index",
         );
     }
 

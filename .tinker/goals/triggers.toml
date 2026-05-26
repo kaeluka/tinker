@@ -1,4 +1,5 @@
 id = "triggers"
+summary = "governs: /run <goal-id> <reason> dispatch protocol; two non-user emitters (tinker, rummage); declarative-pointer reason rule (user-typed exempt); jog→tinker spec-edit channel (/jog-edit, prescriptive, user-sourced, terminal for thread) | triggers: /run parsing; dispatch mechanics; reason format enforcement; jog-edit channel behavior"
 description = """
 ## WHAT
 `/run <goal-id> <reason>` is the dispatch protocol for goal

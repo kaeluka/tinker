@@ -1,4 +1,5 @@
 id = "goal-craft"
+summary = "governs: goal content quality; five tactics: anchor test (sparseness), positive framing, orthogonality, goals-are-prompts (5 rules), synthesis-over-enumeration; WHAT/WHY/SCOPE schema; no DECISIONS/HOW sections | triggers: writing/editing any goal; candidate violation during interview/alignment; enumeration vs prose; negative framing detection"
 description = """
 ## WHAT
 Operational rules for writing the content of a goal so it works as
@@ -124,3 +125,7 @@ reason = "`goal-sessions`' 'Pushback is exceptional' decision names goal sparsen
 [[related]]
 id = "tinker"
 reason = "Tinker applies these rules during interview and edit-time cross-goal alignment. Without enforcement at that surface, the rules do not fire."
+
+[[related]]
+id = "compact-goal-context"
+reason = "compact-goal-context defines summary field content rules (terse, LLM-consume, governs+triggers); goal-craft tactics apply to WHAT/WHY/SCOPE, summary has distinct rules there"

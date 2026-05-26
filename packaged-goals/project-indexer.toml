@@ -1,4 +1,5 @@
 id = "project-indexer"
+summary = "governs: reactive maintenance of AGENTS.md at project root; LLM-facing goals-oriented index (each goal → source files); fires when source files change | triggers: source file changes affecting goal-to-code map; goal set changes"
 description = """
 ## WHAT
 A goal that maintains a single file at the project root — `AGENTS.md`

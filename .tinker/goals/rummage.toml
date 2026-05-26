@@ -1,4 +1,5 @@
 id = "rummage"
+summary = "governs: rummage sibling agent for program behavior comprehension; three modes (debugging/recon/exploration); mode-shaped anchor + hypothesis loop + falsification-per-hypothesis; backward causal reasoning, LSP call-graph, bisection, fuzz; tinker-test-case: scratch code; case-2 durable failing test + /run; case-1 surface only | triggers: rummage behavior; investigation technique selection; case-2 dispatch; LSP+webfetch grants"
 description = """
 ## WHAT
 A sibling chat agent to tinker, dedicated to **understanding program

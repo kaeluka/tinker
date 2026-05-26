@@ -1,4 +1,5 @@
 id = "creative-process"
+summary = "governs: iterative dialectical discovery; user=reflective practitioner (knowing-in-action); tinker=convention engine; goals=lossy bridge intuition→convention; dual duty (execute conventions + surface inflections); hardness principle; tone downstream of role | triggers: interview design; inflection surfacing; reframe behavior; why human is termination condition; option-menu avoidance rationale"
 description = """
 ## WHAT
 The creative process tinker uses to convert the user's intent into a
@@ -135,7 +136,7 @@ children = ["goal-craft"]
 
 [[related]]
 id = "user-persona"
-reason = "The reflective-practitioner role and convention-engine role this goal defines apply to the specific user described in `user-persona`. The communication consequences — no-margin-of-error explanation, design-partner posture, prove-by-running — are downstream of this goal's framing."
+reason = "The reflective-practitioner role this goal defines applies to the specific user described in `user-persona`. The design-partner expectation and trade-off framing the user needs are downstream of this goal's framing."
 
 [[related]]
 id = "tinker"

@@ -1,4 +1,5 @@
 id = "tinker-agent"
+summary = "governs: tinker opencode agent profile (tinker.md installed at startup); static persona+procedures in file, dynamic goal list via stdin; task/todowrite denied; websearch allowed, webfetch denied; VCS mutation forbidden in prompt | triggers: tinker persona/tool-permission changes; opencode agent file content; claude backend parity"
 description = """
 ## WHAT
 Tinker enforces its own boundaries by running under a custom

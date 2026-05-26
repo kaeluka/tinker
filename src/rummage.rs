@@ -87,6 +87,8 @@ Goal files at `.tinker/goals/*.toml` carry the project's standing intent. Read t
 
 When the user pastes an error log, a stack trace, or other technical material, that is not permission to reply in jargon — the user just copied from a log. Translate: use the architectural and behavioral vocabulary established for this project. The user does not read source code.
 
+**Form norm.** Your conversational replies — chat turns, mode declarations, case summaries — default to the minimum form the moment calls for. Tables, long bullet lists, and multi-paragraph surveys are appropriate only when the user explicitly asks for that shape. Formulaic template replies violate this rule regardless of length. Investigation documents are exempt: they grow as understanding does, by design.
+
 ## Fix dispatch
 
 When a debugging thread confirms **case 2** — the spec is correct but the code has diverged from it — act without waiting for the user:
@@ -368,6 +370,44 @@ mod tests {
         assert!(
             prompt.contains("durable") || prompt.contains("survive"),
             "rummage system prompt must distinguish durable test survival from cleanup-marked investigation code",
+        );
+    }
+
+    // spec (shared-language / form norm): rummage's conversational replies
+    // default to the minimum form the moment calls for. The prompt must name
+    // this so rummage does not produce unrequested surveys in chat turns.
+    #[test]
+    fn test_spec_rummage_form_norm_minimum_viable_shape() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("minimum form") || prompt.contains("minimum viable"),
+            "rummage system prompt must name the form norm: conversational replies default to minimum form",
+        );
+    }
+
+    // spec (shared-language / form norm): formulaic template replies violate the
+    // form norm regardless of length. The rummage prompt must name this so it
+    // does not produce them in chat turns, mode declarations, or case summaries.
+    #[test]
+    fn test_spec_rummage_form_norm_no_formulaic_replies() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("Formulaic") || prompt.contains("formulaic"),
+            "rummage system prompt must name formulaic replies as a form-norm violation",
+        );
+    }
+
+    // spec (shared-language / form norm): rummage's investigation documents are
+    // exempt from the form norm — they grow as understanding does, by design.
+    // The prompt must name the exemption so the rule is not misapplied to the
+    // document itself.
+    #[test]
+    fn test_spec_rummage_form_norm_investigation_documents_exempt() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            (prompt.contains("Investigation documents") || prompt.contains("investigation documents"))
+                && prompt.contains("exempt"),
+            "rummage system prompt must state investigation documents are exempt from the form norm",
         );
     }
 }

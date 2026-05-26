@@ -1,4 +1,5 @@
 id = "tui"
+summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); queue markers (▶ running, [N] queued); auto-follow scroll; active-agent tag (tinker>/rummage>/jog>); modal trigger-reason dialog; dim tool-call rendering | triggers: TUI layout/rendering changes; queue display; scroll behavior; agent-switch UX"
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left

@@ -1,4 +1,5 @@
 id = "implementation-ownership"
+summary = "governs: goal sessions mandated to own source implementation; override LLM structural-taboo default; explicit permission to demolish/rewire architecture without hesitation | triggers: goal session prompt construction; session hesitating to restructure or delete code"
 description = """
 ## WHAT
 A formal mandate applied to goal sessions: they own the source-code
