@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 /// tinker prompt (so it follows the schema) and by the
 /// parse-error correction message (so tinker is told the
 /// schema when fixing). Single source of truth.
-pub const GOAL_SCHEMA_KEYS_ORDER: &str = "id, description, parent_id, children, related (optional)";
+pub const GOAL_SCHEMA_KEYS_ORDER: &str = "id, summary (optional), description, parent_id, children, related (optional)";
 
 /// A cross-cutting relationship between two goals. Both ends of the link
 /// must list each other (symmetric), but the reason text may differ because
@@ -22,6 +22,10 @@ pub struct RelatedLink {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Goal {
     pub id: String,
+    /// Terse LLM-legible index entry. Written for navigation, not human reading.
+    /// Format: "governs: [domain]; triggers: [situations]". Empty when absent.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub summary: String,
     pub description: String,
     #[serde(default)]
     pub parent_id: String,
@@ -155,6 +159,78 @@ fn build_node(goal: &Goal, all: &[Goal], depth: usize) -> GoalNode {
     }
 }
 
+/// Builds a full-text listing of all goals for use with --tinker-full-goal-context.
+/// Goals are rendered in tree order with their complete description text.
+pub fn build_full_text_index(goals: &[Goal]) -> String {
+    let tree = build_tree(goals);
+    let mut result = String::new();
+    walk_full_text(&tree, &mut result, 0);
+    result
+}
+
+fn walk_full_text(nodes: &[GoalNode], out: &mut String, depth: usize) {
+    for node in nodes {
+        let heading = "#".repeat(depth + 3);
+        out.push_str(&format!("{} {}\n", heading, node.goal.id));
+        if let Some(path) = &node.goal.source_path {
+            out.push_str(&format!("Path: {}\n", path.display()));
+        }
+        if !node.goal.related.is_empty() {
+            let rel = node.goal.related.iter()
+                .map(|r| format!("{} ({})", r.id, r.reason))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!("Related: {}\n", rel));
+        }
+        out.push('\n');
+        out.push_str(node.goal.description.trim());
+        out.push_str("\n\n");
+        walk_full_text(&node.children, out, depth + 1);
+    }
+}
+
+/// Builds the compact JSON index injected into tinker's context each turn.
+/// One entry per root goal, children nested recursively. Only the `summary`
+/// field is used as per-goal content; full text is available on demand via
+/// the `path` field.
+pub fn build_compact_index(goals: &[Goal]) -> String {
+    #[derive(Serialize)]
+    struct Entry {
+        id: String,
+        summary: String,
+        path: String,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        children: Vec<Entry>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        related: Vec<Related>,
+    }
+    #[derive(Serialize)]
+    struct Related {
+        id: String,
+        reason: String,
+    }
+
+    fn node_to_entry(node: &GoalNode) -> Entry {
+        Entry {
+            id: node.goal.id.clone(),
+            summary: node.goal.summary.clone(),
+            path: node.goal.source_path
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| format!(".tinker/goals/{}.toml", node.goal.id)),
+            children: node.children.iter().map(node_to_entry).collect(),
+            related: node.goal.related.iter().map(|r| Related {
+                id: r.id.clone(),
+                reason: r.reason.clone(),
+            }).collect(),
+        }
+    }
+
+    let tree = build_tree(goals);
+    let entries: Vec<Entry> = tree.iter().map(node_to_entry).collect();
+    serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,6 +240,13 @@ mod tests {
         format!(
             "id = \"{}\"\ndescription = \"\"\"\n{}\n\"\"\"\nparent_id = \"\"\nchildren = []\n",
             id, description
+        )
+    }
+
+    fn goal_toml_with_summary(id: &str, summary: &str, description: &str) -> String {
+        format!(
+            "id = \"{}\"\nsummary = \"{}\"\ndescription = \"\"\"\n{}\n\"\"\"\nparent_id = \"\"\nchildren = []\n",
+            id, summary, description
         )
     }
 
@@ -177,6 +260,7 @@ mod tests {
 
         let goal = Goal {
             id: "x".into(),
+            summary: "".into(),
             description: "do x".into(),
             parent_id: "".into(),
             children: vec![],
@@ -319,8 +403,8 @@ mod tests {
     #[test]
     fn test_spec_build_tree_flat_goals_all_depth_zero() {
         let goals = vec![
-            Goal { id: "a".into(), description: "".into(), parent_id: "".into(), children: vec![], related: vec![], source_path: None },
-            Goal { id: "b".into(), description: "".into(), parent_id: "".into(), children: vec![], related: vec![], source_path: None },
+            Goal { id: "a".into(), summary: "".into(), description: "".into(), parent_id: "".into(), children: vec![], related: vec![], source_path: None },
+            Goal { id: "b".into(), summary: "".into(), description: "".into(), parent_id: "".into(), children: vec![], related: vec![], source_path: None },
         ];
         let tree = build_tree(&goals);
         assert_eq!(tree.len(), 2);
@@ -331,8 +415,8 @@ mod tests {
     #[test]
     fn test_spec_build_tree_parent_one_child() {
         let goals = vec![
-            Goal { id: "parent".into(), description: "".into(), parent_id: "".into(), children: vec![], related: vec![], source_path: None },
-            Goal { id: "child".into(), description: "".into(), parent_id: "parent".into(), children: vec![], related: vec![], source_path: None },
+            Goal { id: "parent".into(), summary: "".into(), description: "".into(), parent_id: "".into(), children: vec![], related: vec![], source_path: None },
+            Goal { id: "child".into(), summary: "".into(), description: "".into(), parent_id: "parent".into(), children: vec![], related: vec![], source_path: None },
         ];
         let tree = build_tree(&goals);
         assert_eq!(tree.len(), 1);
@@ -346,9 +430,9 @@ mod tests {
     #[test]
     fn test_spec_build_tree_deep_hierarchy() {
         let goals = vec![
-            Goal { id: "g".into(), description: "".into(), parent_id: "".into(), children: vec![], related: vec![], source_path: None },
-            Goal { id: "p".into(), description: "".into(), parent_id: "g".into(), children: vec![], related: vec![], source_path: None },
-            Goal { id: "c".into(), description: "".into(), parent_id: "p".into(), children: vec![], related: vec![], source_path: None },
+            Goal { id: "g".into(), summary: "".into(), description: "".into(), parent_id: "".into(), children: vec![], related: vec![], source_path: None },
+            Goal { id: "p".into(), summary: "".into(), description: "".into(), parent_id: "g".into(), children: vec![], related: vec![], source_path: None },
+            Goal { id: "c".into(), summary: "".into(), description: "".into(), parent_id: "p".into(), children: vec![], related: vec![], source_path: None },
         ];
         let tree = build_tree(&goals);
         assert_eq!(tree.len(), 1);
@@ -397,6 +481,7 @@ mod tests {
         // 1. Serialized form does not contain `change_log`.
         let g = Goal {
             id: "x".into(),
+            summary: "".into(),
             description: "d".into(),
             parent_id: "".into(),
             children: vec![],
@@ -425,8 +510,8 @@ mod tests {
     #[test]
     fn test_spec_build_tree_uses_parent_id_not_children_field() {
         let goals = vec![
-            Goal { id: "p".into(), description: "".into(), parent_id: "".into(), children: vec!["wrong".into()], related: vec![], source_path: None },
-            Goal { id: "c".into(), description: "".into(), parent_id: "p".into(), children: vec![], related: vec![], source_path: None },
+            Goal { id: "p".into(), summary: "".into(), description: "".into(), parent_id: "".into(), children: vec!["wrong".into()], related: vec![], source_path: None },
+            Goal { id: "c".into(), summary: "".into(), description: "".into(), parent_id: "p".into(), children: vec![], related: vec![], source_path: None },
         ];
         let tree = build_tree(&goals);
         assert_eq!(tree.len(), 1);
@@ -498,5 +583,111 @@ reason = "depends on c"
         );
         assert!(summary.contains("b: \"cross-cuts b\""), "related link b must appear in summary");
         assert!(summary.contains("c: \"depends on c\""), "related link c must appear in summary");
+    }
+
+    // spec: compact-goal-context — a goal TOML without a `summary` field must
+    // load with an empty summary string (not an error).
+    #[test]
+    fn test_spec_summary_field_absent_loads_as_empty() {
+        let fs = MockFs::new();
+        let tinker = PathBuf::from("/proj/.tinker");
+        fs.add_file(&tinker.join("goals/g.toml"), &goal_toml("g", "desc"));
+
+        let result = load_all_goals(&fs, &[tinker]).unwrap();
+        assert_eq!(result.errors.len(), 0);
+        let g = result.goals.iter().find(|g| g.id == "g").unwrap();
+        assert!(g.summary.is_empty(), "missing summary must load as empty string");
+    }
+
+    // spec: compact-goal-context — a goal TOML with a `summary` field round-trips
+    // through load; the field is omitted from serialization when empty.
+    #[test]
+    fn test_spec_summary_field_roundtrip() {
+        let fs = MockFs::new();
+        let tinker = PathBuf::from("/proj/.tinker");
+        fs.add_file(
+            &tinker.join("goals/g.toml"),
+            &goal_toml_with_summary("g", "governs: foo; triggers: bar", "desc"),
+        );
+
+        let result = load_all_goals(&fs, &[tinker]).unwrap();
+        assert_eq!(result.errors.len(), 0);
+        let g = result.goals.iter().find(|g| g.id == "g").unwrap();
+        assert_eq!(g.summary, "governs: foo; triggers: bar");
+    }
+
+    // spec: compact-goal-context — build_full_text_index renders goals with their
+    // full description text in tree order; descriptions appear, summaries do not.
+    #[test]
+    fn test_spec_full_text_index_includes_description() {
+        let goals = vec![
+            Goal {
+                id: "root".into(),
+                summary: "governs: root domain".into(),
+                description: "full description of root goal".into(),
+                parent_id: "".into(),
+                children: vec![],
+                related: vec![],
+                source_path: Some(PathBuf::from("/proj/.tinker/goals/root.toml")),
+            },
+            Goal {
+                id: "child".into(),
+                summary: "governs: child domain".into(),
+                description: "full description of child goal".into(),
+                parent_id: "root".into(),
+                children: vec![],
+                related: vec![],
+                source_path: Some(PathBuf::from("/proj/.tinker/goals/child.toml")),
+            },
+        ];
+        let index = build_full_text_index(&goals);
+        // Full descriptions appear
+        assert!(index.contains("full description of root goal"), "root description must appear");
+        assert!(index.contains("full description of child goal"), "child description must appear");
+        // Goal ids appear as headings
+        assert!(index.contains("### root"), "root must appear as heading");
+        // Child has deeper heading level
+        assert!(index.contains("#### child"), "child must appear at depth+1 heading");
+        // Path appears
+        assert!(index.contains("root.toml"), "goal path must appear");
+    }
+
+    // spec: compact-goal-context — build_compact_index produces a JSON array
+    // with nested children and related links; only summary (not description)
+    // is included per entry.
+    #[test]
+    fn test_spec_compact_index_uses_summary_not_description() {
+        let goals = vec![
+            Goal {
+                id: "root".into(),
+                summary: "governs: root domain".into(),
+                description: "full description text that must not appear".into(),
+                parent_id: "".into(),
+                children: vec![],
+                related: vec![RelatedLink { id: "other".into(), reason: "cross-cuts".into() }],
+                source_path: Some(PathBuf::from("/proj/.tinker/goals/root.toml")),
+            },
+            Goal {
+                id: "child".into(),
+                summary: "governs: child domain".into(),
+                description: "child description that must not appear".into(),
+                parent_id: "root".into(),
+                children: vec![],
+                related: vec![],
+                source_path: Some(PathBuf::from("/proj/.tinker/goals/child.toml")),
+            },
+        ];
+        let index = build_compact_index(&goals);
+        // Summary fields are present
+        assert!(index.contains("governs: root domain"), "root summary must be in index");
+        assert!(index.contains("governs: child domain"), "child summary must be in index");
+        // Full descriptions are absent
+        assert!(!index.contains("full description text"), "description must not appear in index");
+        assert!(!index.contains("child description"), "child description must not appear in index");
+        // Children are nested
+        assert!(index.contains("\"children\""), "children must appear in index");
+        // Related links are present
+        assert!(index.contains("\"related\""), "related must appear in index");
+        assert!(index.contains("cross-cuts"), "related reason must appear in index");
     }
 }

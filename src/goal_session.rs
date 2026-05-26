@@ -239,6 +239,7 @@ mod tests {
     fn make_goal(id: &str, description: &str) -> Goal {
         Goal {
             id: id.into(),
+            summary: "".into(),
             description: description.into(),
             parent_id: "".into(),
             children: vec![],

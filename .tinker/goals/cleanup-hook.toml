@@ -1,4 +1,5 @@
 id = "cleanup-hook"
+summary = "governs: pre-session tinker-test-case: marker cleanup; three marker shapes (inline/in-place/file-level); start-of-comment-line detection rule; placeholder-reason exempt; retry 3x; block goal session on failure | triggers: cleanup behavior; marker recognition rules; rummage investigation code cleanup; placeholder exemption"
 description = """
 ## WHAT
 While tinker tinkers — writing temporary tests, exposing private

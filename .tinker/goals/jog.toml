@@ -1,4 +1,5 @@
 id = "jog"
+summary = "governs: jog intent↔spec auditor; pull invocation by user-named topic; Socratic no-cue deepening (never previews goal text; probes *why*); two findings (didn't-know/know-better); /jog-edit commission to tinker (terminal for thread, never in same turn as open question) | triggers: jog behavior; no-cue discipline; commission-is-terminal rule; jog→tinker channel"
 description = """
 ## WHAT
 `jog` is the **intent↔spec auditor**, one of the two divergence

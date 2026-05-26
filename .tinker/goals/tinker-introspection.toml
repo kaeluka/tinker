@@ -1,4 +1,5 @@
 id = "tinker-introspection"
+summary = "governs: runtime introspection substrate at .tinker/logs/runtime.jsonl and .tinker/state/runtime.json; append-only event log (17 kinds: turns/messages/sessions/cleanup/TUI); debounced state snapshot; async non-blocking writes; backend-agnostic cost capture | triggers: adding event types; reading tinker's own runtime state; cost decomposition; session lifecycle tracking"
 description = """
 ## WHAT
 A runtime introspection substrate that lets tinker inspect its own

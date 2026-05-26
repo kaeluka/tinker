@@ -720,6 +720,7 @@ mod tests {
     fn mk_goal(id: &str) -> Goal {
         Goal {
             id: id.to_string(),
+            summary: String::new(),
             description: format!("desc for {}", id),
             parent_id: String::new(),
             children: vec![],
@@ -1017,11 +1018,11 @@ mod tests {
     fn test_spec_queue_marker_queued_goal_gets_index() {
         let mut queue = std::collections::VecDeque::new();
         let g_a = crate::goal::Goal {
-            id: "alpha".into(), description: "".into(), parent_id: "".into(),
+            id: "alpha".into(), summary: "".into(), description: "".into(), parent_id: "".into(),
             children: vec![], related: vec![], source_path: None,
         };
         let g_b = crate::goal::Goal {
-            id: "beta".into(), description: "".into(), parent_id: "".into(),
+            id: "beta".into(), summary: "".into(), description: "".into(), parent_id: "".into(),
             children: vec![], related: vec![], source_path: None,
         };
         // alpha is at global position 1, beta at 2.
@@ -1162,11 +1163,11 @@ mod tests {
     fn test_spec_queue_marker_shows_next_position_only() {
         let mut queue = std::collections::VecDeque::new();
         let g_other = crate::goal::Goal {
-            id: "other".into(), description: "".into(), parent_id: "".into(),
+            id: "other".into(), summary: "".into(), description: "".into(), parent_id: "".into(),
             children: vec![], related: vec![], source_path: None,
         };
         let g_target = crate::goal::Goal {
-            id: "target".into(), description: "".into(), parent_id: "".into(),
+            id: "target".into(), summary: "".into(), description: "".into(), parent_id: "".into(),
             children: vec![], related: vec![], source_path: None,
         };
         // target appears at global positions 2 and 4 (other is at 1 and 3).

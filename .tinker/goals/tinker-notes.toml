@@ -1,4 +1,5 @@
 id = "tinker-notes"
+summary = "governs: tinker silent observation log .tinker/notes/notes.md; six triggers (friction/surprise/reframe/recurring-thread/framing-slip/explicit-remember); observe-without-judging tone; note-taking invisible to user and sessions | triggers: note-taking behavior; notes file path; which observations warrant logging"
 description = """
 ## WHAT
 Tinker silently maintains a single append-only notes file at

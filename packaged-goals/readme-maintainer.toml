@@ -1,4 +1,5 @@
 id = "readme-maintainer"
+summary = "governs: reactive maintenance of README.md at project root; synthesizes goal tree into human-facing narrative (zero prior knowledge assumed); simple+precise prose style | triggers: goal tree changes affecting project narrative; README needing update"
 description = """
 ## WHAT
 A packaged goal that reactively maintains the human-facing

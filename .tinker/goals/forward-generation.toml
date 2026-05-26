@@ -1,4 +1,5 @@
 id = "forward-generation"
+summary = "governs: shared producer role (tinker, goal-sessions); goal treated as authoritative; forward motion through intent→spec→code stack; input-observability drives autonomy (tacit intent=dialectical, written spec=autonomous) | triggers: framing producer methodology; why goal sessions run autonomously while tinker is human-coupled"
 description = """
 ## WHAT
 The shared role of tinker's two **producer** agents, `tinker` and the

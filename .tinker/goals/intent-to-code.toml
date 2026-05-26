@@ -1,4 +1,5 @@
 id = "intent-to-code"
+summary = "governs: intent→spec→code three-layer stack; producer/skeptic axis encoded as tree (forward-generation vs divergence-investigation); adjacency ownership (intent↔spec: tinker+jog; spec↔code: sessions+rummage); human-coupling axis (layer-1=dialectical, layers-2/3=autonomous) | triggers: understanding where agents fit in stack; commissioning across adjacencies; framing new agents"
 description = """
 ## WHAT
 The map of tinker's agents onto the path from intent to running code.

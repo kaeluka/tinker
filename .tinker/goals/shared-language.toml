@@ -1,4 +1,5 @@
 id = "shared-language"
+summary = "governs: vocabulary standard for all user-facing surfaces (tinker chat, batch messages, READMEs, human-targeted comments); vocabulary.txt (tinker owns/writes silently, sessions read); form norm (minimum viable shape, no unrequested tables/lists); LLM-targeted artifacts exempt | triggers: any user-facing output; deciding whether/how to use technical term; form of replies"
 description = """
 ## WHAT
 Tinker uses shared vocabulary in every user-facing surface it
@@ -8,20 +9,30 @@ goal sessions write into the tree (READMEs, in-tree guides,
 human-targeted code comments). All of these default to conceptual
 descriptions — business logic, architectural concepts, external
 systems, active goals — rather than file paths, function names, or
-internal state variables. The rule assumes the user does not read
-source code.
+internal state variables. The no-jargon default is grounded in
+`user-persona`: because the user doesn't read source code, terms
+outside their shared vocabulary are simply inaccessible, not just
+unfamiliar.
 
 Documentation may go more technical in deeper sections (reference
 material, edge cases), but every technical term is anchored to a
-known concept on first use. The same applies in chat: if tinker
-*must* use a technical term that isn't already shared vocabulary,
-it needs a strong reason and must anchor the term to a known
-architectural or feature concept right beside it.
+known concept on first use. The same applies in chat: if a term
+not already in shared vocabulary must be used, it needs a strong
+reason and must be anchored to a known architectural or feature
+concept right beside it.
 
 The rule does **not** apply to artifacts explicitly authored for
 LLM consumption — `AGENTS.md` from `project-indexer` is the
 canonical example. Those keep full technical fidelity because their
 audience is another agent, not the user.
+
+Conversational responses from tinker, rummage, and jog default to
+the minimum form the moment calls for — a direct statement or
+question, nothing more. Tables, long bullet lists, and
+multi-paragraph surveys are appropriate only when the user asks for
+that shape. Formulaic template replies violate this rule regardless
+of length. Rummage's investigation documents are exempt — those
+grow as understanding does, by design.
 
 What counts as "known" is tracked in a persistent vocabulary file
 at `.tinker/state/vocabulary.txt` (the directory is created at
@@ -36,23 +47,28 @@ shared across all surfaces — no separate "doc vocabulary."
 
 ## WHY
 If tinker assumes the user knows the internal codebase layout, it
-sounds condescending ("obviously this is in app.rs"). If it
-over-explains things the user explicitly created, it sounds obtuse.
-Applying the rule only to tinker's chat would leave documentation
-as a side channel where code-identifier soup slips through — so the
-rule covers every user-facing surface, keeping tinker legible to a
-user who does not read source. LLM-targeted artifacts are excluded
-because another agent benefits from full technical fidelity.
+sounds condescending. If it over-explains things the user explicitly
+created, it sounds obtuse. Applying the rule only to tinker's chat
+would leave documentation as a side channel where code-identifier
+soup slips through — so the rule covers every user-facing surface.
+LLM-targeted artifacts are excluded because another agent benefits
+from full technical fidelity.
+
+The form norm follows the same logic: serve what the user actually
+needs, not a template. Formulaic replies add length by construction.
+Both the vocabulary rule and the form norm are grounded in the same
+fact from `user-persona` — the user can't verify through source, so
+what they receive is their only window into what's happening.
 
 This goal is the operational mechanism for one of the two exposure
 surfaces defined by its parent, `user-system-interaction`. The
 parent says the user may be exposed to internals only when filtered
 through shared language; this goal defines what that filtering
-looks like — the vocabulary file, the anchoring rule, the
-per-surface application. Its parent is `user-system-interaction`
-rather than `tinker` because the rule binds both tinker (chat) and
-goal sessions (documentation), and the principle that justifies it
-lives in the parent.
+looks like — the vocabulary file, the anchoring rule, the form
+norm, and the per-surface application. Its parent is
+`user-system-interaction` rather than `tinker` because the rule
+binds both tinker (chat) and goal sessions (documentation), and the
+principle that justifies it lives in the parent.
 
 ## SCOPE
 - In scope: tinker chat; user-facing batch messages; READMEs,
@@ -60,14 +76,15 @@ lives in the parent.
   write into the tree; human-targeted code comments; the persistent
   `.tinker/state/vocabulary.txt` file and its startup-created
   directory; deeper-technical documentation sections provided each
-  technical term is anchored on first use.
+  technical term is anchored on first use; the conversational form
+  norm (minimum viable shape; no unrequested tables, lists, or
+  multi-paragraph surveys; rummage documents exempt).
 - Out of scope: artifacts authored for LLM consumption (e.g.
   `AGENTS.md`); implementation comments aimed at future LLM agents;
   goal file contents themselves (LLM-consumed by goal sessions);
   automated hooks to manage the vocabulary file (tinker manages it
   by hand); per-session internal summaries before tinker composes
   them into a user-facing batch message.
-
 """
 parent_id = "user-system-interaction"
 children = []
@@ -75,7 +92,8 @@ related = [
   { id = "project-indexer", reason = "`AGENTS.md` produced by `project-indexer` is the canonical example of an LLM-targeted artifact this goal carves out of the shared-vocabulary rule. The exemption is named explicitly because project-indexer's output looks like documentation but isn't aimed at the user. Asymmetric link: `project-indexer` is a packaged goal at ancestor scope and carries no back-link to this project-local goal." },
   { id = "coding-standards", reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link." },
   { id = "tinker", reason = "tinker chat and the batch messages it composes are the primary user-facing surfaces this standard governs." },
-  { id = "rummage", reason = "rummage's documents and chat are user-facing output this standard governs — including the rule that pasted technical material is translated, not echoed." },
+  { id = "rummage", reason = "rummage's chat turns are user-facing output this standard governs — including the rule that pasted technical material is translated, not echoed. Rummage's investigation documents are exempt from the form norm." },
   { id = "tui", reason = "tui renders user-facing text to the user; how that text is presented is governed by this standard." },
-  { id = "jog", reason = "jog's deepening conversation with the user is a user-facing surface this standard governs." }
+  { id = "jog", reason = "jog's deepening conversation with the user is a user-facing surface this standard governs." },
+  { id = "user-persona", reason = "`user-persona` is the anchor for both the no-jargon default and the form norm: because the user doesn't read source code, terms outside shared vocabulary are inaccessible and formulaic responses miss the mark. The vocabulary rule and form norm here follow from that persona fact." }
 ]
