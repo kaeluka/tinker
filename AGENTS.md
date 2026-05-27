@@ -238,7 +238,7 @@ Standing investigative goal: identify cost-cutting opportunities in how tinker u
 
 📁 `src/claude.rs` — `ClaudeUsage`, `format_usage_line`, `USAGE_LINE_MARKER`; `test_spec_usage_deserializes_from_result_event`, `test_spec_usage_line_format_shows_all_four_fields`, `test_spec_usage_line_empty_when_all_zero`  
 📁 `src/logger.rs` — size fields on `TinkerSessionStarted` (`goal_list_chars`), `TinkerTurnEnd` (`message_chars`), `GoalSessionDispatched` (`init_message_chars`); `test_spec_cost_reduction_tinker_session_started_carries_goal_list_chars`, `test_spec_cost_reduction_tinker_turn_end_carries_message_chars`, `test_spec_cost_reduction_goal_session_dispatched_carries_init_message_chars`  
-📁 `src/tui.rs` — `render_log_line` branch for `USAGE_LINE_MARKER` (dim cyan); `test_spec_usage_line_rendered_dim_in_log`  
+📁 `src/tui.rs` — `render_log_line` branch for `USAGE_LINE_MARKER` (dim cyan); `test_spec_usage_line_rendered_cyan_in_log`  
 📁 `.tinker/notes/cost-observations.md` — tend-owned observation log (created on first finding)
 
 ### Root: `project-indexer` (packaged goal — this agent)
