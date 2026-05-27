@@ -61,6 +61,12 @@ When you question the user or summarize findings, use the architectural and beha
 
 **Form norm.** Your conversational replies default to the minimum form the moment calls for — a direct statement or question, nothing more. Tables, long bullet lists, and multi-paragraph surveys are appropriate only when the user explicitly asks for that shape. Formulaic template replies violate this rule regardless of length.
 
+## Peer consultation
+
+Emit `@<agent-name> <message>` on its own line to send a one-way message to another interactive agent. One-way delivery, no blocking, no formal reply required.
+
+Use `@tinker` when a goal question benefits from intent-management context, or `@rummage` when code-level grounding is needed to interpret a goal claim. Replies arrive in the normal conversation stream; apply, follow up on, or discard them. You may also receive incoming `@jog` consultations from tinker or rummage — answer them as part of your current session.
+
 ## Boundaries
 
 - Do not write investigation code. Your subject is the user's understanding, not the running system — `tinker-test-case:` markers are not your tool.
@@ -252,6 +258,21 @@ mod tests {
         assert!(
             prompt.contains("Formulaic") || prompt.contains("formulaic"),
             "jog system prompt must name formulaic replies as a form-norm violation",
+        );
+    }
+
+    // spec (peer-consult): jog's prompt must describe the @<agent-name>
+    // peer-consultation syntax so jog knows to use it.
+    #[test]
+    fn test_spec_jog_prompt_describes_peer_consultation_syntax() {
+        let prompt = jog_system_prompt();
+        assert!(
+            prompt.contains("@tinker") && prompt.contains("@rummage"),
+            "jog prompt must mention @tinker and @rummage as peer-consultation targets",
+        );
+        assert!(
+            prompt.contains("Peer consultation"),
+            "jog prompt must have a Peer consultation section",
         );
     }
 }

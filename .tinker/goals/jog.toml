@@ -126,3 +126,7 @@ reason = "jog's deepening conversation is user-facing prose; `shared-language` g
 [[related]]
 id = "coding-standards"
 reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
+
+[[related]]
+id = "peer-consult"
+reason = "jog participates as both sender and receiver of `@` messages alongside its existing deepening conversation with the user."

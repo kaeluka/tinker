@@ -1,5 +1,5 @@
 id = "rummage"
-summary = "governs: rummage sibling agent for program behavior comprehension; three modes (debugging/recon/exploration); mode-shaped anchor + hypothesis loop + falsification-per-hypothesis; backward causal reasoning, LSP call-graph, bisection, fuzz; tinker-test-case: scratch code; case-2 durable failing test + /run; case-1 surface only | triggers: rummage behavior; investigation technique selection; case-2 dispatch; LSP+webfetch grants"
+summary = "governs: rummage sibling agent for program behavior comprehension; three modes (debugging/recon/exploration); mode-shaped anchor + hypothesis loop + falsification-per-hypothesis; backward causal reasoning, LSP call-graph, bisection, fuzz; tinker-test-case: scratch code; case-2 durable failing test + /run; case-1 surface only; tinker as intent-reading arm (@tinker for disambiguation/ownership/intentionality) | triggers: rummage behavior; investigation technique selection; case-2 dispatch; LSP+webfetch grants; when to consult tinker"
 description = """
 ## WHAT
 A sibling chat agent to tinker, dedicated to **understanding program
@@ -84,6 +84,21 @@ not rummage's to act on: it recognizes the case, surfaces the
 finding, and leaves the decision to the human and tinker, because
 intent is human-owned.
 
+**Tinker is rummage's intent-reading arm.** When rummage needs to
+understand what a behavior was *meant* to do rather than what it
+currently does, it consults tinker via `@tinker` rather than
+inferring from goal text alone. Three concrete triggers:
+(1) **Case-1/case-2 disambiguation** — when the spec is ambiguous
+and rummage cannot determine whether a divergence is a bug or a
+fresh intent decision not derivable from the spec, `@tinker` before
+committing to a finding; (2) **ownership before dispatch** — when
+rummage is ready to emit `/run` but cannot confidently identify
+which goal owns the behavior in question, `@tinker` to resolve;
+(3) **intentionality check** — when code behavior looks wrong but
+the goal is silent on the case, `@tinker` before calling it a
+divergence. In all three cases rummage asks about the *should*;
+tinker answers from the goal tree and conversation history it holds.
+
 The output document is **hybrid**: current best understanding at
 the top (what rummage currently believes is happening, and why),
 investigation logbook archived below (every hypothesis with its
@@ -131,7 +146,11 @@ stops a fresh stateless session from re-deriving the same bug it
 wrote. The case-1 boundary keeps rummage out of intent: when
 "correct" is a fresh judgment rather than a spec consequence,
 acting would have rummage inventing intent it does not own (per
-`user-system-interaction`).
+`user-system-interaction`). The `@tinker` consultation on
+ambiguous cases is the mechanism that keeps the case-1/case-2
+boundary honest without leaving rummage stranded — it asks the
+agent that holds the *should* rather than guessing from goal text
+that may be incomplete.
 
 Effectiveness depends on the target codebase implementing
 `coding-standards`: capability-based DI makes effects mockable,
@@ -191,7 +210,9 @@ cannot verify.
   files as noise-aware signal; ongoing chat with multiple threads;
   commissioning a **case-2 fix** by writing a durable, marker-free
   failing test and autonomously emitting a declarative `/run` for
-  the owning goal.
+  the owning goal; consulting tinker via `@tinker` for intent
+  context (case-1/case-2 disambiguation, ownership resolution
+  before dispatch, intentionality checks).
 - Out of scope:
   - **Writing the fix itself.** Rummage commissions a fix by
     dispatching a goal session; it does not edit production code to
@@ -226,7 +247,7 @@ reason = "The TUI renders the active-agent tag in the REPL prompt and recognizes
 
 [[related]]
 id = "cleanup-hook"
-reason = "Rummage is an active investigator that writes scratch tests, fuzz harnesses, and instrumentation marked with `tinker-test-case:`. The cleanup-hook removes those traces alongside tinker's own investigation code, so a goal session never sees residue from either agent."
+reason = "Rummage is an active investigator that writes scratch tests, fuzz harnesses, and instrumentation marked with `tinker-test-case:`. The cleanup-hook removes those traces before each goal session runs."
 
 [[related]]
 id = "backends"
@@ -243,3 +264,7 @@ reason = "rummage produces documents and chat for the user; `shared-language` go
 [[related]]
 id = "triggers"
 reason = "On a confirmed case-2 bug, rummage emits `/run <owning-goal-id>` to commission a fix — making it a second non-user emitter of the `/run` protocol `triggers` defines. Its reason stays declarative (a pointer to the durable failing test it wrote), so it complies with the declarative-pointer rule rather than needing the user-typed exemption. The protocol's scanner must read rummage's finalized output, not only tinker's."
+
+[[related]]
+id = "peer-consult"
+reason = "Tinker is rummage's intent-reading arm: rummage consults `@tinker` when it needs to understand the *should* rather than inferring from goal text — specifically for case-1/case-2 disambiguation, ownership resolution before dispatch, and intentionality checks. Rummage also receives `@rummage` consultations from tinker on code-reality questions."
