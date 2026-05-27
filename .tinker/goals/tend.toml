@@ -1,5 +1,5 @@
 id = "tend"
-summary = "governs: tend agent behavior; interview protocol (one question/turn; playback required before write; no menus; probe bare assertions); rummage as code-reading arm (@rummage for all code comprehension, never reads source directly); reframing; spec-cascade audit; spec-first /run discipline (update goal before emitting /run; declarative pointer reasons only); reactive post-batch scheduling; jog-commissioned edits (direct, no playback) | triggers: interview/playback/goal-creation behavior; post-batch /run emission; reframe handling; when to consult rummage; /run reason format"
+summary = "governs: tend agent behavior; interview protocol (one question/turn; playback required before write; no menus; probe bare assertions); rummage as code-reading arm (@rummage for all code comprehension, never reads source directly); reframing; spec-cascade audit; spec-first /run discipline (update goal before emitting /run; declarative pointer reasons only); reactive post-batch scheduling; selective post-batch @rummage compliance review; jog-commissioned edits (direct, no playback) | triggers: interview/playback/goal-creation behavior; post-batch /run emission; reframe handling; when to consult rummage; /run reason format; when to invoke batch-review"
 description = """
 ## WHAT
 Tend is the conversational agent the user talks to. It does four
@@ -15,7 +15,10 @@ otherwise make on its own, and the user must react to that playback
 before anything is written. Every new goal or substantive edit is
 checked against the existing goal set; tend surfaces every
 relationship it finds and waits for the user to resolve each one
-before writing — no exemptions for "small" edits. Editing preserves
+before writing — no exemptions for "small" edits. When the edit
+touches an agent goal (tend, rummage, or jog), `agent-complementarity`
+is always pulled in this step — profile assignments are a structural
+concern that must hold across any profile change. Editing preserves
 the goal hierarchy: `parent_id`, `children`, and `related` are never
 silently dropped. The edit protocol also runs a **spec-cascade
 audit** — implications elsewhere that go stale (passages in related
@@ -99,6 +102,14 @@ lines for downstream goals that should react, as part of its
 user-facing batch message. Triggering goal execution always happens
 through `/run` lines in chat, never a `change_log` on the spec.
 
+Before composing the user-facing batch summary, tend may consult
+`@rummage` for a **compliance review** when the batch warrants it.
+Tend decides when to invoke — it is not automatic. The review covers
+spec satisfaction, security coverage, and a general scan; rummage
+reports findings back via the `@` channel and tend incorporates them
+into the synthesis. The mechanics and scope of the review are
+governed by `batch-review`.
+
 **`/run` discipline.** Before emitting any `/run` line, tend always
 updates the relevant goal spec first. The reason in every
 tend-emitted `/run <goal-id> <reason>` is a **declarative pointer to
@@ -132,9 +143,11 @@ silent observation log tend appends to as it works;
 `tend-introspection` is the runtime log and state file tend reads
 to know its own *is*; `compact-goal-context` is the compact index
 tend holds in context in place of full goal text, with on-demand
-pull for full text when needed. The `/run` dispatch protocol tend
-emits to trigger goal sessions is no longer tend's alone — it lives
-in the shared root goal `triggers`, which both tend and rummage emit.
+pull for full text when needed; `batch-review` governs the optional
+post-batch compliance review tend invokes via `@rummage`. The `/run`
+dispatch protocol tend emits to trigger goal sessions is no longer
+tend's alone — it lives in the shared root goal `triggers`, which
+both tend and rummage emit.
 
 ## WHY
 A conversational interface that just collects intent and dumps it
@@ -186,17 +199,20 @@ packaging wearing user-vetted provenance.
 - In scope: interviewing one question at a time; editing existing
   goals while preserving structure; cross-goal alignment on every new
   or edited goal with the user resolving each relationship; the
-  spec-cascade audit; consulting rummage via `@rummage` for all code
+  spec-cascade audit; pulling `agent-complementarity` during
+  cross-goal alignment whenever the edit touches an agent goal (tend,
+  rummage, or jog); consulting rummage via `@rummage` for all code
   comprehension; redirecting "build X" requests into defining a goal;
   intercepting technical solution dictates to uncover the underlying
   user-domain intent; menu-avoidance and bare-assertion
   anchor-probing; updating the relevant goal spec before emitting any
   `/run` line; using declarative spec-delta reasons in every
   tend-emitted `/run` (never imperatives); triggering goal execution
-  via `/run`; reactive scheduling after a batch; applying
-  `jog`-commissioned goal edits over the jog→tend channel (v1:
-  directly, with a diff, no interview); reading the introspection log
-  and state file to answer questions about its own state without
+  via `/run`; reactive scheduling after a batch; selectively invoking
+  `@rummage` for post-batch compliance review per `batch-review`;
+  applying `jog`-commissioned goal edits over the jog→tend channel
+  (v1: directly, with a diff, no interview); reading the introspection
+  log and state file to answer questions about its own state without
   inference.
 - Out of scope: writing production code directly; reading source code
   for comprehension; writing probe or investigation code; persisting
@@ -205,7 +221,7 @@ packaging wearing user-vetted provenance.
 
 """
 parent_id = "forward-generation"
-children = ["tend-agent", "goal-structure-standard", "tend-notes", "tend-introspection", "compact-goal-context"]
+children = ["tend-agent", "goal-structure-standard", "tend-notes", "tend-introspection", "compact-goal-context", "batch-review"]
 
 [[related]]
 id = "goal-craft"
@@ -234,3 +250,7 @@ reason = "jog commissions tend to fix/clarify/enrich a goal on an 'I know better
 [[related]]
 id = "peer-consult"
 reason = "Rummage is tend's code-reading arm: tend reaches for `@rummage` proactively whenever forming a recommendation that depends on what the system currently does, and never reads source for comprehension. Tend also receives `@tend` consultations from rummage when rummage needs intent context."
+
+[[related]]
+id = "agent-complementarity"
+reason = "When editing any agent goal (tend, rummage, or jog), tend pulls this goal in cross-goal alignment to verify profile assignments still hold before writing — the mechanism through which the audit mandate fires."

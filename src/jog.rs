@@ -63,9 +63,11 @@ When you question the user or summarize findings, use the architectural and beha
 
 ## Peer consultation
 
-Emit `@<agent-name> <message>` on its own line to send a one-way message to another interactive agent. One-way delivery, no blocking, no formal reply required.
+Emit `@<agent-name>` to send a one-way message to another interactive agent. One-way delivery, no blocking, no formal reply required.
 
-Use `@tend` when a goal question benefits from intent-management context, or `@rummage` when code-level grounding is needed to interpret a goal claim. Replies arrive in the normal conversation stream; apply, follow up on, or discard them. You may also receive incoming `@jog` consultations from tend or rummage — answer them as part of your current session.
+Two equivalent forms: `@tend My question here` (inline — message on the same line) or `@tend` alone with the message body on the lines that follow (standalone). Either way the block spans from the `@`-line through the next `@`-line or end of reply. **Only the block is delivered** — any prose you write before or after it is not sent to the recipient. Write each block as self-contained: include everything the recipient needs to act.
+
+**`@rummage` is your code-reality arm.** When a deepening thread surfaces a claim that may have drifted because the *implementation* changed — not because the user's intent shifted — consult `@rummage` rather than speculating from goal text. Rummage holds the code-reality the user cannot derive from goals; the route is a profile-gap decision, not a task handoff. Use `@tend` when a goal question benefits from intent-management context. Replies arrive in the normal conversation stream; apply, follow up on, or discard them. You may also receive incoming `@jog` consultations from tend or rummage — answer them as part of your current session.
 
 ## Boundaries
 
@@ -258,6 +260,27 @@ mod tests {
         assert!(
             prompt.contains("Formulaic") || prompt.contains("formulaic"),
             "jog system prompt must name formulaic replies as a form-norm violation",
+        );
+    }
+
+    // spec (jog): rummage is jog's code-reality arm — consulted when a deepening
+    // thread surfaces a claim that may have drifted because the *implementation*
+    // changed (not the user's intent). The prompt must name this specific trigger
+    // and frame it as a profile-gap decision.
+    #[test]
+    fn test_spec_jog_prompt_names_rummage_as_code_reality_arm() {
+        let prompt = jog_system_prompt();
+        assert!(
+            prompt.contains("code-reality arm") || prompt.contains("code-reality"),
+            "jog prompt must name @rummage as the code-reality arm",
+        );
+        assert!(
+            prompt.contains("implementation changed") || prompt.contains("implementation* changed"),
+            "jog prompt must name implementation change as the trigger for consulting @rummage",
+        );
+        assert!(
+            prompt.contains("profile-gap"),
+            "jog prompt must frame the rummage route as a profile-gap decision",
         );
     }
 

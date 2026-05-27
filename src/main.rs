@@ -780,20 +780,64 @@ fn parse_run_commands(text: &str) -> Vec<(String, String)> {
 }
 
 /// Parse `@<agent-name> <message>` lines from an agent reply.
-/// Recognizes `@tend`, `@rummage`, `@jog` at the start of a trimmed line.
-/// Returns `(recipient, message)` pairs; lines without a message are ignored.
+/// Extracts `@`-blocks from an agent reply.
+///
+/// Each block begins at an `@tend`, `@rummage`, or `@jog` line and extends
+/// through all subsequent lines until the next `@`-line or end of text.
+/// The `@`-line may carry inline content (`@tend msg`) or stand alone (`@tend`)
+/// with the message on subsequent lines; both forms are equivalent.
+/// Prose before the first `@`-line is not part of any block.
+/// Empty blocks (no inline content and no body lines) are silently dropped.
+///
+/// Returns `(recipient, message)` pairs where `message` is the full block body.
 fn parse_at_commands(text: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
+    const AGENTS: &[&str] = &["tend", "rummage", "jog"];
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut current: Option<(String, Vec<String>)> = None;
+
     for line in text.lines() {
-        let line = line.trim();
-        if let Some(msg) = line.strip_prefix("@tend ") {
-            out.push(("tend".to_string(), msg.trim().to_string()));
-        } else if let Some(msg) = line.strip_prefix("@rummage ") {
-            out.push(("rummage".to_string(), msg.trim().to_string()));
-        } else if let Some(msg) = line.strip_prefix("@jog ") {
-            out.push(("jog".to_string(), msg.trim().to_string()));
+        let trimmed = line.trim();
+
+        // Detect whether this line opens a new @-block.
+        let mut new_block: Option<(String, String)> = None;
+        for agent in AGENTS {
+            let prefix = format!("@{}", agent);
+            if let Some(rest) = trimmed.strip_prefix(prefix.as_str()) {
+                // Valid if followed by space (inline) or nothing (standalone).
+                if rest.is_empty() || rest.starts_with(' ') {
+                    new_block = Some((agent.to_string(), rest.trim_start().to_string()));
+                    break;
+                }
+            }
+        }
+
+        if let Some((recipient, inline)) = new_block {
+            // Close the previous block before opening this one.
+            if let Some((prev_recipient, prev_lines)) = current.take() {
+                let msg = prev_lines.join("\n").trim().to_string();
+                if !msg.is_empty() {
+                    out.push((prev_recipient, msg));
+                }
+            }
+            let mut lines: Vec<String> = Vec::new();
+            if !inline.is_empty() {
+                lines.push(inline);
+            }
+            current = Some((recipient, lines));
+        } else if let Some((_, ref mut lines)) = current {
+            lines.push(line.to_string());
+        }
+        // else: prose before any @-block — not part of any delivery.
+    }
+
+    // Close the final block.
+    if let Some((recipient, lines)) = current {
+        let msg = lines.join("\n").trim().to_string();
+        if !msg.is_empty() {
+            out.push((recipient, msg));
         }
     }
+
     out
 }
 
@@ -2688,18 +2732,48 @@ mod tests {
     }
 
     #[test]
-    fn test_spec_peer_consult_parse_ignores_prose_lines() {
-        let r = parse_at_commands("some prose\n@tend hello\nmore prose\n@rummage check this");
+    fn test_spec_peer_consult_parse_prose_before_block_excluded() {
+        // Prose before the first @-line is not part of any block and must not appear
+        // in any delivered message.
+        let r = parse_at_commands("some prose\n@tend hello\n@rummage check this");
         assert_eq!(r.len(), 2);
-        assert_eq!(r[0].0, "tend");
-        assert_eq!(r[1].0, "rummage");
+        assert_eq!(r[0], ("tend".to_string(), "hello".to_string()));
+        assert_eq!(r[1], ("rummage".to_string(), "check this".to_string()));
+    }
+
+    #[test]
+    fn test_spec_peer_consult_parse_block_body_included() {
+        // Lines following the @-line and before the next @-line are body lines and
+        // must be included in the block delivered to the recipient.
+        let r = parse_at_commands("@tend hello\nbody line one\nbody line two\n@rummage check");
+        assert_eq!(r.len(), 2);
+        assert!(
+            r[0].1.contains("hello") && r[0].1.contains("body line one"),
+            "@tend block must include both inline and body lines"
+        );
+        assert_eq!(r[1], ("rummage".to_string(), "check".to_string()));
     }
 
     #[test]
     fn test_spec_peer_consult_parse_at_without_message_ignored() {
-        // "@tend" with no trailing space+message must not match
+        // Standalone @tend with no body lines produces an empty block that is
+        // not delivered. Both the block detection (standalone form is valid) and
+        // the empty-block drop are exercised here.
         let r = parse_at_commands("@tend");
-        assert_eq!(r.len(), 0, "@tend without a message must be ignored");
+        assert_eq!(r.len(), 0, "empty @tend block must not be delivered");
+    }
+
+    #[test]
+    fn test_spec_peer_consult_parse_multiline_body() {
+        // Standalone @agent form: the @-line carries no inline content; the block
+        // body is everything on the lines that follow until the next @-line.
+        let r = parse_at_commands("@rummage\nfirst line\nsecond line");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "rummage");
+        assert!(
+            r[0].1.contains("first line") && r[0].1.contains("second line"),
+            "standalone @-block body must include all subsequent lines"
+        );
     }
 
     #[test]

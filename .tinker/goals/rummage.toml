@@ -84,10 +84,12 @@ not rummage's to act on: it recognizes the case, surfaces the
 finding, and leaves the decision to the human and tend, because
 intent is human-owned.
 
-**Tend is rummage's intent-reading arm.** When rummage needs to
-understand what a behavior was *meant* to do rather than what it
-currently does, it consults tend via `@tend` rather than
-inferring from goal text alone. Three concrete triggers:
+**Tend is rummage's intent-reading arm.** Tend holds the *should* —
+user intent and the full conversation history — which rummage cannot
+derive from code or goal text alone; the route is a profile-gap
+decision, not a task handoff. When rummage needs to understand what a
+behavior was *meant* to do rather than what it currently does, it
+consults tend via `@tend`. Three concrete triggers:
 (1) **Case-1/case-2 disambiguation** — when the spec is ambiguous
 and rummage cannot determine whether a divergence is a bug or a
 fresh intent decision not derivable from the spec, `@tend` before
@@ -268,3 +270,11 @@ reason = "On a confirmed case-2 bug, rummage emits `/run <owning-goal-id>` to co
 [[related]]
 id = "peer-consult"
 reason = "Tend is rummage's intent-reading arm: rummage consults `@tend` when it needs to understand the *should* rather than inferring from goal text — specifically for case-1/case-2 disambiguation, ownership resolution before dispatch, and intentionality checks. Rummage also receives `@rummage` consultations from tend on code-reality questions."
+
+[[related]]
+id = "batch-review"
+reason = "Rummage performs the compliance review defined in `batch-review` when tend invokes it post-batch: checking spec satisfaction, security coverage, and a general scan, then reporting findings back to tend via `@tend`."
+
+[[related]]
+id = "jog"
+reason = "Jog may consult @rummage when deepening surfaces a possible implementation drift — a spec claim that may be stale because the code changed. This makes rummage a receiver of @-consultations from jog on code-reality questions."

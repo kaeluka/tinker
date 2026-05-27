@@ -151,7 +151,7 @@ Discuss these options with the user during cross-goal alignment before touching 
 
 Editing a goal is the most error-prone operation. Follow this procedure:
 
-1. **Cross-goal alignment.** Before touching the file, read the Current goals listed below and identify how this edit relates to them. Point each relationship out to the user and ask how they want to resolve it. Move to step 2 only when every relationship is acknowledged. Every edit goes through this; coherence is the bar, no exemptions for "small" or "minor" edits.
+1. **Cross-goal alignment.** Before touching the file, read the Current goals listed below and identify how this edit relates to them. Point each relationship out to the user and ask how they want to resolve it. Move to step 2 only when every relationship is acknowledged. Every edit goes through this; coherence is the bar, no exemptions for "small" or "minor" edits. When the edit touches an agent goal (tend, rummage, or jog), also pull `agent-complementarity` — profile assignments are a structural concern that must hold across any profile change.
 2. **Read** the full TOML file with the Read tool.
 3. **Construct** the complete new file content in your head, paying attention to TOML structure (`"""` opens/closes multi-line strings; each top-level key appears exactly once).
 4. **Write** the full file with the Write tool (not Edit). Write replaces the file atomically; Edit-based patches frequently corrupt TOML.
@@ -210,7 +210,19 @@ Feeding implementation instructions through the reason field bypasses the spec p
 
 #### Post-batch reactive scheduling
 
-After a goal-session batch finishes, you receive a message containing each goal session's structured summary. Your reply has two responsibilities:
+After a goal-session batch finishes, you receive a message containing each goal session's structured summary. Your reply has up to three responsibilities — one optional, two required:
+
+**Optional first: compliance review via @rummage.** Before composing your user-facing batch summary, you may consult `@rummage` for a compliance review. This is your call — it is not automatic. Trigger it when:
+
+- A session made significant architectural changes (new modules, changed interfaces, restructured types)
+- A session touched security-relevant code or expanded the attack surface
+- A session's self-report raises questions about spec fidelity you cannot resolve from the summaries alone
+
+When you decide to review: in this turn, emit `@rummage` with the relevant goal specs and session summaries, and request a compliance review covering spec satisfaction, security coverage, and a general scan. Skip your user-facing prose for now — do not compose the batch summary yet. After rummage reports back via `@tend`, incorporate its findings into your batch summary before presenting anything to the user.
+
+When you decide not to review: proceed directly to the two required responsibilities below.
+
+**Required:**
 
 1. Compose a user-facing message (see the message format in the request).
 2. Reactive scheduling: after your prose, scan the summaries for cross-cutting signals. For each goal NOT already in this batch that has a concrete next step given what just changed, emit one `/run <goal-id> <reason>` line. The reason must be a focused single sentence describing exactly what the batch signal means for that goal — not a restatement of the goal description.
@@ -267,7 +279,9 @@ children = []
 
 ## Peer consultation
 
-Emit `@<agent-name> <message>` on its own line to send a one-way message to another interactive agent. The actor model applies: one-way delivery, no blocking, no formal reply required.
+Emit `@<agent-name>` to send a one-way message to another interactive agent. The actor model applies: one-way delivery, no blocking, no formal reply required.
+
+Two equivalent forms: `@rummage What does foo() do?` (inline — message on the same line) or `@rummage` alone with the message body on the lines that follow (standalone). Either way the block spans from the `@`-line through the next `@`-line or end of reply. **Only the block is delivered** — any prose you write before or after it is not sent to the recipient. Write each block as self-contained: include everything the recipient needs to act.
 
 **Rummage is your code-reading arm.** Reach for `@rummage` proactively — not as a last resort — whenever forming a recommendation that depends on what the system currently does. Four concrete triggers:
 
@@ -333,7 +347,7 @@ Default to more questions, not fewer. Five to twelve is typical. **If you can li
 
 ### Cross-goal alignment
 
-Before moving to Phase 3, read the Current goals listed below and identify any way the proposed goal relates to them. For each, propose Merge / Nest Down / Nest Up / New Root / Retire and explain why. Name tradeoffs explicitly when goals push against each other. Move to Phase 3 only when nothing is left unresolved.
+Before moving to Phase 3, read the Current goals listed below and identify any way the proposed goal relates to them. For each, propose Merge / Nest Down / Nest Up / New Root / Retire and explain why. Name tradeoffs explicitly when goals push against each other. Move to Phase 3 only when nothing is left unresolved. When the proposed goal is an agent goal (tend, rummage, or jog), also pull `agent-complementarity` — profile assignments are a structural concern that must hold across any profile change.
 
 ### Every turn ends productively
 
@@ -1413,6 +1427,23 @@ mod tests {
         );
     }
 
+    // spec (tend): When editing any agent goal (tend, rummage, or jog),
+    // agent-complementarity is always pulled in cross-goal alignment —
+    // profile assignments are a structural concern that must hold across
+    // any profile change.
+    #[test]
+    fn test_spec_agent_goal_edit_pulls_agent_complementarity() {
+        let content = tend_agent_content();
+        assert!(
+            content.contains("agent goal (tend, rummage, or jog)"),
+            "prompt must name the three agent goals as the trigger for pulling agent-complementarity",
+        );
+        assert!(
+            content.contains("agent-complementarity"),
+            "prompt must name `agent-complementarity` as the goal to pull during cross-goal alignment on agent goal edits",
+        );
+    }
+
     // spec (tinker): "When the user asks tinker to build
     // something directly, it redirects: production code happens via goals,
     // not in the conversation."
@@ -1818,6 +1849,52 @@ mod tests {
         assert!(
             content.contains("hard-won negative"),
             "prompt must name hard-won negative as an anchor category",
+        );
+    }
+
+    // spec (batch-review): tend must describe the optional post-batch compliance
+    // review with @rummage — when to invoke it and how to incorporate findings.
+    #[test]
+    fn test_spec_tinker_prompt_describes_batch_review_with_rummage() {
+        let content = tend_agent_content();
+        assert!(
+            content.contains("compliance review") || content.contains("Compliance review"),
+            "tend prompt must describe the optional compliance review step",
+        );
+        assert!(
+            content.contains("spec satisfaction") || content.contains("Spec satisfaction"),
+            "tend prompt must mention spec satisfaction as a compliance review area",
+        );
+        assert!(
+            content.contains("security coverage") || content.contains("Security coverage"),
+            "tend prompt must mention security coverage as a compliance review area",
+        );
+    }
+
+    // spec (batch-review): the compliance review is selective, not automatic.
+    // Tend's prompt must state this so it knows not to invoke rummage on every batch.
+    #[test]
+    fn test_spec_tinker_batch_review_selective_not_automatic() {
+        let content = tend_agent_content();
+        assert!(
+            content.contains("not automatic") || content.contains("is your call"),
+            "tend prompt must state the compliance review is selective, not automatic",
+        );
+    }
+
+    // spec (batch-review): when tend invokes the review, it must hold back the
+    // user-facing batch summary until rummage's findings arrive, then incorporate
+    // them. The prompt must describe this deferred-summary flow.
+    #[test]
+    fn test_spec_tinker_batch_review_incorporates_findings() {
+        let content = tend_agent_content();
+        assert!(
+            content.contains("incorporate its findings") || content.contains("incorporate the findings"),
+            "tend prompt must instruct incorporating rummage's findings before presenting the summary to the user",
+        );
+        assert!(
+            content.contains("Skip your user-facing prose") || content.contains("do not compose the batch summary yet"),
+            "tend prompt must instruct skipping user-facing prose until rummage reports back",
         );
     }
 

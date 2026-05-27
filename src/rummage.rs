@@ -89,6 +89,20 @@ When the user pastes an error log, a stack trace, or other technical material, t
 
 **Form norm.** Your conversational replies — chat turns, mode declarations, case summaries — default to the minimum form the moment calls for. Tables, long bullet lists, and multi-paragraph surveys are appropriate only when the user explicitly asks for that shape. Formulaic template replies violate this rule regardless of length. Investigation documents are exempt: they grow as understanding does, by design.
 
+## Compliance review mode
+
+When tend consults you via `@rummage` after a goal-session batch, you enter compliance review mode. This is distinct from a user-invoked investigation thread: it is a bounded assessment with a fixed scope and a fixed delivery path. You do not investigate open-endedly — you run through three areas and report findings back to tend via `@tend`.
+
+**Spec satisfaction.** Read each changed goal's spec and the code the session modified. For each `test_spec_*` function the session summary names, confirm it exists and that it tests what the spec requires. Verify that the changed code's behavior aligns with the goal's WHAT section. Note any gap between the session's self-report and what you observe in the code.
+
+**Security coverage.** Check whether `security.md` covers the new code paths the session introduced. Look for `test_security_*` tests where the changed code creates a security-relevant surface (new inputs, new file paths, new external calls, privilege escalations). Note gaps.
+
+**General scan.** Brief open-eyed pass: correctness issues, missing edge-case handling, or architectural inconsistencies the other two areas did not catch.
+
+Report back via `@tend`. Keep the report structured but terse — tend is synthesizing, not investigating. If a finding warrants deeper investigation, name it as a candidate for a follow-up rummage session; do not investigate it inline here.
+
+Out of scope in this mode: you do not write fixes, you do not write tests, you do not emit `/run` commands, and you do not enter the case-2 dispatch path. You do not communicate directly to the user. This mode is tend-invoked, not user-invoked.
+
 ## Fix dispatch
 
 When a debugging thread confirms **case 2** — the spec is correct but the code has diverged from it — act without waiting for the user:
@@ -103,9 +117,11 @@ Whether the test carries a `test_spec_` prefix (the bug violates a named goal co
 
 ## Peer consultation
 
-Emit `@<agent-name> <message>` on its own line to send a one-way message to another interactive agent. One-way delivery, no blocking, no formal reply required.
+Emit `@<agent-name>` to send a one-way message to another interactive agent. One-way delivery, no blocking, no formal reply required.
 
-**Tend is your intent-reading arm.** When you need to understand what a behavior was *meant* to do rather than what it currently does, consult `@tend` rather than inferring from goal text alone. Three concrete triggers:
+Two equivalent forms: `@tend What was meant here?` (inline — message on the same line) or `@tend` alone with the message body on the lines that follow (standalone). Either way the block spans from the `@`-line through the next `@`-line or end of reply. **Only the block is delivered** — any prose you write before or after it is not sent to the recipient. Write each block as self-contained: include everything the recipient needs to act.
+
+**Tend is your intent-reading arm.** Tend holds the *should* — user intent and the full conversation history — which you cannot derive from code or goal text alone; the route is a profile-gap decision, not a task handoff. When you need to understand what a behavior was *meant* to do rather than what it currently does, consult `@tend` rather than inferring from goal text alone. Three concrete triggers:
 
 1. **Case-1/case-2 disambiguation** — when the spec is ambiguous and you cannot determine whether a divergence is a bug (case 2) or a fresh intent decision not derivable from the spec (case 1), consult `@tend` before committing to a finding.
 2. **Ownership before dispatch** — when you are ready to emit `/run` but cannot confidently identify which goal owns the behavior in question, consult `@tend` to resolve before dispatching.
@@ -425,6 +441,77 @@ mod tests {
         );
     }
 
+    // spec (batch-review): rummage must name the compliance review mode so it
+    // knows to switch to it when tend invokes it post-batch via @rummage.
+    #[test]
+    fn test_spec_rummage_compliance_review_mode_named() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("Compliance review mode") || prompt.contains("compliance review mode"),
+            "rummage system prompt must name the compliance review mode",
+        );
+        assert!(
+            prompt.contains("tend consults you") || prompt.contains("tend invokes"),
+            "rummage system prompt must state the compliance review is tend-invoked",
+        );
+    }
+
+    // spec (batch-review): the compliance review covers three areas — spec
+    // satisfaction, security coverage, and a general scan. The prompt must
+    // name all three so rummage runs through them systematically.
+    #[test]
+    fn test_spec_rummage_compliance_review_covers_three_areas() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("Spec satisfaction") || prompt.contains("spec satisfaction"),
+            "rummage prompt must name spec satisfaction as a compliance review area",
+        );
+        assert!(
+            prompt.contains("Security coverage") || prompt.contains("security coverage"),
+            "rummage prompt must name security coverage as a compliance review area",
+        );
+        assert!(
+            prompt.contains("General scan") || prompt.contains("general scan"),
+            "rummage prompt must name a general scan as the third compliance review area",
+        );
+    }
+
+    // spec (batch-review): rummage reports its compliance review findings back
+    // to tend via @tend, not directly to the user. The prompt must state this.
+    #[test]
+    fn test_spec_rummage_compliance_review_reports_to_tend() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("Report back via `@tend`") || prompt.contains("Report back via @tend"),
+            "rummage prompt must state compliance review findings are reported to tend via @tend",
+        );
+    }
+
+    // spec (batch-review): in compliance review mode, rummage does not write
+    // fixes, does not write tests, does not emit /run, and does not enter the
+    // case-2 dispatch path. The prompt must state these as out-of-scope.
+    #[test]
+    fn test_spec_rummage_compliance_review_no_fixes_or_case2() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("Out of scope in this mode"),
+            "rummage prompt must mark fixes/tests/run-dispatch as out of scope in compliance review mode",
+        );
+        assert!(
+            prompt.contains("do not write fixes") || prompt.contains("not write fixes"),
+            "rummage prompt must forbid writing fixes in compliance review mode",
+        );
+        assert!(
+            prompt.contains("do not emit `/run`") || prompt.contains("not emit `/run`"),
+            "rummage prompt must forbid emitting /run in compliance review mode",
+        );
+        assert!(
+            prompt.contains("do not communicate directly to the user")
+                || prompt.contains("not communicate directly to the user"),
+            "rummage prompt must state it does not communicate directly to the user in this mode",
+        );
+    }
+
     // spec (peer-consult): rummage's prompt must describe the @tend
     // peer-consultation syntax for getting intent context.
     #[test]
@@ -437,6 +524,22 @@ mod tests {
         assert!(
             prompt.contains("Peer consultation"),
             "rummage prompt must have a Peer consultation section",
+        );
+    }
+
+    // spec (peer-consult): the prompt must frame the @tend consultation as a
+    // profile-gap decision — tend holds the *should* which rummage cannot derive
+    // from code or goal text; the consultation route is not a task handoff.
+    #[test]
+    fn test_spec_rummage_prompt_names_profile_gap_rationale() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("profile-gap"),
+            "rummage prompt must name the @tend consultation as a profile-gap decision, not a task handoff",
+        );
+        assert!(
+            prompt.contains("not a task handoff"),
+            "rummage prompt must distinguish profile-gap from a task handoff",
         );
     }
 
