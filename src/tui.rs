@@ -135,11 +135,11 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(block, area);
 
     let (prompt, prompt_style): (&str, Style) = match app.active_agent {
-        ActiveAgent::Tinker => match &app.phase {
+        ActiveAgent::Tend => match &app.phase {
             Phase::Initializing => ("… ", Style::default().fg(Color::DarkGray)),
             Phase::AwaitingConfirm(_) => ("▶ ", Style::default().fg(Color::Yellow)),
-            _ if app.tinker_tasks > 0 => ("… ", Style::default().fg(Color::DarkGray)),
-            _ => ("tinker> ", Style::default().fg(Color::Yellow)),
+            _ if app.tend_tasks > 0 => ("… ", Style::default().fg(Color::DarkGray)),
+            _ => ("tend> ", Style::default().fg(Color::Yellow)),
         },
         ActiveAgent::Rummage => {
             if app.rummage_tasks > 0 {
@@ -157,7 +157,7 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     };
     let input_locked = match app.active_agent {
-        ActiveAgent::Tinker => app.tinker_tasks > 0 || app.phase == Phase::Initializing,
+        ActiveAgent::Tend => app.tend_tasks > 0 || app.phase == Phase::Initializing,
         ActiveAgent::Rummage => app.rummage_tasks > 0,
         ActiveAgent::Jog => app.jog_tasks > 0,
     };
@@ -812,7 +812,7 @@ mod tests {
     /// undercounting, no cursor-row clipping below the cap.
     #[test]
     fn test_spec_input_pane_height_matches_paragraph_line_count() {
-        let prompt = "tinker> ";
+        let prompt = "tend> ";
         let cursor = "█";
         let inputs = [
             "",
@@ -854,7 +854,7 @@ mod tests {
     /// `input_area.y + input_area.height - 1`.
     #[test]
     fn test_spec_input_pane_scrolls_to_keep_cursor_row_visible() {
-        let prompt = "tinker> ";
+        let prompt = "tend> ";
         let cursor = "█";
         // Long input that wraps to many rows at a narrow width.
         let mut input = String::new();
@@ -1224,8 +1224,8 @@ mod tests {
             "TUI source must contain the rummage> prompt tag string",
         );
         assert!(
-            tui_rs.contains("tinker>"),
-            "TUI source must contain the tinker> prompt tag string",
+            tui_rs.contains("tend>"),
+            "TUI source must contain the tend> prompt tag string",
         );
     }
 

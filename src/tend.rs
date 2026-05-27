@@ -5,13 +5,13 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 #[derive(Debug)]
-pub enum TinkerEvent {
+pub enum TendEvent {
     SessionId(String),
     Text(String),
     Done,
 }
 
-/// Send a message to tinker and stream events back via `tx`.
+/// Send a message to tend and stream events back via `tx`.
 /// Returns the full accumulated reply text (all chunks concatenated), or an
 /// empty string on error, so callers can log the reply without a separate buffer.
 pub async fn send_message(
@@ -19,48 +19,47 @@ pub async fn send_message(
     message: &str,
     session_id: Option<&str>,
     work_dir: &Path,
-    tx: mpsc::Sender<TinkerEvent>,
+    tx: mpsc::Sender<TendEvent>,
 ) -> Result<String> {
     let tx_sid = tx.clone();
     let tx_txt = tx.clone();
     let full_reply: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let full_reply_clone = full_reply.clone();
     let on_sid: Box<dyn FnMut(String) + Send> = Box::new(move |sid: String| {
-        let _ = tx_sid.try_send(TinkerEvent::SessionId(sid));
+        let _ = tx_sid.try_send(TendEvent::SessionId(sid));
     });
     let on_chunk: Box<dyn FnMut(String) + Send> = Box::new(move |chunk: String| {
         full_reply_clone.lock().unwrap().push_str(&chunk);
-        let _ = tx_txt.try_send(TinkerEvent::Text(chunk));
+        let _ = tx_txt.try_send(TendEvent::Text(chunk));
     });
     let res = oc.run(message, session_id, work_dir, on_sid, on_chunk).await;
     if let Err(e) = &res {
-        let _ = tx.try_send(TinkerEvent::Text(format!("\n[Error: {}]\n", e)));
+        let _ = tx.try_send(TendEvent::Text(format!("\n[Error: {}]\n", e)));
     }
-    let _ = tx.send(TinkerEvent::Done).await;
+    let _ = tx.send(TendEvent::Done).await;
     let reply = full_reply.lock().unwrap().clone();
     res.map(|_| reply)
 }
 
-/// Returns the content for the `tinker` opencode agent file (compact-index mode).
-/// This is the static system prompt — persona, procedures, tinkering rules.
+/// Returns the content for the `tend` opencode agent file (compact-index mode).
+/// This is the static system prompt — persona, procedures, rules.
 /// The dynamic state (current goals) is passed separately over stdin.
-pub fn tinker_agent_content() -> String {
-    tinker_agent_content_impl(false)
+pub fn tend_agent_content() -> String {
+    tend_agent_content_impl(false)
 }
 
-/// Same as `tinker_agent_content` but suppresses the compact-index section.
-/// When --tinker-full-goal-context is set, full goal text is injected instead
+/// Same as `tend_agent_content` but suppresses the compact-index section.
+/// When --tend-full-goal-context is set, full goal text is injected instead
 /// of the compact index, making the pull-when-in-doubt instructions irrelevant.
 /// The summary write protocol is kept regardless.
-pub fn tinker_agent_content_full_context() -> String {
-    tinker_agent_content_impl(true)
+pub fn tend_agent_content_full_context() -> String {
+    tend_agent_content_impl(true)
 }
 
-fn tinker_agent_content_impl(full_context: bool) -> String {
+fn tend_agent_content_impl(full_context: bool) -> String {
     let content = r#"---
 description: >-
-  Tinker — manages goals, interviews the user, tinkers
-  with scratch code to answer questions from execution, and watches for
+  Tend — manages goals, interviews the user, and watches for
   reframes when the current goal stops being the right question. Never writes
   production code directly.
 mode: primary
@@ -72,7 +71,7 @@ permission:
   lsp: deny
   skill: deny
 ---
-You are `tinker`, an autonomous coding assistant.
+You are `tend`, an autonomous coding assistant.
 
 You do three things, all interdependent:
 
@@ -88,7 +87,7 @@ The three feed each other: grounding in code reality requires good goals to shap
 
 **You are a convention engine.** You are excellent at executing rules faithfully and precisely, cross-referencing many conflicting goals at once, finding synergies and conflicts, and building features within established conventions. You are not equipped for judgment that requires being embedded in the user's practice — the situated, tacit, embodied judgment of someone with real skin in the game. When you appear to generate a new framing or principle, you are retrieving and adapting a pattern from training; the user's judgment is what makes that adaptation real.
 
-**The user is a reflective practitioner** (Donald Schön's term for expert practitioners who bring *knowing-in-action* — tacit, situated judgment that cannot be codified in advance). The user surfaces friction, intuition, and dissatisfaction with what currently exists. Their "this resonates" or "this doesn't feel right" terminates each round of the dialectic with a judgment grounded in real practice. Tinker is named after what the user does — the reflective tinkering — not after the system that executes.
+**The user is a reflective practitioner** (Donald Schön's term for expert practitioners who bring *knowing-in-action* — tacit, situated judgment that cannot be codified in advance). The user surfaces friction, intuition, and dissatisfaction with what currently exists. Their "this resonates" or "this doesn't feel right" terminates each round of the dialectic with a judgment grounded in real practice.
 
 **Goals are the lossy bridge between intuition and convention.** A goal is the crystallized output of dialogue: the user's tacit judgment, surfaced through conversation and articulated by you, becomes an explicit convention you can then faithfully execute and cross-reference. This conversion is *lossy* — a convention is always more general than the situated intuition that produced it. Conventions degrade as situations drift, which is why the dialectic must continue after a goal is written; the goal is never the full picture.
 
@@ -198,9 +197,16 @@ Surface candidates to the user — a claim without a clear anchor, a negative wi
 
 ### Triggering goal sessions — /run
 
-After editing or creating a goal, when you want the goal session to act on it, emit a line `/run <goal-id> <reason>` somewhere in your reply. The reason is a focused one-line description of what the session should do now. Multiple `/run` lines are allowed. There is no separate "log" or "changelog" field on the file — the trigger happens in the chat, not in the TOML.
+After editing or creating a goal, when you want the goal session to act on it, emit a line `/run <goal-id> <reason>` somewhere in your reply. Multiple `/run` lines are allowed. There is no separate "log" or "changelog" field on the file — the trigger happens in the chat, not in the TOML.
 
 Use this anywhere it helps — after creating a new goal, after editing an existing one, or when an unrelated goal needs to react to the conversation.
+
+**Spec-first discipline.** Before emitting any `/run` line, always update the relevant goal spec first. The session reads the updated spec and derives its own work from it. The reason in every `/run <goal-id> <reason>` you emit is a **declarative pointer to a spec delta** — what changed in the goal, or what changed in the environment the goal might react to. Never an imperative describing what to build.
+
+Correct: `"backends goal updated: --help/-h flag added to startup scope"`
+Wrong: `"add --help/-h flag to the binary"`
+
+Feeding implementation instructions through the reason field bypasses the spec process where that intent belongs. User-typed reasons at the input prompt are exempt as a pragmatic escape hatch.
 
 #### Post-batch reactive scheduling
 
@@ -247,7 +253,7 @@ children = ["calc-trig"]  # PRESERVE
 
 Then in your reply, include:
 
-/run calc Add modulo support per the updated spec.
+/run calc calc goal updated: modulo operator added to arithmetic operator set
 
 Goal file format (minimal shape, full description structure documented in Phase 4):
 ```toml
@@ -272,7 +278,7 @@ Emit `@<agent-name> <message>` on its own line to send a one-way message to anot
 
 You never read source for comprehension and never write probe code — those belong to rummage. You may also consult `@jog` on intent-alignment questions.
 
-Rummage or jog may reply in the normal conversation stream; apply the reply, follow up, or discard it. You may also receive incoming `@tinker` consultations from rummage or jog — process them as part of your current conversation. Consultations can nest freely.
+Rummage or jog may reply in the normal conversation stream; apply the reply, follow up, or discard it. You may also receive incoming `@tend` consultations from rummage or jog — process them as part of your current conversation. Consultations can nest freely.
 
 Multiple `@` lines per reply are allowed.
 
@@ -436,7 +442,7 @@ When you reframe the conversation itself — introduce a new distinction, shift 
 
 ## Who holds what, and what surfaces to the user
 
-**Should and is.** The user holds the *should* — their intent, decisions, vetted goal contents, observations they are investigating, and terms you have mutually established. Tinker holds the *is* — the current state of every artifact those decisions get realized in: files, processes, build outputs, caches, derived data, and side effects of any past action. Never ask the user to remember what state the system is in. When your reasoning depends on the *is*, verify by observation — check the filesystem, run a probe, read output directly. Inference does not substitute for checking.
+**Should and is.** The user holds the *should* — their intent, decisions, vetted goal contents, observations they are investigating, and terms you have mutually established. Tend holds the *is* — the current state of every artifact those decisions get realized in: files, processes, build outputs, caches, derived data, and side effects of any past action. Never ask the user to remember what state the system is in. When your reasoning depends on the *is*, verify by observation — check the filesystem, run a probe, read output directly. Inference does not substitute for checking.
 
 **What surfaces to the user.** The user is exposed to exactly two kinds of thing. First, the *interface* of any tool they touch — the path to invoke it, the flag names, environment variables to set, starting and stopping. These are exposed as-is: the user needs them in order to operate the tool. Second, the *is* — but only filtered through what the user is known to know: features, architectural concepts, observable behavior. Raw code identifiers, file paths, or internal symbols never surface to the user without that filtering. Everything behind the interface, and any *is* not yet translated through the shared vocabulary, is tinker's concern alone.
 
@@ -448,7 +454,7 @@ The user does not read source code. Default to conceptual, architectural explana
 
 This rule covers every user-facing surface: your chat output, the batch summaries you compose from goal session reports, and any human-readable documentation goal sessions write into the project tree — READMEs, in-tree guides, and human-targeted code comments. Artifacts explicitly authored for LLM consumption (for example, `AGENTS.md` produced by the `project-indexer` goal) are exempt; they keep full technical fidelity because their audience is another agent, not the user.
 
-Goal sessions reach this rule through the neighborhood table: a session sees `shared-language` when its goal — or a goal it pulls from its neighborhood — carries a `related` link to `shared-language`. Goals that produce user-facing text (`tinker`, `rummage`, `tui`) each carry that link, so any session running under those goals inherits the shared-language standard without a separate reminder from you.
+Goal sessions reach this rule through the neighborhood table: a session sees `shared-language` when its goal — or a goal it pulls from its neighborhood — carries a `related` link to `shared-language`. Goals that produce user-facing text (`tend`, `rummage`, `tui`) each carry that link, so any session running under those goals inherits the shared-language standard without a separate reminder from you.
 
 You fully own the vocabulary file at `.tinker/state/vocabulary.txt`. This file tracks every technical term (file path, function name, internal type, variable, module) the user has demonstrated knowledge of. Update it silently with the Write tool when the user explicitly mentions a term, or when a term is formally written into a goal file. don't ask permission; don't mention its existence to the user. Goal sessions read the vocabulary file but do not write to it.
 
@@ -483,10 +489,10 @@ Do not talk about taking a note. Do not interrupt the user's chain of thought. W
 
 {vcs_rules}
     "#.replace("{vcs_rules}", crate::goal_session::VCS_RULES);
-    if full_context { suppress_compact_index_section(&content) } else { content }
+    if full_context { suppress_compact_index_section_for_tend(&content) } else { content }
 }
 
-fn suppress_compact_index_section(content: &str) -> String {
+fn suppress_compact_index_section_for_tend(content: &str) -> String {
     // Remove "## Goal index" through the Pull strategy paragraph.
     // "Write protocol for `summary`" stays — it's active regardless of context mode.
     let section_start = "## Goal index\n";
@@ -497,19 +503,19 @@ fn suppress_compact_index_section(content: &str) -> String {
     }
 }
 
-/// Build the dynamic stdin prompt for tinker — the compact goal index.
-/// The static system prompt lives in the agent file (`tinker.md`).
-pub fn tinker_init_prompt(goals_summary: &str) -> String {
+/// Build the dynamic stdin prompt for tend — the compact goal index.
+/// The static system prompt lives in the agent file (`tend.md`).
+pub fn tend_init_prompt(goals_summary: &str) -> String {
     format!(
         r#"## Current goals (compact index — pull full text on demand)
 {goals_summary}"#
     )
 }
 
-/// Build the dynamic stdin prompt for tinker in full-context mode.
-/// Used with --tinker-full-goal-context: full goal text is already included,
+/// Build the dynamic stdin prompt for tend in full-context mode.
+/// Used with --tend-full-goal-context: full goal text is already included,
 /// so the label reflects that rather than referencing the compact index.
-pub fn tinker_init_prompt_full_context(goals_summary: &str) -> String {
+pub fn tend_init_prompt_full_context(goals_summary: &str) -> String {
     format!(
         r#"## Current goals (full text)
 {goals_summary}"#
@@ -526,7 +532,7 @@ mod tests {
     // surface that drives it.
     #[test]
     fn test_spec_tinker_prompt_names_four_structural_operations() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(content.contains("Merge"), "prompt must name Merge");
         assert!(content.contains("Nest Down"), "prompt must name Nest Down");
         assert!(content.contains("Nest Up"), "prompt must name Nest Up");
@@ -538,7 +544,7 @@ mod tests {
     // explicitly, not paraphrase it away.
     #[test]
     fn test_spec_tinker_prompt_uses_level_of_detail_coherence_heuristic() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("level of detail coherence"),
             "prompt must use the user-vetted heuristic phrase verbatim",
@@ -550,7 +556,7 @@ mod tests {
     // describe that reparenting action, not just the existence of a new root.
     #[test]
     fn test_spec_tinker_prompt_describes_nest_up_reparents_existing() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         // The Nest Up section talks about a broader umbrella and editing each
         // existing child to set `parent_id` to the new parent.
         assert!(content.contains("Nest Up"));
@@ -570,7 +576,7 @@ mod tests {
     // tree is described as a collaborative artifact and the rules as a guide.
     #[test]
     fn test_spec_tinker_prompt_framed_collaboratively_not_rigidly() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("collaborative"),
             "prompt must frame the structural rules as collaborative",
@@ -587,7 +593,7 @@ mod tests {
     // recognizes it.
     #[test]
     fn test_spec_tinker_prompt_documents_slash_run_trigger_syntax() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("/run <goal-id>"),
             "prompt must document the `/run <goal-id> <reason>` trigger syntax",
@@ -599,7 +605,7 @@ mod tests {
     // user does not read source code. The prompt must state this explicitly.
     #[test]
     fn test_spec_tinker_prompt_defaults_to_conceptual_explanations() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("user does not read source code"),
             "prompt must state that the user does not read source code",
@@ -615,7 +621,7 @@ mod tests {
     // must name this exact path so tinker manages the right file.
     #[test]
     fn test_spec_tinker_prompt_names_vocabulary_state_file() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains(".tinker/state/vocabulary.txt"),
             "prompt must reference the persistent vocabulary file at .tinker/state/vocabulary.txt",
@@ -627,7 +633,7 @@ mod tests {
     // mentions the file to the user.
     #[test]
     fn test_spec_tinker_prompt_owns_vocabulary_file_silently() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("fully own") || content.contains("fully owns"),
             "prompt must state tinker fully owns the vocabulary file",
@@ -651,7 +657,7 @@ mod tests {
     // goal file. The prompt must state both triggers.
     #[test]
     fn test_spec_tinker_prompt_states_vocabulary_entry_triggers() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("user explicitly mentions") || content.contains("explicitly mentions a term"),
             "prompt must state that a term enters the vocab file when the user explicitly mentions it",
@@ -668,7 +674,7 @@ mod tests {
     // anchor the term to a known architectural/feature concept.
     #[test]
     fn test_spec_tinker_prompt_requires_anchoring_unknown_terms() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("strong reason"),
             "prompt must require a strong reason to use an unknown technical term",
@@ -685,7 +691,7 @@ mod tests {
     // tinker from opencode's default software-engineer persona.
     #[test]
     fn test_spec_tinker_agent_file_frontmatter_denies_task_and_todowrite() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.starts_with("---\n"),
             "agent file must begin with YAML frontmatter delimiter",
@@ -710,7 +716,7 @@ mod tests {
     // The frontmatter must therefore NOT deny these tools.
     #[test]
     fn test_spec_tinker_agent_does_not_deny_write_edit_bash() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         let after = content
             .strip_prefix("---\n")
             .expect("agent file starts with frontmatter");
@@ -739,7 +745,7 @@ mod tests {
     // and deny webfetch.
     #[test]
     fn test_spec_tinker_agent_allows_websearch_denies_webfetch() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         let after = content
             .strip_prefix("---\n")
             .expect("agent file starts with frontmatter");
@@ -762,12 +768,12 @@ mod tests {
     // init prompt must carry the goals.
     #[test]
     fn test_spec_tinker_static_persona_in_agent_dynamic_goals_in_init() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
-            content.contains("You are `tinker`"),
+            content.contains("You are `tend`"),
             "agent file must contain the static persona/system prompt",
         );
-        let init = tinker_init_prompt("- demo-goal-id: a demo description");
+        let init = tend_init_prompt("- demo-goal-id: a demo description");
         assert!(
             init.contains("Current goals"),
             "init prompt must label the dynamic goals section",
@@ -788,7 +794,7 @@ mod tests {
     // the shared `VCS_RULES` constant substituted into the agent prompt.
     #[test]
     fn test_spec_tinker_prompt_forbids_vcs_mutation() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains(crate::goal_session::VCS_RULES),
             "agent prompt must embed the shared VCS_RULES read-only directive",
@@ -808,7 +814,7 @@ mod tests {
     // The prompt must state the rule and the explicit failure mode it prevents.
     #[test]
     fn test_spec_tinker_proves_by_execution_not_reading_source() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("never read source for comprehension")
                 || content.contains("never reads source for comprehension"),
@@ -825,7 +831,7 @@ mod tests {
     // alternative, not just stenographic "rummage found this, here's what it means".
     #[test]
     fn test_spec_tinker_prompt_directs_active_design_partner_reporting() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("design partner"),
             "prompt must frame tinker as a design partner when reporting rummage findings",
@@ -842,7 +848,7 @@ mod tests {
     // sessions write into the project tree.
     #[test]
     fn test_spec_shared_language_covers_documentation_written_by_goal_sessions() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("READMEs") || content.contains("README"),
             "prompt must state the shared-language rule extends to READMEs goal sessions write",
@@ -862,7 +868,7 @@ mod tests {
     // the shared-language rule. The prompt must name this exemption.
     #[test]
     fn test_spec_shared_language_llm_targeted_artifacts_exempt() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("AGENTS.md"),
             "prompt must name AGENTS.md as an example of an LLM-targeted artifact that is exempt",
@@ -879,7 +885,7 @@ mod tests {
     // need to manually propagate the rule to each session.
     #[test]
     fn test_spec_shared_language_goal_sessions_inherit_via_related_link() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("neighborhood table") && content.contains("related"),
             "prompt must explain that goal sessions reach the shared-language rule via related links in the neighborhood table",
@@ -895,7 +901,7 @@ mod tests {
     // encountered an unknown term anchors it rather than updating the file.
     #[test]
     fn test_spec_shared_language_goal_sessions_read_vocab_not_write() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("Goal sessions read the vocabulary file but do not write to it"),
             "prompt must state that goal sessions read but do not write the vocabulary file",
@@ -907,7 +913,7 @@ mod tests {
     // to a known concept on first use. The prompt must state this allowance.
     #[test]
     fn test_spec_shared_language_deeper_sections_allowed_with_anchoring() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("deeper sections") || content.contains("more technical in deeper"),
             "prompt must state documentation may go more technical in deeper sections",
@@ -924,7 +930,7 @@ mod tests {
     // make this explicit so tinker does not create parallel files.
     #[test]
     fn test_spec_shared_language_single_vocabulary_file_source_of_truth() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("single source of truth") || content.contains("no separate doc vocabulary"),
             "prompt must state the vocabulary file is the single source of truth (no separate doc vocabulary)",
@@ -936,7 +942,7 @@ mod tests {
     // does not default to tables and bullet surveys when a sentence would serve.
     #[test]
     fn test_spec_shared_language_form_norm_minimum_viable_shape() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("minimum form") || content.contains("minimum viable"),
             "prompt must name the form norm: replies default to the minimum form",
@@ -948,7 +954,7 @@ mod tests {
     // gate so tinker does not produce them by default.
     #[test]
     fn test_spec_shared_language_form_norm_no_unrequested_tables_or_lists() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("user asks") || content.contains("user explicitly asks") || content.contains("explicitly asks"),
             "prompt must state tables/lists are appropriate only when the user explicitly asks",
@@ -963,7 +969,7 @@ mod tests {
     // regardless of length. The prompt must name this explicitly.
     #[test]
     fn test_spec_shared_language_form_norm_no_formulaic_replies() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("Formulaic") || content.contains("formulaic"),
             "prompt must name formulaic template replies as a form-norm violation",
@@ -975,7 +981,7 @@ mod tests {
     // name this exemption so it is not misapplied when composing batch messages.
     #[test]
     fn test_spec_shared_language_form_norm_rummage_documents_exempt() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             (content.contains("Rummage") || content.contains("rummage"))
                 && content.contains("exempt"),
@@ -989,7 +995,7 @@ mod tests {
     // points; the user's situated intuition is the only valid source.
     #[test]
     fn test_spec_tinker_encodes_dual_duty_no_fabrication_at_inflection_points() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("Dual duty"),
             "prompt must describe tinker's dual duty",
@@ -1009,7 +1015,7 @@ mod tests {
     // bridge between tacit intuition and executable convention.
     #[test]
     fn test_spec_tinker_encodes_convention_engine_reflective_practitioner_lossy_bridge() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("convention engine"),
             "prompt must frame tinker as a convention engine",
@@ -1036,7 +1042,7 @@ mod tests {
     // written — the goal is never the full picture.
     #[test]
     fn test_spec_creative_process_dialectical_loop_continues_after_goal_written() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("each round of the dialectic"),
             "prompt must describe the dialectical loop as having rounds the user terminates",
@@ -1052,7 +1058,7 @@ mod tests {
     // tinker should drop.
     #[test]
     fn test_spec_tinker_tone_downstream_of_role_drop_deference_layer() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("Tone follows from role"),
             "prompt must frame tone as downstream of role, not an independent principle",
@@ -1069,7 +1075,7 @@ mod tests {
     // the axis change. The prompt must state this as a named, surfaced action.
     #[test]
     fn test_spec_reframing_is_first_class_and_always_named() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("first-class move"),
             "prompt must state that reframing is a first-class move, not an edge case",
@@ -1089,14 +1095,14 @@ mod tests {
     // artifacts). The prompt must encode this boundary explicitly.
     #[test]
     fn test_spec_user_holds_should_tinker_holds_is() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("user holds the *should*"),
             "prompt must state that the user holds the should",
         );
         assert!(
-            content.contains("Tinker holds the *is*"),
-            "prompt must state that tinker holds the is",
+            content.contains("Tend holds the *is*"),
+            "prompt must state that tend holds the is",
         );
     }
 
@@ -1105,7 +1111,7 @@ mod tests {
     // remember, and never by inference substituting for checking.
     #[test]
     fn test_spec_is_state_verified_by_observation_not_inference() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("verify by observation"),
             "prompt must instruct tinker to verify is-state by observation",
@@ -1123,7 +1129,7 @@ mod tests {
     // applications of this broader principle.
     #[test]
     fn test_spec_two_surface_exposure_and_downstream_framing() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("flag names"),
             "prompt must describe the interface surface including flag names",
@@ -1143,7 +1149,7 @@ mod tests {
     // this exact path so tinker writes to the right place.
     #[test]
     fn test_spec_tinker_notes_names_correct_file_path() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains(".tinker/notes/notes.md"),
             "prompt must reference the notes file at .tinker/notes/notes.md",
@@ -1155,7 +1161,7 @@ mod tests {
     // framing slip, and explicit "remember this".
     #[test]
     fn test_spec_tinker_notes_all_triggers_named() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(content.contains("Friction"), "prompt must name Friction trigger");
         assert!(content.contains("Surprise"), "prompt must name Surprise trigger");
         assert!(content.contains("Reframe"), "prompt must name Reframe trigger");
@@ -1174,7 +1180,7 @@ mod tests {
     // must state this explicitly and must not frame notes as problems.
     #[test]
     fn test_spec_tinker_notes_observe_without_judging_tone() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("observe without judging"),
             "prompt must instruct 'observe without judging' tone for notes",
@@ -1190,7 +1196,7 @@ mod tests {
     // — same pattern as the vocabulary file.
     #[test]
     fn test_spec_tinker_notes_writing_is_silent() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("Do not talk about taking a note")
                 || content.contains("do not talk about taking a note"),
@@ -1229,7 +1235,7 @@ mod tests {
 
     // spec (tinker-agent): the agent file is always overwritten on startup
     // (not only when missing) so the installed copy stays in sync with
-    // tinker_agent_content() as the persona evolves. Guarding the write
+    // tend_agent_content() as the persona evolves. Guarding the write
     // behind an existence check leaves stale agent files in place across runs.
     #[test]
     fn test_spec_agent_file_always_overwritten_not_guarded_by_exists_check() {
@@ -1239,7 +1245,7 @@ mod tests {
         assert!(
             !main_rs.contains("if !agent_path.exists()"),
             "main.rs must not guard the agent-file write behind an existence check; \
-             the file must always be overwritten to stay in sync with tinker_agent_content()",
+             the file must always be overwritten to stay in sync with tend_agent_content()",
         );
     }
 
@@ -1249,7 +1255,7 @@ mod tests {
     // over conflicts between goals.
     #[test]
     fn test_spec_tinker_prompt_frames_cross_goal_alignment_as_pareto_tradeoffs() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("multi-variable optimization"),
             "prompt must frame software design as multi-variable optimization",
@@ -1268,7 +1274,7 @@ mod tests {
     // speculative runs.
     #[test]
     fn test_spec_tinker_prompt_describes_post_batch_reactive_scheduling() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("Post-batch reactive scheduling"),
             "prompt must have a Post-batch reactive scheduling section",
@@ -1292,7 +1298,7 @@ mod tests {
     // detail coherence" heuristic as a single coherent surface check.
     #[test]
     fn test_spec_tinker_prompt_treats_modify_as_merge() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(content.contains("Merge"), "prompt must name Merge");
         assert!(content.contains("Nest Down"), "prompt must name Nest Down");
         assert!(content.contains("Nest Up"), "prompt must name Nest Up");
@@ -1313,7 +1319,7 @@ mod tests {
     // playback, or a write."
     #[test]
     fn test_spec_one_question_per_turn_rule_in_prompt() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("one question per turn"),
             "prompt must mandate one question per turn",
@@ -1344,7 +1350,7 @@ mod tests {
     // the playback before the file is written."
     #[test]
     fn test_spec_playback_required_before_write() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("Playback step (required before writing)"),
             "prompt must declare the playback step required before writing",
@@ -1372,7 +1378,7 @@ mod tests {
     // prompt must state this foundation explicitly, not just assert the behavior.
     #[test]
     fn test_spec_playback_reaction_is_epistemically_irreplaceable() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("epistemically required"),
             "prompt must frame the playback wait as epistemically required, not just a quality check",
@@ -1393,7 +1399,7 @@ mod tests {
     // writing. No exemptions for 'small' or 'minor' edits."
     #[test]
     fn test_spec_cross_goal_alignment_no_exemptions_for_edits() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         // The "no exemptions" stance for edits must be encoded literally.
         assert!(
             content.contains("no exemptions for \"small\" or \"minor\" edits"),
@@ -1412,7 +1418,7 @@ mod tests {
     // not in the conversation."
     #[test]
     fn test_spec_redirects_direct_build_requests_to_goals() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("If the user asks you to build something directly, redirect"),
             "prompt must instruct tinker to redirect direct build requests",
@@ -1430,7 +1436,7 @@ mod tests {
     // positive reformulation — never a replacement dictate.
     #[test]
     fn test_spec_decisions_vs_how_separation() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         // Phase 4 must not describe a DECISIONS or HOW section.
         assert!(
             !content.contains("DECISIONS (vetted)"),
@@ -1459,7 +1465,7 @@ mod tests {
     // arrays/strings for `parent_id` and `children`."
     #[test]
     fn test_spec_preserve_markers_in_edit_template() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         // The worked example must mark parent_id and children with PRESERVE,
         // not empty literals like `""` or `[]`.
         assert!(
@@ -1504,7 +1510,7 @@ mod tests {
     // index, the pull-when-in-doubt strategy, and the summary write protocol.
     #[test]
     fn test_spec_tinker_prompt_describes_compact_goal_index() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("compact JSON index"),
             "prompt must describe the compact goal index format",
@@ -1527,7 +1533,7 @@ mod tests {
     // include the `summary` field so tinker writes it on every goal edit.
     #[test]
     fn test_spec_tinker_prompt_toml_examples_include_summary_field() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("summary = "),
             "TOML examples in the prompt must show the summary field",
@@ -1538,18 +1544,18 @@ mod tests {
     // update the `summary` field as part of the write turn.
     #[test]
     fn test_spec_tinker_phase4_instructs_summary_write() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("Write or update the `summary` field"),
             "Phase 4 must instruct writing the summary field",
         );
     }
 
-    // spec (compact-goal-context): --tinker-full-goal-context suppresses the
+    // spec (compact-goal-context): --tend-full-goal-context suppresses the
     // compact-index format description and pull strategy in the system prompt.
     #[test]
     fn test_spec_full_goal_context_suppresses_compact_index_section() {
-        let content = tinker_agent_content_full_context();
+        let content = tend_agent_content_full_context();
         assert!(
             !content.contains("compact JSON index"),
             "full-goal-context prompt must not describe the compact JSON index format",
@@ -1560,11 +1566,11 @@ mod tests {
         );
     }
 
-    // spec (compact-goal-context): --tinker-full-goal-context keeps the summary
+    // spec (compact-goal-context): --tend-full-goal-context keeps the summary
     // write protocol active — summaries are maintained regardless of context mode.
     #[test]
     fn test_spec_full_goal_context_keeps_summary_write_protocol() {
-        let content = tinker_agent_content_full_context();
+        let content = tend_agent_content_full_context();
         assert!(
             content.contains("Write protocol for `summary`"),
             "full-goal-context prompt must still include the summary write protocol",
@@ -1575,7 +1581,7 @@ mod tests {
     // as full text, not as a compact index.
     #[test]
     fn test_spec_tinker_init_prompt_full_context_label() {
-        let prompt = tinker_init_prompt_full_context("### root\ndescription here");
+        let prompt = tend_init_prompt_full_context("### root\ndescription here");
         assert!(
             prompt.contains("full text"),
             "full-context init prompt must label goals as full text",
@@ -1593,15 +1599,15 @@ mod tests {
     // worked-example illustration and the explicit disavowal of change_log.
     #[test]
     fn test_spec_emits_run_command_no_change_log_field() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("Triggering goal sessions"),
             "prompt must have a section explaining how to trigger goal sessions",
         );
-        // The worked example must demonstrate a concrete /run line.
+        // The worked example must demonstrate a declarative /run line (not imperative).
         assert!(
-            content.contains("/run calc Add modulo support per the updated spec."),
-            "worked example must show a concrete /run <goal-id> <reason> line",
+            content.contains("/run calc calc goal updated:"),
+            "worked example must show a concrete declarative /run <goal-id> <reason> line",
         );
         // The change_log field must be explicitly disavowed on the goal file.
         assert!(
@@ -1610,12 +1616,62 @@ mod tests {
         );
     }
 
+    // spec (tend): before emitting any /run line, tend must update the relevant
+    // goal spec first. The session reads the updated spec and derives its own
+    // work from it — the trigger without the spec update gives the session
+    // nothing authoritative to act on.
+    #[test]
+    fn test_spec_run_discipline_spec_first_required() {
+        let content = tend_agent_content();
+        assert!(
+            content.contains("Spec-first discipline"),
+            "prompt must name the spec-first /run discipline",
+        );
+        assert!(
+            content.contains("always update the relevant goal spec first"),
+            "prompt must instruct updating the spec before emitting /run",
+        );
+    }
+
+    // spec (tend): the reason in every tend-emitted /run must be a declarative
+    // pointer to a spec delta, not an imperative describing what to build.
+    // The prompt must state this rule and show the contrast explicitly.
+    #[test]
+    fn test_spec_run_discipline_declarative_reason() {
+        let content = tend_agent_content();
+        assert!(
+            content.contains("declarative pointer to a spec delta"),
+            "prompt must describe the reason as a declarative spec-delta pointer",
+        );
+        assert!(
+            content.contains("Never an imperative describing what to build"),
+            "prompt must explicitly prohibit imperative /run reasons",
+        );
+        assert!(
+            content.contains("Correct:") && content.contains("Wrong:"),
+            "prompt must show a correct vs wrong example of /run reason form",
+        );
+    }
+
+    // spec (tend): user-typed /run reasons at the input prompt are exempt from
+    // the declarative-reason rule as a pragmatic escape hatch. The prompt must
+    // state this exemption so the rule is not misapplied to manual dispatches.
+    #[test]
+    fn test_spec_run_discipline_user_typed_exempt() {
+        let content = tend_agent_content();
+        assert!(
+            content.contains("User-typed reasons at the input prompt are exempt")
+                || content.contains("user-typed reasons at the input prompt are exempt"),
+            "prompt must state that user-typed /run reasons are exempt from the declarative-reason rule",
+        );
+    }
+
     // spec (goal-structure-standard): the TOML schema in the edit protocol must
     // document the `related` field so tinker knows the field exists and
     // how to write it. Without this, new related-links never get written.
     #[test]
     fn test_spec_tinker_prompt_related_field_in_toml_schema() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("related = [...]"),
             "prompt TOML schema must show the related field with a PRESERVE comment",
@@ -1631,7 +1687,7 @@ mod tests {
     // created or edited, and update the parent in the same write turn if needed.
     #[test]
     fn test_spec_tinker_prompt_parent_summary_recheck_when_child_edited() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("Re-check parent summary"),
             "prompt must include a 'Re-check parent summary' write-protocol step",
@@ -1647,7 +1703,7 @@ mod tests {
     // partner goal must also list back. Partner fix happens in the same write turn.
     #[test]
     fn test_spec_tinker_prompt_related_links_symmetric_both_list_each_other() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("Re-validate related-link symmetry"),
             "prompt must include a 'Re-validate related-link symmetry' step",
@@ -1664,7 +1720,7 @@ mod tests {
     // transitive links.
     #[test]
     fn test_spec_tinker_prompt_related_transitivity_not_automatic() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("transitivity is not") || content.contains("Transitivity is not"),
             "prompt must state that related-link transitivity is not automatic",
@@ -1680,7 +1736,7 @@ mod tests {
     // The prompt must name the tactic set and all five tactics by name.
     #[test]
     fn test_spec_tinker_applies_goal_craft_five_tactics() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("goal-craft"),
             "prompt must reference goal-craft explicitly",
@@ -1712,7 +1768,7 @@ mod tests {
     // all three so tinker knows when to scan for violations.
     #[test]
     fn test_spec_tinker_goal_craft_applies_at_creation_editing_alignment() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("goal creation") || content.contains("Goal creation"),
             "prompt must state goal-craft tactics apply during goal creation",
@@ -1732,7 +1788,7 @@ mod tests {
     // state this enforcement posture so violations are never silently patched.
     #[test]
     fn test_spec_tinker_goal_craft_surface_not_auto_fix() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("Surface candidates to the user")
                 || content.contains("surface it to the user"),
@@ -1750,7 +1806,7 @@ mod tests {
     // negative — so tinker can apply the test during interviews.
     #[test]
     fn test_spec_tinker_anchor_test_names_three_categories() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("user intent or preference"),
             "prompt must name user intent/preference as an anchor category",
@@ -1769,7 +1825,7 @@ mod tests {
     // peer-consultation syntax so tinker knows to use it.
     #[test]
     fn test_spec_tinker_prompt_describes_peer_consultation_syntax() {
-        let content = tinker_agent_content();
+        let content = tend_agent_content();
         assert!(
             content.contains("@rummage"),
             "tinker prompt must mention @rummage as the primary peer-consultation target",

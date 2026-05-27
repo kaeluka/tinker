@@ -1,17 +1,17 @@
 id = "forward-generation"
-summary = "governs: shared producer role (tinker, goal-sessions); goal treated as authoritative; forward motion through intent→spec→code stack; input-observability drives autonomy (tacit intent=dialectical, written spec=autonomous) | triggers: framing producer methodology; why goal sessions run autonomously while tinker is human-coupled"
+summary = "governs: shared producer role (tend, goal-sessions); goal treated as authoritative; forward motion through intent→spec→code stack; input-observability drives autonomy (tacit intent=dialectical, written spec=autonomous) | triggers: framing producer methodology; why goal sessions run autonomously while tend is human-coupled"
 description = """
 ## WHAT
-The shared role of tinker's two **producer** agents, `tinker` and the
+The shared role of tinker's two **producer** agents, `tend` and the
 goal sessions. A forward generator moves forward through the
 intent→spec→code stack, building the next artifact from the previous
 one, and treats the goal as **authoritative** — the stance the
-skeptics (`divergence-investigation`) never take. `tinker` generates
+skeptics (`divergence-investigation`) never take. `tend` generates
 the written goal/spec from the user's tacit intent; the goal sessions
 generate code from the spec.
 
 The two children differ on the **observability of their input**, and
-that sets their autonomy. `tinker` generates from tacit intent, which
+that sets their autonomy. `tend` generates from tacit intent, which
 can only be drawn out by asking, so it is dialectical and
 human-coupled. The goal sessions generate from a written spec they can
 read, so they run autonomously. This is the mirror, on the generating
@@ -28,17 +28,17 @@ not arbitrary: it falls out of input observability, the same fact that
 splits the skeptics into dialectical and autonomous.
 
 ## SCOPE
-- In scope: the shared producer role across `tinker` and the goal
+- In scope: the shared producer role across `tend` and the goal
   sessions; forward generation through the stack; treating the goal as
   authoritative; the input-observability-driven autonomy split
-  (dialectical `tinker`, autonomous goal sessions).
+  (dialectical `tend`, autonomous goal sessions).
 - Out of scope: each producer's internal behavior (their own goals);
   the skeptic role (`divergence-investigation`); the stack model and
   its axes (`intent-to-code`).
 """
 parent_id = "intent-to-code"
-children = ["tinker", "goal-sessions"]
+children = ["tend", "goal-sessions"]
 
 [[related]]
 id = "divergence-investigation"
-reason = "The dual node on `intent-to-code`'s producer/skeptic axis. The branches interact through commissioning: a skeptic that finds a produced artifact wanting commissions its paired producer here to fix it (`jog`→`tinker`, `rummage`→a goal session)."
+reason = "The dual node on `intent-to-code`'s producer/skeptic axis. The branches interact through commissioning: a skeptic that finds a produced artifact wanting commissions its paired producer here to fix it (`jog`→`tend`, `rummage`→a goal session)."

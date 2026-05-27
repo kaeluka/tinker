@@ -3,7 +3,7 @@ summary = "governs: goal content quality; five tactics: anchor test (sparseness)
 description = """
 ## WHAT
 Operational rules for writing the content of a goal so it works as
-both a standing intent file and as the prompt tinker and goal
+both a standing intent file and as the prompt tend and goal
 sessions read.
 
 A goal is three synthesized sections — **WHAT**, **WHY**, **SCOPE** —
@@ -13,7 +13,7 @@ out-of-scope items under SCOPE. There is no DECISIONS section and no
 HOW section: user-vetted intent is woven into WHAT and WHY, and
 provenance (who said what, when) lives in `.tinker/notes/notes.md`,
 not in the goal. These rules apply to every goal file and are
-consumed by tinker during interviews, edits, and cross-goal
+consumed by tend during interviews, edits, and cross-goal
 alignment. (Goal sessions don't apply these rules — they don't write
 goals — they only read the well-formed goals these rules produce.)
 
@@ -41,7 +41,7 @@ Five tactics govern the content:
    by retrofitting one goal's content with another's constraints.
 
 4. **Goals are prompts.** Every goal does double duty as the prompt
-   tinker and goal sessions read. Five rules follow: (i) define terms
+   tend and goal sessions read. Five rules follow: (i) define terms
    before first use; (ii) use the same word for the same thing
    throughout the file and across sibling goals; (iii) reference
    other goals by id (`creative-process`, not "the dialectical-loop
@@ -61,14 +61,14 @@ Five tactics govern the content:
    contradiction surfaces where a list would have hidden it.
 
 These rules are enforced read-time, not by a mechanical write step.
-Tinker cites this goal when it surfaces a candidate violation during
+Tend cites this goal when it surfaces a candidate violation during
 an interview or cross-goal alignment — a claim without a clear
 anchor, a negative with a clean positive reformulation, content that
 belongs in a related-link, a decision-list creeping back in. The
 structural rules in `goal-structure-standard` (parent-summary,
 related-link symmetry) catch what breaks the moment it's written;
 content-quality rules degrade gracefully and rely on conversational
-application. Drift is handled the same way: when tinker edits a goal
+application. Drift is handled the same way: when tend edits a goal
 and notices an anchor has dissolved, it surfaces and proposes
 rewriting or retiring the claim.
 
@@ -123,9 +123,9 @@ id = "goal-sessions"
 reason = "`goal-sessions`' 'Pushback is exceptional' decision names goal sparseness as the mechanism that makes pushback rare. Sparseness is operationalized in `goal-craft` via the anchor test."
 
 [[related]]
-id = "tinker"
-reason = "Tinker applies these rules during interview and edit-time cross-goal alignment. Without enforcement at that surface, the rules do not fire."
+id = "tend"
+reason = "Tend applies these rules during interview and edit-time cross-goal alignment. Without enforcement at that surface, the rules do not fire."
 
 [[related]]
 id = "compact-goal-context"
-reason = "compact-goal-context defines summary field content rules (terse, LLM-consume, governs+triggers); goal-craft tactics apply to WHAT/WHY/SCOPE, summary has distinct rules there"
+reason = "compact-goal-context defines summary field content rules (terse, LLM-consume, governs+triggers); goal-craft tactics apply to WHAT/WHY/SCOPE, summary has distinct rules in compact-goal-context"

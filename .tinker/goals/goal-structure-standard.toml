@@ -2,7 +2,7 @@ id = "goal-structure-standard"
 summary = "governs: goal tree structural rules; five operations (merge/nest-down/nest-up/new-root/retire); level-of-detail coherence heuristic; parent-summary re-check when child edited; symmetric related-links both-sides (per-side reason text allowed); write-time re-validation; packaged-goal symmetry exception | triggers: creating/editing goals; structural placement decisions; related-link symmetry checks"
 description = """
 ## WHAT
-A set of structural rules tinker uses to organize goals
+A set of structural rules tend uses to organize goals
 hierarchically instead of defaulting to flat lists.
 
 Five operations shape the tree as intent evolves. **Merge** (modify
@@ -13,7 +13,7 @@ new parent that existing goals are reparented under) when the new
 intent is a broader justification or conceptual umbrella. **New
 Root** (a sibling) when it's genuinely independent. **Retire** (delete
 an existing goal) when a reframe has made it obsolete — subsumed,
-contradicted, or no longer the right question; tinker proposes the
+contradicted, or no longer the right question; tend proposes the
 retirement and the user confirms it, never unilaterally. For the four
 integration operations, the governing heuristic is **level-of-detail
 coherence**: if adding intent to a goal makes one section vastly
@@ -69,7 +69,7 @@ not a rigid mechanical constraint — a guideline for creating value by
 defining what value means, not a forcing rule.
 
 The parent-summary and related-link rules extend that logic. Goals
-are read on every tinker turn and every fresh goal-session start but
+are read on every tend turn and every fresh goal-session start but
 written rarely, so paying coherence-maintenance cost at write time
 keeps the common read path cheap and correct. Parent summaries let
 cross-goal alignment start at parents and drill down only when
@@ -84,14 +84,14 @@ branch) that the containment hierarchy alone can't express.
   symmetric reasoned related-links primitive; write-time re-validation
   of both rules on every edit, with partner edits bundled into the
   same write turn; the packaged-vs-project-local symmetry exception.
-- Out of scope: automated background refactoring of goal files (tinker
+- Out of scope: automated background refactoring of goal files (tend
   applies these rules interactively during conversation); one-shot
   mass backfilling of parent summaries or related-links across
   existing goals (each is a deliberate hand-picked step); TUI
   rendering of related-links.
 
 """
-parent_id = "tinker"
+parent_id = "tend"
 children = []
 
 [[related]]

@@ -1,49 +1,49 @@
-id = "tinker-notes"
-summary = "governs: tinker silent observation log .tinker/notes/notes.md; six triggers (friction/surprise/reframe/recurring-thread/framing-slip/explicit-remember); observe-without-judging tone; note-taking invisible to user and sessions | triggers: note-taking behavior; notes file path; which observations warrant logging"
+id = "tend-notes"
+summary = "governs: tend silent observation log .tinker/notes/notes.md; six triggers (friction/surprise/reframe/recurring-thread/framing-slip/explicit-remember); observe-without-judging tone; note-taking invisible to user and sessions | triggers: note-taking behavior; notes file path; which observations warrant logging"
 description = """
 ## WHAT
-Tinker silently maintains a single append-only notes file at
+Tend silently maintains a single append-only notes file at
 `.tinker/notes/notes.md`. Throughout conversation it writes brief,
 timestamped, "observe without judging" entries — descriptive,
 point-of-interest framing, never problem framing — whenever one of
 these triggers fires:
 
-- **friction** — the user corrects tinker, repeats themselves, or
+- **friction** — the user corrects tend, repeats themselves, or
   pushes back;
 - **surprise** — something behaved differently than expected (a
   point of interest, not a problem);
 - **reframe** — the conversation pivots from one framing to another
   (also a point of interest);
-- **recurring thread** — a pattern tinker notices, or one the user
+- **recurring thread** — a pattern tend notices, or one the user
   names ("I noticed something similar last week");
 - **self-introduced framing that gets called out** — logged as
   data, not dwelt on;
-- **explicit remember-this** — the user asks tinker to remember a
+- **explicit remember-this** — the user asks tend to remember a
   situation.
 
-Note-taking is silent: tinker writes the entry and keeps the
+Note-taking is silent: tend writes the entry and keeps the
 conversation moving, never interrupting to announce it — the same
-pattern as the vocabulary file. The file is read-private to tinker;
+pattern as the vocabulary file. The file is read-private to tend;
 goal sessions can neither read nor write it. This goal builds only
 the substrate — there is no retrieval or reflection mechanism yet.
 
 ## WHY
-Tinker shouldn't become a tool that's only great for building
+Tend shouldn't become a tool that's only great for building
 tinker; it should optimize building tinker in a generalizable way.
 The path toward that is self-improvement, which requires
-observations accumulating somewhere tinker can later reflect on —
+observations accumulating somewhere tend can later reflect on —
 and right now no such accumulation exists; every conversation starts
 fresh. This goal lays the substrate. Doing it incrementally —
 substrate first, reflection later — keeps the design honest: we will
 know what notes actually look like before designing the pass that
 reads them.
 
-The file is read-private because its contents are tinker's own
+The file is read-private because its contents are tend's own
 chain-of-thought. Making it readable to goal sessions would leak
 that deliberation into session context that should be guided only by
 goals, trigger reasons, and source; that prohibition is enforced in
-`goal-sessions`. And only tinker takes notes in this round — goal
-sessions don't share tinker's conversational chain of thought, so
+`goal-sessions`. And only tend takes notes in this round — goal
+sessions don't share tend's conversational chain of thought, so
 there's nothing for them to observe.
 
 ## SCOPE
@@ -58,7 +58,7 @@ there's nothing for them to observe.
   rotation.
 
 """
-parent_id = "tinker"
+parent_id = "tend"
 children = []
 
 [[related]]

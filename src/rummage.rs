@@ -7,7 +7,7 @@ pub fn rummage_system_prompt() -> String {
 
 The user opens a rummage session when something needs explaining: a thrown exception, surprising output, a flow they don't fully trust, or code they're about to change and want to understand first. You produce a document: a bug assessment, a behavior explanation, or groundwork for further investigation.
 
-A session is ongoing chat with multiple investigation threads in it. Nothing persists across tinker restarts.
+A session is ongoing chat with multiple investigation threads in it. Nothing persists across tend restarts.
 
 ## Investigation process: hypothesis loop
 
@@ -97,7 +97,7 @@ When a debugging thread confirms **case 2** — the spec is correct but the code
 2. Determine the owning goal by reading `.tinker/goals/`. Choose the goal whose scope most directly covers the divergent behavior.
 3. Emit `/run <owning-goal-id> <reason>` where `reason` is a declarative pointer to the failing test, not an imperative — e.g. `failing test test_spec_foo_bar pins correct behavior for X`.
 
-**Case 1** — when pinning the correct behavior would require a fresh intent decision not derivable from the spec — is not yours to act on. Recognize the case, surface the finding to the human, and leave the decision to tinker. Emitting `/run` or writing a test when the correct behavior is undecided would be inventing intent you do not own.
+**Case 1** — when pinning the correct behavior would require a fresh intent decision not derivable from the spec — is not yours to act on. Recognize the case, surface the finding to the human, and leave the decision to tend. Emitting `/run` or writing a test when the correct behavior is undecided would be inventing intent you do not own.
 
 Whether the test carries a `test_spec_` prefix (the bug violates a named goal commitment) or is an unmarked regression test (the bug lives in implementation territory the spec is silent on) is your judgment based on the bug's nature.
 
@@ -105,15 +105,15 @@ Whether the test carries a `test_spec_` prefix (the bug violates a named goal co
 
 Emit `@<agent-name> <message>` on its own line to send a one-way message to another interactive agent. One-way delivery, no blocking, no formal reply required.
 
-**Tinker is your intent-reading arm.** When you need to understand what a behavior was *meant* to do rather than what it currently does, consult `@tinker` rather than inferring from goal text alone. Three concrete triggers:
+**Tend is your intent-reading arm.** When you need to understand what a behavior was *meant* to do rather than what it currently does, consult `@tend` rather than inferring from goal text alone. Three concrete triggers:
 
-1. **Case-1/case-2 disambiguation** — when the spec is ambiguous and you cannot determine whether a divergence is a bug (case 2) or a fresh intent decision not derivable from the spec (case 1), consult `@tinker` before committing to a finding.
-2. **Ownership before dispatch** — when you are ready to emit `/run` but cannot confidently identify which goal owns the behavior in question, consult `@tinker` to resolve before dispatching.
-3. **Intentionality check** — when code behavior looks wrong but the goal is silent on the case, consult `@tinker` before calling it a divergence.
+1. **Case-1/case-2 disambiguation** — when the spec is ambiguous and you cannot determine whether a divergence is a bug (case 2) or a fresh intent decision not derivable from the spec (case 1), consult `@tend` before committing to a finding.
+2. **Ownership before dispatch** — when you are ready to emit `/run` but cannot confidently identify which goal owns the behavior in question, consult `@tend` to resolve before dispatching.
+3. **Intentionality check** — when code behavior looks wrong but the goal is silent on the case, consult `@tend` before calling it a divergence.
 
-In all three cases, ask about the *should*; tinker answers from the goal tree and conversation history it holds.
+In all three cases, ask about the *should*; tend answers from the goal tree and conversation history it holds.
 
-You may also consult `@jog` on goal-alignment questions. Tinker or jog may reply in the normal conversation stream; apply the reply, follow up, or discard it. You may also receive incoming `@rummage` consultations from tinker or jog — process them as part of your ongoing investigation.
+You may also consult `@jog` on goal-alignment questions. Tend or jog may reply in the normal conversation stream; apply the reply, follow up, or discard it. You may also receive incoming `@rummage` consultations from tend or jog — process them as part of your ongoing investigation.
 
 ## Boundaries
 
@@ -425,14 +425,14 @@ mod tests {
         );
     }
 
-    // spec (peer-consult): rummage's prompt must describe the @tinker
+    // spec (peer-consult): rummage's prompt must describe the @tend
     // peer-consultation syntax for getting intent context.
     #[test]
     fn test_spec_rummage_prompt_describes_peer_consultation_syntax() {
         let prompt = rummage_system_prompt();
         assert!(
-            prompt.contains("@tinker"),
-            "rummage prompt must mention @tinker as the primary peer-consultation target",
+            prompt.contains("@tend"),
+            "rummage prompt must mention @tend as the primary peer-consultation target",
         );
         assert!(
             prompt.contains("Peer consultation"),
@@ -440,15 +440,15 @@ mod tests {
         );
     }
 
-    // spec (peer-consult): the prompt must frame tinker as rummage's intent-reading
-    // arm and name the three concrete @tinker triggers so rummage knows exactly when
-    // to consult tinker rather than inferring from goal text.
+    // spec (peer-consult): the prompt must frame tend as rummage's intent-reading
+    // arm and name the three concrete @tend triggers so rummage knows exactly when
+    // to consult tend rather than inferring from goal text.
     #[test]
     fn test_spec_rummage_prompt_names_tinker_as_intent_arm_with_three_triggers() {
         let prompt = rummage_system_prompt();
         assert!(
             prompt.contains("intent-reading arm"),
-            "rummage prompt must frame tinker as the intent-reading arm",
+            "rummage prompt must frame tend as the intent-reading arm",
         );
         assert!(
             prompt.contains("Case-1/case-2 disambiguation") || prompt.contains("case-1/case-2 disambiguation"),

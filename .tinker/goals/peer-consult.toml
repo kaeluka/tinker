@@ -1,8 +1,8 @@
 id = "peer-consult"
-summary = "governs: @<agent> one-way inter-agent messaging (tinker/rummage/jog); actor model (no call stack, no blocking, no return value); advisory; nesting allowed; goal sessions excluded | triggers: implementing @-message routing; agent-to-agent messaging; peer consultation in spec creation; deciding when to consult"
+summary = "governs: @<agent> one-way inter-agent messaging (tend/rummage/jog); actor model (no call stack, no blocking, no return value); advisory; nesting allowed; goal sessions excluded | triggers: implementing @-message routing; agent-to-agent messaging; peer consultation in spec creation; deciding when to consult"
 description = """
 ## WHAT
-Any of the three interactive agents (tinker, rummage, jog) can send a
+Any of the three interactive agents (tend, rummage, jog) can send a
 one-way message to another using `@<agent-name> <message>` in its
 output. The system detects those lines, delivers the message to the
 named agent's context, and the receiving agent processes it as an
@@ -16,8 +16,8 @@ follow-up, or discard it. Either side can continue the exchange as long
 as it is useful. Consultations can nest freely: an agent mid-reply can
 `@`-address a third agent.
 
-Initiation is symmetric. Tinker can consult rummage, rummage can
-consult tinker, either can consult jog. The user can ask any agent to
+Initiation is symmetric. Tend can consult rummage, rummage can
+consult tend, either can consult jog. The user can ask any agent to
 consult another — which causes that agent to judge whether and how to
 do so — but the user is not required to broker the exchange.
 
@@ -25,12 +25,12 @@ Goal sessions (the autonomous code-writing sessions) are not part of
 this protocol. It covers only the three interactive chat agents.
 
 ## WHY
-Tinker currently must read code to write grounded specs. That
-duplicates rummage's concern and divides tinker's focus between intent
+Tend currently must read code to write grounded specs. That
+duplicates rummage's concern and divides tend's focus between intent
 management and code comprehension, making it worse at both. The `@`
-protocol cleanly separates the concerns: tinker stays focused on intent
+protocol cleanly separates the concerns: tend stays focused on intent
 and consults rummage when code-reality grounding is needed; rummage
-stays focused on code and consults tinker when intent context is needed.
+stays focused on code and consults tend when intent context is needed.
 Neither must be competent at the other's job.
 
 The alternative was `/tmp` files and manual agent switching — the user
@@ -40,7 +40,7 @@ should absorb.
 ## SCOPE
 - In scope: `@<agent-name> <message>` syntax in any interactive
   agent's output; system detection and routing to the named agent's
-  context; any-to-any messaging among tinker, rummage, and jog; freely
+  context; any-to-any messaging among tend, rummage, and jog; freely
   nesting consultations; agent-initiated and user-triggered initiation;
   the user observing the exchange in real time.
 - Out of scope: goal sessions sending or receiving `@` messages;
@@ -56,12 +56,12 @@ id = "triggers"
 reason = "`triggers` governs the directive dispatch channels (`/run` and `/jog-edit`). `peer-consult` is a sibling channel, different in character: advisory rather than directive, bidirectional by convention, no formal return. Both goals govern inter-agent communication at the system level."
 
 [[related]]
-id = "tinker"
-reason = "Rummage is tinker's code-reading arm: tinker reaches for `@rummage` proactively whenever forming a recommendation that depends on what the system currently does, and never reads source for comprehension. Tinker also receives `@tinker` consultations from rummage when rummage needs intent context."
+id = "tend"
+reason = "Rummage is tend's code-reading arm: tend reaches for `@rummage` proactively whenever forming a recommendation that depends on what the system currently does, and never reads source for comprehension. Tend also receives `@tend` consultations from rummage when rummage needs intent context."
 
 [[related]]
 id = "rummage"
-reason = "Tinker is rummage's intent-reading arm: rummage consults `@tinker` when it needs to understand the *should* rather than inferring from goal text — specifically for case-1/case-2 disambiguation, ownership resolution before dispatch, and intentionality checks. Rummage also receives `@rummage` consultations from tinker on code-reality questions."
+reason = "Tend is rummage's intent-reading arm: rummage consults `@tend` when it needs to understand the *should* rather than inferring from goal text — specifically for case-1/case-2 disambiguation, ownership resolution before dispatch, and intentionality checks. Rummage also receives `@rummage` consultations from tend on code-reality questions."
 
 [[related]]
 id = "jog"

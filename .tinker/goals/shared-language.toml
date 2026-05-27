@@ -1,8 +1,8 @@
 id = "shared-language"
-summary = "governs: vocabulary standard for all user-facing surfaces (tinker chat, batch messages, READMEs, human-targeted comments); vocabulary.txt (tinker owns/writes silently, sessions read); form norm (minimum viable shape, no unrequested tables/lists); LLM-targeted artifacts exempt | triggers: any user-facing output; deciding whether/how to use technical term; form of replies"
+summary = "governs: vocabulary standard for all user-facing surfaces (tend chat, batch messages, READMEs, human-targeted comments); vocabulary.txt (tend owns/writes silently, sessions read); form norm (minimum viable shape, no unrequested tables/lists); LLM-targeted artifacts exempt | triggers: any user-facing output; deciding whether/how to use technical term; form of replies"
 description = """
 ## WHAT
-Tinker uses shared vocabulary in every user-facing surface it
+Tend uses shared vocabulary in every user-facing surface it
 produces — its own conversation, the batch messages it composes
 from goal-session summaries, and any human-readable documentation
 goal sessions write into the tree (READMEs, in-tree guides,
@@ -26,7 +26,7 @@ LLM consumption — `AGENTS.md` from `project-indexer` is the
 canonical example. Those keep full technical fidelity because their
 audience is another agent, not the user.
 
-Conversational responses from tinker, rummage, and jog default to
+Conversational responses from tend, rummage, and jog default to
 the minimum form the moment calls for — a direct statement or
 question, nothing more. Tables, long bullet lists, and
 multi-paragraph surveys are appropriate only when the user asks for
@@ -36,19 +36,19 @@ grow as understanding does, by design.
 
 What counts as "known" is tracked in a persistent vocabulary file
 at `.tinker/state/vocabulary.txt` (the directory is created at
-startup). Tinker fully owns this file: it updates the file silently
+startup). Tend fully owns this file: it updates the file silently
 via its file tools, never asks permission, and never mentions the
 file to the user. A term enters the file when the user explicitly
 mentions it, or when it is formally written into a goal. Goal
 sessions read the vocabulary file but never write to it; a session
 needing a term not yet in the file anchors it to a known concept on
-first use, same rule as tinker chat. There is one vocabulary file,
+first use, same rule as tend chat. There is one vocabulary file,
 shared across all surfaces — no separate "doc vocabulary."
 
 ## WHY
-If tinker assumes the user knows the internal codebase layout, it
+If tend assumes the user knows the internal codebase layout, it
 sounds condescending. If it over-explains things the user explicitly
-created, it sounds obtuse. Applying the rule only to tinker's chat
+created, it sounds obtuse. Applying the rule only to tend's chat
 would leave documentation as a side channel where code-identifier
 soup slips through — so the rule covers every user-facing surface.
 LLM-targeted artifacts are excluded because another agent benefits
@@ -66,12 +66,12 @@ parent says the user may be exposed to internals only when filtered
 through shared language; this goal defines what that filtering
 looks like — the vocabulary file, the anchoring rule, the form
 norm, and the per-surface application. Its parent is
-`user-system-interaction` rather than `tinker` because the rule
-binds both tinker (chat) and goal sessions (documentation), and the
+`user-system-interaction` rather than `tend` because the rule
+binds both tend (chat) and goal sessions (documentation), and the
 principle that justifies it lives in the parent.
 
 ## SCOPE
-- In scope: tinker chat; user-facing batch messages; READMEs,
+- In scope: tend chat; user-facing batch messages; READMEs,
   guides, and other human-readable documentation goal sessions
   write into the tree; human-targeted code comments; the persistent
   `.tinker/state/vocabulary.txt` file and its startup-created
@@ -82,18 +82,37 @@ principle that justifies it lives in the parent.
 - Out of scope: artifacts authored for LLM consumption (e.g.
   `AGENTS.md`); implementation comments aimed at future LLM agents;
   goal file contents themselves (LLM-consumed by goal sessions);
-  automated hooks to manage the vocabulary file (tinker manages it
-  by hand); per-session internal summaries before tinker composes
+  automated hooks to manage the vocabulary file (tend manages it
+  by hand); per-session internal summaries before tend composes
   them into a user-facing batch message.
 """
 parent_id = "user-system-interaction"
 children = []
-related = [
-  { id = "project-indexer", reason = "`AGENTS.md` produced by `project-indexer` is the canonical example of an LLM-targeted artifact this goal carves out of the shared-vocabulary rule. The exemption is named explicitly because project-indexer's output looks like documentation but isn't aimed at the user. Asymmetric link: `project-indexer` is a packaged goal at ancestor scope and carries no back-link to this project-local goal." },
-  { id = "coding-standards", reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link." },
-  { id = "tinker", reason = "tinker chat and the batch messages it composes are the primary user-facing surfaces this standard governs." },
-  { id = "rummage", reason = "rummage's chat turns are user-facing output this standard governs — including the rule that pasted technical material is translated, not echoed. Rummage's investigation documents are exempt from the form norm." },
-  { id = "tui", reason = "tui renders user-facing text to the user; how that text is presented is governed by this standard." },
-  { id = "jog", reason = "jog's deepening conversation with the user is a user-facing surface this standard governs." },
-  { id = "user-persona", reason = "`user-persona` is the anchor for both the no-jargon default and the form norm: because the user doesn't read source code, terms outside shared vocabulary are inaccessible and formulaic responses miss the mark. The vocabulary rule and form norm here follow from that persona fact." }
-]
+
+[[related]]
+id = "project-indexer"
+reason = "`AGENTS.md` produced by `project-indexer` is the canonical example of an LLM-targeted artifact this goal carves out of the shared-vocabulary rule. The exemption is named explicitly because project-indexer's output looks like documentation but isn't aimed at the user. Asymmetric link: `project-indexer` is a packaged goal at ancestor scope and carries no back-link to this project-local goal."
+
+[[related]]
+id = "coding-standards"
+reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
+
+[[related]]
+id = "tend"
+reason = "tend chat and the batch messages it composes are the primary user-facing surfaces this standard governs."
+
+[[related]]
+id = "rummage"
+reason = "rummage's chat turns are user-facing output this standard governs — including the rule that pasted technical material is translated, not echoed. Rummage's investigation documents are exempt from the form norm."
+
+[[related]]
+id = "tui"
+reason = "tui renders user-facing text to the user; how that text is presented is governed by this standard."
+
+[[related]]
+id = "jog"
+reason = "jog's deepening conversation with the user is a user-facing surface this standard governs."
+
+[[related]]
+id = "user-persona"
+reason = "`user-persona` is the anchor for both the no-jargon default and the form norm: because the user doesn't read source code, terms outside shared vocabulary are inaccessible and formulaic responses miss the mark. The vocabulary rule and form norm here follow from that persona fact."

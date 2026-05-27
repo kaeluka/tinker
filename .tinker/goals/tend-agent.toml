@@ -1,25 +1,25 @@
-id = "tinker-agent"
-summary = "governs: tinker opencode agent profile (tinker.md installed at startup); static persona+procedures in file, dynamic goal list via stdin; task/todowrite denied; websearch allowed, webfetch denied; VCS mutation forbidden in prompt | triggers: tinker persona/tool-permission changes; opencode agent file content; claude backend parity"
+id = "tend-agent"
+summary = "governs: tend opencode agent profile (tend.md installed at startup); static persona+procedures in file, dynamic goal list via stdin; task/todowrite denied; websearch allowed, webfetch denied; VCS mutation forbidden in prompt | triggers: tend persona/tool-permission changes; opencode agent file content; claude backend parity"
 description = """
 ## WHAT
-Tinker enforces its own boundaries by running under a custom
-`opencode` agent profile (`tinker`). The profile replaces opencode's
-default software-engineer persona with the strict tinker persona and
+Tend enforces its own boundaries by running under a custom
+`opencode` agent profile (`tend`). The profile replaces opencode's
+default software-engineer persona with the strict tend persona and
 denies the autonomous multi-step tools `task` and `todowrite`, while
-allowing basic file operations and `websearch`. Tinker installs this
-agent file into `~/.config/opencode/agents/tinker.md` silently on
-startup if it's missing, and launches with `--agent tinker`.
+allowing basic file operations and `websearch`. Tend installs this
+agent file into `~/.config/opencode/agents/tend.md` silently on
+startup if it's missing, and launches with `--agent tend`.
 
 The split between static and dynamic: the persona and procedures
 live in the agent file as a formal system prompt; the current goal
-list is passed in fresh over `stdin` each run (tinker should not *be*
-the goals). Tinker keeps `allow` permission for `write` / `edit` /
+list is passed in fresh over `stdin` each run (tend should not *be*
+the goals). Tend keeps `allow` permission for `write` / `edit` /
 `bash` globally rather than locking those down — the
 `tinker-test-case:` marker requirement is enforced by prompt, not by
-permission. Tinker may read version-control state but is forbidden in
+permission. Tend may read version-control state but is forbidden in
 its system prompt from mutating it.
 
-`websearch` is granted so tinker can surface external context
+`websearch` is granted so tend can surface external context
 (library naming, design-pattern lookups, terms the user mentions)
 without the user leaving the interview. `webfetch` stays denied — it
 requires a URL first, which `websearch` precedes; revisit only if a
@@ -28,26 +28,26 @@ concrete URL-first use surfaces.
 ## WHY
 By default, opencode acts as an autonomous software engineer. Run
 under that default profile, the underlying agent would sometimes
-ignore tinker's rules (like "don't write production code") and
-autonomously edit source to fix bugs. Isolating tinker in a custom
+ignore tend's rules (like "don't write production code") and
+autonomously edit source to fix bugs. Isolating tend in a custom
 profile strips out that base identity and makes the boundary
 mechanical rather than prompt-only.
 
 `websearch` earns its place because the alternative — denying it —
 forces the user to leave the interview, search themselves, and
-return with a fixed opinion that's harder for tinker to push back
+return with a fixed opinion that's harder for tend to push back
 on, which breaks dialectical flow. It's safe to grant because
-tinker's output is dialogue (cheap for the user to correct in-turn)
+tend's output is dialogue (cheap for the user to correct in-turn)
 and goals (vetted before write), not standalone documents — so
 web-sourced material can't launder into a truth claim the user
 wouldn't see.
 
 ## SCOPE
-- In scope: silently creating `~/.config/opencode/agents/tinker.md`
+- In scope: silently creating `~/.config/opencode/agents/tend.md`
   on startup if missing; holding the static persona/procedures in
   that file while passing the dynamic goal list over `stdin`;
   denying `task` and `todowrite` while allowing file operations and
-  `websearch`; passing `--agent tinker` at launch; enforcing the
+  `websearch`; passing `--agent tend` at launch; enforcing the
   no-VCS-mutation boundary in the system prompt.
 - Out of scope: custom agent profiles for goal sessions or the
   cleanup runner; managing `opencode` config outside the `agents/`
@@ -55,7 +55,7 @@ wouldn't see.
   requirement is prompt-enforced instead).
 
 """
-parent_id = "tinker"
+parent_id = "tend"
 children = []
 
 [[related]]
