@@ -1,5 +1,5 @@
 id = "tui"
-summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); queue markers (▶ running, [N] queued); auto-follow scroll; active-agent tag (tinker>/rummage>/jog>); modal trigger-reason dialog; dim tool-call rendering | triggers: TUI layout/rendering changes; queue display; scroll behavior; agent-switch UX"
+summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); queue markers (▶ running, [N] queued); auto-follow scroll; active-agent tag (tend>/rummage>/jog>); each agent's messages labeled with the agent's name; modal trigger-reason dialog; dim tool-call rendering | triggers: TUI layout/rendering changes; queue display; scroll behavior; agent-switch UX; message label rendering"
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left
@@ -9,14 +9,16 @@ height), the full **goal text** of the currently selected goal
 beneath it (50%), and the **session log** at the bottom (25%).
 
 In the conversation, an input-prompt tag names whichever agent will
-receive the next message (`tinker> `, `rummage> `, or `jog> `); input
-routes to that agent, and the `/tinker`, `/rummage`, and `/jog` slash
+receive the next message (`tend> `, `rummage> `, or `jog> `); input
+routes to that agent, and the `/tend`, `/rummage`, and `/jog` slash
 commands switch it (the switching mechanism and the first two are
-defined in `rummage`, `/jog` in `jog`). Tinker's tool calls (bash, read,
+defined in `rummage`, `/jog` in `jog`). Each agent's messages carry
+the agent's name as a label — tend's messages are labeled "tend",
+rummage's "rummage", jog's "jog". Tend's tool calls (bash, read,
 edit, etc.) render in dim grey with payloads cropped to their first
-line, so multi-line output doesn't flood the thread. When tinker
-triggers follow-up goals via `/run` lines in its reply, the system
-message listing those goals and their reasons also renders in grey.
+line, so multi-line output doesn't flood the thread. When tend
+emits follow-up `/run` lines, the system message listing those goals
+and their reasons also renders in grey.
 
 In the goal list, only the list is selectable — the text beneath is
 read-and-scroll only. Keyboard navigation auto-scrolls the list so
@@ -55,7 +57,7 @@ at once. The three-region layout keeps all of that visible without
 configuration.
 
 The rendering choices serve legibility under live streaming. Tool
-calls and tinker-triggered system messages render dim because
+calls and tend-triggered system messages render dim because
 they're scaffolding, not the conversation the user is following;
 cropping tool payloads to one line keeps multi-line output from
 burying the thread. Trigger reasons render bold in the session log
@@ -67,8 +69,7 @@ with the goal name that carries the actual meaning.
 The queue surface is read-only by deliberate choice: the user
 wanted to see what's queued without being able to cancel, reorder,
 or pause it. Queue control is a separate concern, deferred until
-there's a real need — today not even tinker can manipulate the
-queue.
+there's a real need — today not even tend can manipulate the queue.
 
 ## SCOPE
 - In scope: the two-column layout at fixed 25%/50%/25% right-side
@@ -79,7 +80,8 @@ queue.
   trigger-reason dialog; bold trigger reasons in the session log;
   queue markers in the goal list and pending-invocation listing in
   the goal-text region; the active-agent input-prompt tag and
-  message routing; recognizing the `/tinker`, `/rummage`, and `/jog`
+  message routing; each agent's messages labeled with the agent's
+  name; recognizing the `/tend`, `/rummage`, and `/jog`
   slash commands that switch the active agent.
 - Out of scope: themes, syntax highlighting, layout
   configurability, syncing the interface to a remote viewer; any
@@ -96,7 +98,7 @@ reason = "Rummage's existence drives the multi-agent UX in the conversation pane
 
 [[related]]
 id = "jog"
-reason = "jog is a third sibling chat agent in the conversation pane; this goal renders its `/jog` slash command and active-agent prompt tag alongside `/tinker` and `/rummage`."
+reason = "jog is a third sibling chat agent in the conversation pane; this goal renders its `/jog` slash command and active-agent prompt tag alongside `/tend` and `/rummage`."
 
 [[related]]
 id = "coding-standards"

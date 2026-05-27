@@ -359,7 +359,7 @@ fn push_assistant_text_segment(
     } else if output_index == 0 {
         lines.push(Line::from(vec![
             Span::styled(
-                "tinker ",
+                "tend   ",
                 Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
             ),
             Span::raw(line.to_string()),
@@ -1213,6 +1213,36 @@ mod tests {
         );
     }
 
+    /// Spec (tui): tend messages (Role::Assistant) must be rendered with a
+    /// `tend` speaker label in green+bold, not the old "tinker" label.
+    #[test]
+    fn test_spec_tend_messages_rendered_with_tend_label() {
+        use crate::app::Message;
+        let msg = Message {
+            role: Role::Assistant,
+            text: "The failing test is in src/lib.rs\nLine 42 is the culprit.".to_string(),
+        };
+        let mut lines: Vec<Line> = vec![];
+        push_message_lines(&mut lines, &msg);
+        assert!(!lines.is_empty(), "tend message must produce lines");
+        let label_span = lines[0].spans.iter().find(|s| s.content.trim() == "tend");
+        assert!(label_span.is_some(), "first line must have a 'tend' label span");
+        let label = label_span.unwrap();
+        assert_eq!(label.style.fg, Some(Color::Green), "tend label must be Green");
+        assert!(
+            label.style.add_modifier.contains(Modifier::BOLD),
+            "tend label must be bold",
+        );
+        assert!(
+            !lines[0].spans.iter().any(|s| s.content.trim() == "tinker"),
+            "tend label must not use the old 'tinker' name",
+        );
+        assert!(
+            !lines[1].spans.iter().any(|s| s.content.trim() == "tend"),
+            "continuation lines must not repeat the tend label",
+        );
+    }
+
     /// Spec (tui): "The conversation pane's input prompt carries a tag naming
     /// the currently active agent." When active_agent is Rummage, the prompt
     /// string must contain `rummage>`.
@@ -1347,14 +1377,14 @@ mod tests {
         let mut lines: Vec<Line> = vec![];
         push_assistant_text(&mut lines, &text);
 
-        // The assistant text must be on its own line (with the tinker tag).
+        // The assistant text must be on its own line (with the tend tag).
         let assistant_line = lines
             .iter()
             .find(|l| l.spans.iter().any(|s| s.content.contains("Sure, here is my answer.")))
             .expect("assistant text must render on its own line");
         assert!(
-            assistant_line.spans.iter().any(|s| s.content == "tinker "),
-            "first assistant line must carry the green tinker tag",
+            assistant_line.spans.iter().any(|s| s.content.trim() == "tend"),
+            "first assistant line must carry the green tend tag",
         );
         // The marker byte must not appear in any rendered span.
         assert!(

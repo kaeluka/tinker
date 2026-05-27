@@ -1,5 +1,5 @@
 id = "backends"
-summary = "governs: pluggable LLM backend abstraction (runner trait at composition root); opencode default (agent files) vs claude --claude (--system-prompt, --disallowedTools parity); per-backend model-tier defaults overridable via model-config; --help/-h startup flag | triggers: backend implementation; persona/tool-denial parity between backends; adding third backend; startup flag changes"
+summary = "governs: pluggable LLM backend abstraction (runner trait at composition root); opencode default (agent files) vs claude --claude (--system-prompt, --disallowedTools parity); per-backend model-tier defaults overridable via model-config | triggers: backend implementation; persona/tool-denial parity between backends; adding third backend; startup flag changes"
 description = """
 ## WHAT
 Tinker runs against a **pluggable backend** — the LLM CLI it shells
@@ -35,11 +35,11 @@ the config leaves a slot unset.
 Tool calls from either backend render in the TUI as compact
 one-liners.
 
-Startup argument handling runs before TUI acquisition. Three flags
-are recognised: `--claude` (select the claude backend), `--tend-full-goal-context`
-(restore full goal text in tend's context instead of the compact index),
-and `--help`/`-h` (print all startup flags with a brief description
-and exit cleanly, without attempting TUI initialisation).
+Startup argument handling (unknown-arg detection, help text, exit behaviour)
+is governed by `startup-args`. Recognised flags passed to this goal's
+backends are `--claude` (select the claude backend) and
+`--tend-full-goal-context` (restore full goal text in tend's context
+instead of the compact index).
 
 ## WHY
 Tinker's business logic should depend on a backend abstraction, not
@@ -60,17 +60,20 @@ backend explicit and small.
   `model-config`) and persona delivery; `--resume` session resumption
   and streaming-JSON parsing on the claude path; compact one-liner
   tool-call rendering; mechanical `task`/`todowrite` denial parity on
-  the claude path, which bypasses the opencode agent file; a
-  `--help`/`-h` flag that prints all startup flags and exits before
-  TUI acquisition.
+  the claude path, which bypasses the opencode agent file.
 - Out of scope: persisting the backend *choice* (`--claude` is a
   startup flag — per-tier model overrides, by contrast, are persisted
   in `model-config`); auto-detecting which CLI is installed; backends
-  beyond opencode and claude until one is actually added.
+  beyond opencode and claude until one is actually added; unknown-arg
+  detection and help text (see `startup-args`).
 
 """
 parent_id = ""
 children = ["model-config"]
+
+[[related]]
+id = "startup-args"
+reason = "`startup-args` owns unknown-arg detection, help text, and exit behaviour. The flag set it validates against is defined by this goal (--claude, --tend-full-goal-context, --default-model); when a new flag is added here it must also be registered in `startup-args`."
 
 [[related]]
 id = "tend-agent"
