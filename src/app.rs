@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ActiveAgent {
-    Tinker,
+    Tend,
     Rummage,
     Jog,
 }
@@ -110,7 +110,7 @@ impl ScrollState {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Phase {
-    /// Sending the init prompt to tinker.
+    /// Sending the init prompt to tend.
     Initializing,
     /// Nothing running; waiting for user input or new goals.
     Idle,
@@ -118,7 +118,7 @@ pub enum Phase {
     RunningGoal(String),
     /// Manual mode: next goal chosen, waiting for user to approve.
     AwaitingConfirm(String),
-    /// Batch finished — asking tinker to summarize what was done.
+    /// Batch finished — asking tend to summarize what was done.
     SummarizingBatch,
 }
 
@@ -135,9 +135,9 @@ pub struct App {
     pub selected_goal: usize,
     pub active_goal_id: Option<String>,
     pub goal_logs: HashMap<String, String>,
-    pub tinker_session_id: Option<String>,
-    /// How many tinker LLM tasks are currently running or queued.
-    pub tinker_tasks: usize,
+    pub tend_session_id: Option<String>,
+    /// How many tend LLM tasks are currently running or queued.
+    pub tend_tasks: usize,
     /// Trigger reason for the currently-running goal session.
     /// Cleared when the session finishes or is blocked.
     pub active_goal_reason: Option<String>,
@@ -149,16 +149,16 @@ pub struct App {
     /// Goals queued to run after the current one finishes (from a multi-goal
     /// scheduling response). Drained before triggering a new schedule.
     /// Each entry is `(Goal, optional reason)` — the reason is the per-trigger
-    /// "what to do right now" hint emitted by tinker's `/run` line
+    /// "what to do right now" hint emitted by tend's `/run` line
     /// or by the scheduler's `yes|<reason>` reply.
     pub goal_queue: VecDeque<(Goal, Option<String>)>,
     /// True if any goal session has fired since the last batch summary.
     /// Used to decide whether to ask for a batch summary when scheduling returns `none`.
     pub batch_had_goals: bool,
     /// (goal_id, summary) entries accumulated for the current batch.
-    /// Forwarded to tinker in the batch summary request, then cleared.
+    /// Forwarded to tend in the batch summary request, then cleared.
     pub batch_summaries: Vec<(String, String)>,
-    /// How many times we've asked tinker to fix a parse error in this
+    /// How many times we've asked tend to fix a parse error in this
     /// edit cycle. Reset on a fresh user message or a clean Done.
     pub correction_attempts: u8,
     pub focus: Focus,
@@ -199,8 +199,8 @@ impl App {
             active_goal_id: None,
             active_goal_reason: None,
             goal_logs: HashMap::new(),
-            tinker_session_id: None,
-            tinker_tasks: 0,
+            tend_session_id: None,
+            tend_tasks: 0,
             user_has_interacted: false,
             phase: Phase::Initializing,
             loop_mode: LoopMode::Auto,
@@ -223,7 +223,7 @@ impl App {
                 s
             },
             modal: None,
-            active_agent: ActiveAgent::Tinker,
+            active_agent: ActiveAgent::Tend,
             rummage_current_text: String::new(),
             rummage_session_id: None,
             rummage_tasks: 0,

@@ -1,5 +1,5 @@
 id = "jog"
-summary = "governs: jog intent↔spec auditor; pull invocation by user-named topic; Socratic no-cue deepening (never previews goal text; probes *why*); two findings (didn't-know/know-better); /jog-edit commission to tinker (terminal for thread, never in same turn as open question) | triggers: jog behavior; no-cue discipline; commission-is-terminal rule; jog→tinker channel"
+summary = "governs: jog intent↔spec auditor; pull invocation by user-named topic; Socratic no-cue deepening (never previews goal text; probes *why*); two findings (didn't-know/know-better); /jog-edit commission to tend (terminal for thread, never in same turn as open question) | triggers: jog behavior; no-cue discipline; commission-is-terminal rule; jog→tend channel"
 description = """
 ## WHAT
 `jog` is the **intent↔spec auditor**, one of the two divergence
@@ -27,9 +27,9 @@ A finding takes one of two shapes. **"I didn't know"**: the user
 drifted from a goal that is actually right — re-articulating it may
 itself re-align them, and nothing happens to the goal. **"I know
 better"**: the user's understanding reveals the goal is thin or wrong.
-On "I know better" jog **commissions a spec change from `tinker`** — to
-fix, clarify, or enrich the goal — over the dedicated jog→tinker
-channel defined in `triggers` (distinct from `/run`). In v1 `tinker`
+On "I know better" jog **commissions a spec change from `tend`** — to
+fix, clarify, or enrich the goal — over the dedicated jog→tend
+channel defined in `triggers` (distinct from `/run`). In v1 `tend`
 applies that edit directly, without an interview, then shows a
 non-blocking "here's what changed" diff.
 
@@ -43,17 +43,17 @@ system side: the moment a `/jog-edit` line is in jog's finalized
 reply, the trigger fires, so a question asked alongside it gets no
 chance to be answered first.
 
-jog is a sibling chat agent to `tinker` and `rummage`, one active at a
+jog is a sibling chat agent to `tend` and `rummage`, one active at a
 time; the `/jog` slash command switches to it and the REPL prompt tag
 names the active agent. It runs on the strongest model tier (like
-`tinker` and `rummage`), because detecting subtle divergence and
+`tend` and `rummage`), because detecting subtle divergence and
 questioning without cueing demand full reasoning capability.
 
 ## WHY
 Goals are a lossy bridge from intent to convention and drift as
 situations move; `creative-process` holds that the dialectic must
 continue after a goal is written. jog is the mechanism that continues
-it from the **intent side**: `tinker`'s write-time playback validates
+it from the **intent side**: `tend`'s write-time playback validates
 intent→goal at the moment of writing, and jog re-checks that match
 over time. "Just testing isn't useful" — a pass/fail flashcard would
 be worthless — so jog deepens: making the user re-articulate the *why*
@@ -64,8 +64,8 @@ so the tedium that makes a quizzing tool obnoxious never arises. No-cue
 means jog cannot lead the user into agreement, so what it finds is real
 divergence rather than fatigue-driven assent.
 
-Letting `tinker` apply a jog-commissioned edit **without a playback**
-deliberately papers over `tinker`'s rule that the playback is
+Letting `tend` apply a jog-commissioned edit **without a playback**
+deliberately papers over `tend`'s rule that the playback is
 epistemically irreplaceable. The assumption holding it up is that jog's
 own conversation has already done the dialectical anchoring the
 playback otherwise provides. The terminal-commission rule is what keeps
@@ -83,7 +83,7 @@ interview on the handoff.
   the relevant claims across goals (jog navigates, the user need not
   know the structure); Socratic, no-cue deepening centered on the *why*;
   the two findings ("I didn't know" / "I know better"); commissioning a
-  fix/clarify/enrich from `tinker` over the jog→tinker channel in
+  fix/clarify/enrich from `tend` over the jog→tend channel in
   `triggers`, terminal for a thread (never emitted in the same turn as
   an open question to the user); v1 direct-apply with a non-blocking
   diff; the `/jog`
@@ -97,27 +97,27 @@ interview on the handoff.
   - **Collaboration / multi-author governance** — out of scope for v1;
     on a colleague-authored goal there is no past intent of the invoking
     user's to drift from, which changes jog's nature. Flagged to revisit.
-  - **Writing goals itself** — only `tinker` writes goals; jog
+  - **Writing goals itself** — only `tend` writes goals; jog
     commissions the edit.
   - **Probing the running system** — jog's subject is the user, not the
     code, so it writes no `tinker-test-case:` investigation code and has
     no `cleanup-hook` involvement (unlike `rummage`).
-  - **The v2 interview on the jog→tinker handoff.**
+  - **The v2 interview on the jog→tend handoff.**
 """
 parent_id = "divergence-investigation"
 children = []
 
 [[related]]
 id = "triggers"
-reason = "jog commissions a spec edit from `tinker` over a dedicated jog→tinker channel defined in `triggers`, distinct from `/run`. Unlike `/run`'s declarative-reason rule, that channel carries a prescriptive instruction — allowed because its content is user-sourced intent gathered in jog's conversation, not laundered implementation."
+reason = "jog commissions a spec edit from `tend` over a dedicated jog→tend channel defined in `triggers`, distinct from `/run`. Unlike `/run`'s declarative-reason rule, that channel carries a prescriptive instruction — allowed because its content is user-sourced intent gathered in jog's conversation, not laundered implementation."
 
 [[related]]
-id = "tinker"
-reason = "On an 'I know better' finding jog commissions `tinker` to fix/clarify/enrich a goal. In v1 tinker applies the edit without a playback — a deliberate, jog-specific exception to tinker's epistemically-irreplaceable-playback rule, resting on the assumption that jog's own conversation already did the anchoring."
+id = "tend"
+reason = "On an 'I know better' finding jog commissions `tend` to fix/clarify/enrich a goal. In v1 tend applies the edit without a playback — a deliberate, jog-specific exception to tend's epistemically-irreplaceable-playback rule, resting on the assumption that jog's own conversation already did the anchoring."
 
 [[related]]
 id = "tui"
-reason = "jog joins the conversation pane as a third sibling chat agent; the `/jog` slash command and the active-agent prompt tag are rendered by `tui` alongside `/tinker` and `/rummage`."
+reason = "jog joins the conversation pane as a third sibling chat agent; the `/jog` slash command and the active-agent prompt tag are rendered by `tui` alongside `/tend` and `/rummage`."
 
 [[related]]
 id = "shared-language"

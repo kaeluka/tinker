@@ -42,18 +42,18 @@ spot the friction, the things that could work better. You decide when a
 design is good enough and when it needs another pass. The tool is named after
 what you do: you tinker.
 
-**Tinker** (the conversational agent) handles the rules. It reads your
+**Tend** (the conversational agent) handles the rules. It reads your
 goals, checks them against each other, finds the gaps and conflicts, and
 ensures the system that emerges follows them. It does not write code itself —
 that is what goal sessions do. It is good at following instructions and bad at
 guessing what you meant. When it cannot figure something out from the rules
 alone, it stops and asks you. It does not make things up. When the framing
 itself is wrong — when the current question is not the right question —
-tinker names the shift explicitly before continuing. It never silently
+tend names the shift explicitly before continuing. It never silently
 redirects.
 
 Two more agents live in the same conversation pane. Both face the opposite
-direction from tinker: instead of building forward from intent to code, they
+direction from tend: instead of building forward from intent to code, they
 look for gaps.
 
 **Rummage** checks whether the code does what the goal says. When something
@@ -69,16 +69,16 @@ at a point in time; your understanding moves. You open jog by naming a topic
 in your own words — "jog me on logging" — and jog holds a conversation with
 you. It asks you to articulate what you know, then probes the why, without
 first telling you what the goal says. If what you say matches what is
-written, nothing changes. If it does not, jog hands the edit off to tinker, which applies it and shows
+written, nothing changes. If it does not, jog hands the edit off to tend, which applies it and shows
 you what changed — without running another interview, because jog's
 conversation already did that work.
 
-You switch between the three agents with `/tinker`, `/rummage`, and `/jog`.
+You switch between the three agents with `/tend`, `/rummage`, and `/jog`.
 The prompt line always shows which is active.
 
-The two of you work in rounds. You say what you want. Tinker writes it
+The two of you work in rounds. You say what you want. Tend writes it
 down as a goal and reads it back to you. You correct it. It reads it back
-again. Once the goal says what you mean, tinker hands it to a **goal
+again. Once the goal says what you mean, tend hands it to a **goal
 session** — a focused agent that reads the goal, writes the code, and
 reports back what it did. Only one goal session runs at a time, so you
 always know what is happening.
@@ -124,7 +124,7 @@ cargo run
 ```
 
 You get a three-pane terminal: a conversation pane where you talk to the
-active agent (tinker, rummage, or jog), a list of your goals with the full
+active agent (tend, rummage, or jog), a list of your goals with the full
 text of the selected goal below it, and a log of whatever goal session is
 currently running. The prompt line in the conversation pane shows which
 agent is active. All text areas scroll with the mouse wheel. New content

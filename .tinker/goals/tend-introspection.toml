@@ -1,8 +1,8 @@
-id = "tinker-introspection"
-summary = "governs: runtime introspection substrate at .tinker/logs/runtime.jsonl and .tinker/state/runtime.json; append-only event log (17 kinds: turns/messages/sessions/cleanup/TUI); debounced state snapshot; async non-blocking writes; backend-agnostic cost capture | triggers: adding event types; reading tinker's own runtime state; cost decomposition; session lifecycle tracking"
+id = "tend-introspection"
+summary = "governs: runtime introspection substrate at .tinker/logs/runtime.jsonl and .tinker/state/runtime.json; append-only event log (17 kinds: turns/messages/sessions/cleanup/TUI); debounced state snapshot; async non-blocking writes; backend-agnostic cost capture | triggers: adding event types; reading tend's own runtime state; cost decomposition; session lifecycle tracking"
 description = """
 ## WHAT
-A runtime introspection substrate that lets tinker inspect its own
+A runtime introspection substrate that lets tend inspect its own
 state — token usage per turn, the goal-session queue, the current
 UI snapshot, message history — instead of estimating from inference
 or asking the user to read numbers off.
@@ -12,14 +12,14 @@ sequence and history, plus a **state file** holding the current
 semantic UI snapshot. The split is deliberate — a pure state file
 loses temporal information (durations, ordering); a pure log forces
 reconstructing current state by scanning. Both live under
-`.tinker/`; required directories are pre-created at startup. Tinker
+`.tinker/`; required directories are pre-created at startup. Tend
 reads both with its existing file tools when it needs them. It
 never writes to either, and goal sessions don't touch them at all.
 
-The **event log** captures: tinker turn boundaries with token
+The **event log** captures: tend turn boundaries with token
 usage; message-level events in three categories — user input (full
 text), assistant reply (full text, tool calls and results inline),
-and tinker-injected system messages (full content plus a `source`
+and tend-injected system messages (full content plus a `source`
 field naming the emitting component — dispatcher, batch-summary
 composer, harness); goal-session lifecycle (dispatched, started,
 finished) with observable facts; `/run` emissions; cleanup-hook
@@ -30,14 +30,14 @@ is detectable across sessions. New categories can be added
 additively. The log format satisfies three constraints: a `kind`
 discriminator for filtering by event type; a shape suitable for
 `jq`-style aggregation; and individual events retrievable at low
-token cost (tinker shouldn't have to pay for surrounding context to
+token cost (tend shouldn't have to pay for surrounding context to
 read one event). The log appends forever — no rotation; the user
 clears it manually if it grows. Specific event-kind names, shape,
 and retrieval tooling are implementation's call within these
 constraints.
 
 Finished-session events carry **observable facts only** — what
-tinker sees from outside the session — with no session-declared
+tend sees from outside the session — with no session-declared
 outcome field. Patterns like "no work needed" emerge from the
 observables, never from the session labeling its own work.
 Implementation chooses the specific observable fields.
@@ -49,7 +49,7 @@ totals. Not verbatim pane text — that can be added later as a purely
 additive change if a concrete need emerges.
 
 Writes are **async and non-blocking**, so the substrate never slows
-tinker's main loop. Cost capture is **backend-agnostic and
+tend's main loop. Cost capture is **backend-agnostic and
 best-effort**: both Claude and opencode calls emit into the same
 log shape, and every call captures its cost where available. When
 cost is genuinely unavailable, the `usage` field is `null` and that
@@ -57,12 +57,12 @@ unavailability is recorded as a known gap — not silently accepted
 as the default.
 
 ## WHY
-Tinker has been operating on inferred state — estimating its own
+Tend has been operating on inferred state — estimating its own
 cost, asking the user "what's running?", reconstructing turn counts
-from memory. That's backwards: tinker itself holds this state. The
+from memory. That's backwards: tend itself holds this state. The
 `user-system-interaction` principle says tinker holds the *is*, but
-until now the *is* reached only the user's view, never tinker's own
-reasoning. This goal closes that asymmetry — tinker is part of
+until now the *is* reached only the user's view, never tend's own
+reasoning. This goal closes that asymmetry — tend is part of
 tinker, and the *is* should be available to it the same way it's
 available to the user.
 
@@ -88,32 +88,35 @@ trustworthy where the session's own account is not.
   semantic JSON state file, both under `.tinker/`; async
   non-blocking writes; backend-agnostic best-effort cost capture
   for every Claude and opencode call, with unavailability recorded
-  as a known gap; passive read-only access for tinker via its
+  as a known gap; passive read-only access for tend via its
   existing file tools.
 - Out of scope:
   - Pane content beyond message-level — verbatim conversation-pane
     text per line and streaming session-log capture (subsumed by
     the message-level events and the transcript on each
     finished-session event).
-  - Tinker-self-emitted structured events for its own dialectic
+  - Tend-self-emitted structured events for its own dialectic
     moves (reframe, frame-check, playback-sent/confirmed) — those
     stay in pane content and `notes.md`; may become a follow-up
     goal if reframe-frequency analysis turns out to matter.
   - Goal sessions reading the log or state file.
-  - Tinker mutating runtime state through this primitive
+  - Tend mutating runtime state through this primitive
     (cancelling queued sessions, manipulating the queue) — a
-    separate parked goal, "tinker-controls-itself-like-the-user-
-    can."
+    separate parked goal.
   - Log rotation, retention, or compression.
   - Redaction of sensitive content in tool outputs (user-managed
     for now).
-  - Exposing the log or state file to anything beyond tinker's own
+  - Exposing the log or state file to anything beyond tend's own
     reading.
 
 """
-parent_id = "tinker"
+parent_id = "tend"
 children = []
-related = [
-  { id = "user-system-interaction", reason = "Tinker is part of tinker; 'tinker holds the *is*' is only half-true if the *is* never reaches tinker's reasoning. This goal closes that gap by giving tinker structured access to the *is* that tinker already holds." },
-  { id = "coding-standards", reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link." }
-]
+
+[[related]]
+id = "user-system-interaction"
+reason = "Tend is part of tinker; 'tinker holds the *is*' is only half-true if the *is* never reaches tend's reasoning. This goal closes that gap by giving tend structured access to the *is* that tinker already holds."
+
+[[related]]
+id = "coding-standards"
+reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."

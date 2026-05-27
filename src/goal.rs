@@ -159,7 +159,7 @@ fn build_node(goal: &Goal, all: &[Goal], depth: usize) -> GoalNode {
     }
 }
 
-/// Builds a full-text listing of all goals for use with --tinker-full-goal-context.
+/// Builds a full-text listing of all goals for use with --tend-full-goal-context.
 /// Goals are rendered in tree order with their complete description text.
 pub fn build_full_text_index(goals: &[Goal]) -> String {
     let tree = build_tree(goals);

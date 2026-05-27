@@ -1,5 +1,5 @@
 id = "triggers"
-summary = "governs: /run <goal-id> <reason> dispatch protocol; two non-user emitters (tinker, rummage); declarative-pointer reason rule (user-typed exempt); jog→tinker spec-edit channel (/jog-edit, prescriptive, user-sourced, terminal for thread) | triggers: /run parsing; dispatch mechanics; reason format enforcement; jog-edit channel behavior"
+summary = "governs: /run <goal-id> <reason> dispatch protocol; two non-user emitters (tend, rummage); declarative-pointer reason rule (user-typed exempt); jog→tend spec-edit channel (/jog-edit, prescriptive, user-sourced, terminal for thread) | triggers: /run parsing; dispatch mechanics; reason format enforcement; jog-edit channel behavior"
 description = """
 ## WHAT
 `/run <goal-id> <reason>` is the dispatch protocol for goal
@@ -15,7 +15,7 @@ the input prompt to fire a goal manually.
 
 The protocol has two non-user emitters, and the system scans both
 their finalized outputs:
-- **Tinker** (per `tinker`) is the primary emitter — the same
+- **Tend** (per `tend`) is the primary emitter — the same
   mechanism serves edited goals and reactive post-batch scheduling,
   and there is no separate scheduler component.
 - **Rummage** (per `rummage`) emits `/run` to commission a fix on a
@@ -33,15 +33,15 @@ test rummage wrote, which is exactly the "change in the environment"
 the rule allows. User-typed reasons (the TUI Enter modal, `/run` at
 the prompt) are exempt as a pragmatic escape hatch.
 
-A second dispatch channel serves a different target. **`jog`→`tinker`**:
+A second dispatch channel serves a different target. **`jog`→`tend`**:
 when `jog`'s intent↔spec audit finds the user knows better than the
-goal, jog dispatches `tinker` (not a goal session) to fix, clarify, or
+goal, jog dispatches `tend` (not a goal session) to fix, clarify, or
 enrich it. This channel differs from `/run` in both target and rule —
 its instruction is **prescriptive** (the spec change to make), and it
 is exempt from the declarative-reason rule because its content is
 **user-sourced intent** gathered in jog's conversation, not laundered
 implementation. `triggers` owns dispatch as such — `/run` to goal
-sessions, the jog→tinker channel to tinker — and scans the finalized
+sessions, the jog→tend channel to tend — and scans the finalized
 output of every non-user emitter for the lines each channel
 recognizes.
 
@@ -53,29 +53,29 @@ accumulated cruft across runs; and it coupled spec storage to runtime
 triggers. Moving the trigger out of the file and into a chat-line
 slash command keeps the spec clean and ties each trigger to a
 specific moment with a specific reason. The same move folded the old
-separate cheap-model scheduler into tinker — reactive scheduling is
-now just tinker emitting more `/run` lines in its post-batch reply,
+separate cheap-model scheduler into tend — reactive scheduling is
+now just tend emitting more `/run` lines in its post-batch reply,
 where it has full batch context.
 
 The protocol is its own goal, owned by neither agent, because `/run`
-is now a shared concern: both tinker and rummage emit it. Nesting it
+is now a shared concern: both tend and rummage emit it. Nesting it
 under one emitter would assert that emitter owns the mechanism, which
 is no longer true. Each emitter's decision about *when* to emit lives
 in that emitter's goal; the protocol they share lives here.
 
 ## SCOPE
 - In scope: the `/run <goal-id> <reason>` syntax; scanning the
-  finalized output of every non-user emitter (tinker and rummage)
+  finalized output of every non-user emitter (tend and rummage)
   for those lines; one session per matching line with the reason
   threaded through; multiple `/run` lines per turn each queuing a
   session; the same `/run` syntax usable by the user at the prompt;
   the declarative-reason rule with the user-typed escape hatch; the
-  jog→tinker channel (prescriptive, tinker-targeted, exempt from the
+  jog→tend channel (prescriptive, tend-targeted, exempt from the
   declarative-reason rule because its content is user-sourced intent).
-- Out of scope: dispatch channels beyond `/run` and jog→tinker;
+- Out of scope: dispatch channels beyond `/run` and jog→tend;
   argument syntax beyond what each channel needs; cross-project
-  triggers; each emitter's decision about *when* to emit (tinker's
-  reactive scheduling lives in `tinker`; rummage's case-2 dispatch and
+  triggers; each emitter's decision about *when* to emit (tend's
+  reactive scheduling lives in `tend`; rummage's case-2 dispatch and
   jog's intent↔spec audit live in `rummage` and `jog`).
 """
 parent_id = ""
@@ -86,16 +86,16 @@ id = "goal-sessions"
 reason = "Each `/run` line becomes a dispatch into `goal-sessions`'s pending queue, with the parsed reason threaded into the session context. The trigger syntax has no effect without the dispatch mechanism on the other end."
 
 [[related]]
-id = "tinker"
-reason = "Tinker is the primary non-user emitter of this protocol — for edited goals and reactive post-batch scheduling. The decision of *when* tinker emits lives in `tinker`; the protocol it emits lives here."
+id = "tend"
+reason = "Tend is the primary non-user emitter of this protocol — for edited goals and reactive post-batch scheduling. The decision of *when* tend emits lives in `tend`; the protocol it emits lives here."
 
 [[related]]
 id = "rummage"
-reason = "Rummage is the second non-user emitter: on a confirmed case-2 bug it emits `/run` to commission a fix, with a declarative reason pointing at the durable failing test it wrote. The scanner reads rummage's finalized output as well as tinker's."
+reason = "Rummage is the second non-user emitter: on a confirmed case-2 bug it emits `/run` to commission a fix, with a declarative reason pointing at the durable failing test it wrote. The scanner reads rummage's finalized output as well as tend's."
 
 [[related]]
 id = "jog"
-reason = "jog is a third non-user emitter, but on a *new* channel: on an 'I know better' finding it dispatches `tinker` (not a goal session) to fix/clarify/enrich a goal. That channel carries a prescriptive, user-sourced instruction and is exempt from the `/run` declarative-reason rule."
+reason = "jog is a third non-user emitter, but on a *new* channel: on an 'I know better' finding it dispatches `tend` (not a goal session) to fix/clarify/enrich a goal. That channel carries a prescriptive, user-sourced instruction and is exempt from the `/run` declarative-reason rule."
 
 [[related]]
 id = "peer-consult"
