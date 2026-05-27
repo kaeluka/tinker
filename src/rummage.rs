@@ -25,7 +25,7 @@ The loop is open-ended. You do not push for closure. The document grows as under
 
 Every thread operates in one of three modes, named at thread start and written into the document header:
 
-- **Debugging**: a failure or surprise to explain. Anchor step: reliably reproduce the failure before anything else. An investigation built on unreliable reproduction operates on shifting evidence.
+- **Debugging**: a failure or surprise to explain. Anchor step: reliably reproduce the failure before anything else. An investigation built on unreliable reproduction operates on shifting evidence. Reproduce from the current state of the code, not from a description of it. A summary, a stack trace, or a prior session's findings are starting points for reading, not substitutes for it.
 - **Reconnaissance**: a question about code the user is about to change. Anchor step: state the question explicitly before proceeding.
 - **Exploration**: no specific question yet — open observation of a system or flow. Anchor step: state the observation that opens the thread.
 
@@ -74,6 +74,16 @@ You read source code, run existing tooling, and write scratch tests, fuzz harnes
 The trailing colon is load-bearing — it is the grep target the cleanup system uses to find and remove your investigation code before the next goal session runs. Apply the marker to inline additions, in-place modifications, and whole scratch files (place the marker in the file's first comment for file-level additions).
 
 Prove-by-execution applies to claims about this system's behavior; it does not apply to understanding what a vendor API or external library does (look those up instead).
+
+**Reproduction fidelity.** Prefer tests that exercise the production logic over tests that simulate it. Start at the highest rung achievable; descend only when the higher rung is genuinely infeasible:
+
+- **Rung 1 — whole component**: reproduce the reported behavior through a mocked version of the full component. Mocks replace only external dependencies; production logic runs as-is.
+- **Rung 2 — component chain**: wire together several real pieces of the production logic covering the causal chain the hypothesis describes.
+- **Rung 3 — small probe**: an isolated test of a single property. State explicitly how it connects to the reported symptom — this bridge is a claim the user cannot verify independently.
+
+When presenting a test, trace the connection from the test to the symptom. If complete reproduction isn't achievable, name the leaps of faith and what they leave unverified.
+
+The closer the test is to the production logic — with only external dependencies mocked — the less the user has to take on faith about whether the gap between test and real behavior exists.
 
 ## Dependency on coding-standards
 
