@@ -1,12 +1,21 @@
 id = "peer-consult"
-summary = "governs: @<agent> one-way inter-agent messaging (tend/rummage/jog); actor model (no call stack, no blocking, no return value); advisory; nesting allowed; goal sessions excluded | triggers: implementing @-message routing; agent-to-agent messaging; peer consultation in spec creation; deciding when to consult"
+summary = "governs: @<agent> one-way inter-agent messaging (tend/rummage/jog); multi-line body (next @-line or end of reply terminates); only the @-block is delivered (not surrounding prose); actor model (no call stack, no blocking, no return value); advisory; nesting allowed; goal sessions excluded | triggers: implementing @-message routing; agent-to-agent messaging; peer consultation in spec creation; deciding when to consult; @-block scope and delivery rules"
 description = """
 ## WHAT
 Any of the three interactive agents (tend, rummage, jog) can send a
-one-way message to another using `@<agent-name> <message>` in its
-output. The system detects those lines, delivers the message to the
-named agent's context, and the receiving agent processes it as an
-incoming message alongside its normal work.
+one-way message to another using `@<agent-name>` in its output. The
+message body spans from that line through the end of the reply — or
+up to the next `@`-line if the reply contains several. **Only the
+`@`-block itself is delivered to the named agent**; any prose the
+sending agent wrote before or after it is not included. This means
+a sending agent must make each `@`-block self-contained: everything
+the receiving agent needs to act on must be inside the block.
+
+The `@`-line may carry an inline opening (`@tend Here's the finding:`)
+or stand alone (`@tend`) with all content on subsequent lines; both
+forms are equivalent. The system detects these blocks after each reply
+finalises, routes each to the named agent's input channel, and pushes
+a system message so the user can see the exchange.
 
 The model is an actor system, not RPC. No blocking, no formal return
 value, no call stack. Replies come naturally — an agent receiving a
@@ -37,16 +46,28 @@ The alternative was `/tmp` files and manual agent switching — the user
 acting as message router. That is coordination overhead the system
 should absorb.
 
+Multi-line delivery is load-bearing: a finding that can only be
+expressed in a single line is rarely a finding. Restricting to one
+line turns the channel into a ping mechanism, which defeats the
+purpose.
+
+The self-contained-block rule is the complement: a receiving agent has
+no access to the sender's surrounding prose — it only sees the block.
+Without the rule agents would silently rely on context they never
+actually delivered, producing incomplete or misleading consultations.
+
 ## SCOPE
-- In scope: `@<agent-name> <message>` syntax in any interactive
-  agent's output; system detection and routing to the named agent's
-  context; any-to-any messaging among tend, rummage, and jog; freely
-  nesting consultations; agent-initiated and user-triggered initiation;
-  the user observing the exchange in real time.
+- In scope: `@<agent-name>` blocks with multi-line bodies; block
+  termination at the next `@`-line or end of reply; delivery of only
+  the block to the named agent; any-to-any messaging among tend,
+  rummage, and jog; freely nesting consultations; agent-initiated and
+  user-triggered initiation; the user observing the exchange in real
+  time.
 - Out of scope: goal sessions sending or receiving `@` messages;
   formal return values or blocking semantics; call stack tracking;
-  changes to the `/run` or `/jog-edit` channels (governed by
-  `triggers`); TUI rendering details (left to `tui`).
+  blank-line termination; changes to the `/run` or `/jog-edit`
+  channels (governed by `triggers`); TUI rendering details (left to
+  `tui`).
 """
 parent_id = ""
 children = []
@@ -70,6 +91,14 @@ reason = "jog participates as both sender and receiver of `@` messages alongside
 [[related]]
 id = "tui"
 reason = "The `@` message stream between agents appears in the conversation pane; TUI owns the rendering details."
+
+[[related]]
+id = "batch-review"
+reason = "`batch-review` relies on the `@`-consultation channel as its delivery mechanism for both tend's invocation and rummage's findings. Multi-line @-block delivery is a prerequisite."
+
+[[related]]
+id = "agent-complementarity"
+reason = "`agent-complementarity` names the quality-routing principle that makes peer consultation worth doing: consulting an agent with a stronger profile for the workload produces better output than staying put. This channel is the runtime mechanism; that goal is the design rationale."
 
 [[related]]
 id = "coding-standards"

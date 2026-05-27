@@ -4,7 +4,7 @@ description = """
 ## WHAT
 The shared role of tinker's two **skeptical** agents, `rummage` and
 `jog`. A divergence investigator finds and explains a gap between two
-adjacent layers of the intent→spec→code stack that are supposed to
+adjacent layers of the intent↔spec↔code cycle that are supposed to
 agree: layer 1 is the user's tacit intent, layer 2 the written
 goal/spec, layer 3 the running code. `rummage` works the spec↔code gap
 (does the code do what the goal says?); `jog` works the intent↔spec
@@ -12,7 +12,7 @@ gap (does the goal still say what the user means?).
 
 Both treat the goal as **signal with noise** rather than as
 authoritative — the one stance the system's *producer* agents
-(`tinker` and the goal sessions) never take, since the very existence
+(tend and the goal sessions) never take, since the very existence
 of an investigation implies a gap somewhere.
 
 Both run the same **loop spine**: anchor the investigation,
@@ -26,7 +26,7 @@ fix from the producer that owns the layer found wanting, or — when the
 gap sits on the *referent* side rather than the produced artifact —
 resolve it without commissioning. `rummage` finding the code wanting
 commissions a goal session; `jog` finding the goal wanting commissions
-`tinker`. When instead the referent is what is off — `rummage`'s case
+`tend`. When instead the referent is what is off — `rummage`'s case
 where correct behavior needs a fresh intent decision, `jog`'s case
 where the user's own memory had drifted — no producer fix is
 commissioned: the human decides, or the act of investigating itself
@@ -43,11 +43,11 @@ couples the investigation to the human. Each child's outputs and
 cleanup needs follow from that difference.
 
 ## WHY
-tinker's producer agents are built to move **forward** — intent into
+Tinker's producer agents are built to move **forward** — intent into
 spec, spec into code — and to treat the goal as authoritative.
 Detecting where two layers have *diverged* is the opposite
 orientation, and folding it into a producer corrupts the producer's
-stance. This is why debugging could not live inside `tinker`, and why
+stance. This is why debugging could not live inside tend, and why
 spec-drift auditing cannot either. So the skeptical role is its own
 branch. Because both skeptics share a methodology — the loop spine,
 goal-skepticism, the commission-or-resolve disposition — that
@@ -62,23 +62,23 @@ why `jog` is dialectical and `rummage` is not.
 
 ## SCOPE
 - In scope: the shared skeptical role across `rummage` and `jog`; the
-  divergence frame over adjacent layers of the intent→spec→code stack;
+  divergence frame over adjacent layers of the intent↔spec↔code cycle;
   goal-as-signal-with-noise; the loop spine with per-hypothesis
   falsification; the commission-from-the-wanting-layer's-producer-else-
   resolve disposition; the observability-driven split between
   autonomous and dialectical investigation.
 - Out of scope: the producer agents and their forward generation
-  (`tinker` and the goal sessions, which treat goals as authoritative);
+  (tend and the goal sessions, which treat goals as authoritative);
   the specific modes, instruments, outputs, and cleanup behavior of
   each investigator (those live in `rummage` and `jog`); any third
   investigator beyond these two until one is actually needed.
 """
-parent_id = "intent-to-code"
+parent_id = "the-cycles"
 children = ["rummage", "jog"]
 
 [[related]]
 id = "forward-generation"
-reason = "The dual node on `intent-to-code`'s producer/skeptic axis. The branches interact through commissioning: a skeptic here that finds a produced artifact wanting commissions its paired producer in `forward-generation` to fix it (`jog`→`tinker`, `rummage`→a goal session)."
+reason = "The dual node on `the-cycles`'s producer/skeptic axis. The branches interact through commissioning: a skeptic here that finds a produced artifact wanting commissions its paired producer in `forward-generation` to fix it (`jog`→`tend`, `rummage`→a goal session)."
 
 [[related]]
 id = "creative-process"

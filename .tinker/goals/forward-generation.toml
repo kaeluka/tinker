@@ -4,7 +4,7 @@ description = """
 ## WHAT
 The shared role of tinker's two **producer** agents, `tend` and the
 goal sessions. A forward generator moves forward through the
-intent→spec→code stack, building the next artifact from the previous
+intent→spec→code cycle, building the next artifact from the previous
 one, and treats the goal as **authoritative** — the stance the
 skeptics (`divergence-investigation`) never take. `tend` generates
 the written goal/spec from the user's tacit intent; the goal sessions
@@ -19,7 +19,7 @@ side, of the same observability split `divergence-investigation` makes
 on the checking side.
 
 ## WHY
-Producers and skeptics are the two halves of `intent-to-code`'s
+Producers and skeptics are the two halves of `the-cycles`'s
 producer/skeptic axis. Grouping the producers here, opposite
 `divergence-investigation`, lets the shared producer stance — forward
 motion, goal-as-authoritative — be stated once rather than implied
@@ -29,16 +29,16 @@ splits the skeptics into dialectical and autonomous.
 
 ## SCOPE
 - In scope: the shared producer role across `tend` and the goal
-  sessions; forward generation through the stack; treating the goal as
+  sessions; forward generation through the cycle; treating the goal as
   authoritative; the input-observability-driven autonomy split
   (dialectical `tend`, autonomous goal sessions).
 - Out of scope: each producer's internal behavior (their own goals);
-  the skeptic role (`divergence-investigation`); the stack model and
-  its axes (`intent-to-code`).
+  the skeptic role (`divergence-investigation`); the cycle model and
+  its axes (`the-cycles`).
 """
-parent_id = "intent-to-code"
+parent_id = "the-cycles"
 children = ["tend", "goal-sessions"]
 
 [[related]]
 id = "divergence-investigation"
-reason = "The dual node on `intent-to-code`'s producer/skeptic axis. The branches interact through commissioning: a skeptic that finds a produced artifact wanting commissions its paired producer here to fix it (`jog`→`tend`, `rummage`→a goal session)."
+reason = "The dual node on `the-cycles`'s producer/skeptic axis. The branches interact through commissioning: a skeptic that finds a produced artifact wanting commissions its paired producer here to fix it (`jog`→`tend`, `rummage`→a goal session)."

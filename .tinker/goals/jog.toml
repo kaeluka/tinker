@@ -1,5 +1,5 @@
 id = "jog"
-summary = "governs: jog intent↔spec auditor; pull invocation by user-named topic; Socratic no-cue deepening (never previews goal text; probes *why*); two findings (didn't-know/know-better); /jog-edit commission to tend (terminal for thread, never in same turn as open question) | triggers: jog behavior; no-cue discipline; commission-is-terminal rule; jog→tend channel"
+summary = "governs: jog intent↔spec auditor; pull invocation by user-named topic; Socratic no-cue deepening (never previews goal text; probes *why*); two findings (didn't-know/know-better); /jog-edit commission to tend (terminal for thread, never in same turn as open question); @rummage for implementation-drift code-reality | triggers: jog behavior; no-cue discipline; commission-is-terminal rule; jog→tend channel; when to consult rummage"
 description = """
 ## WHAT
 `jog` is the **intent↔spec auditor**, one of the two divergence
@@ -42,6 +42,13 @@ discipline lives in jog itself because the channel has no wait on the
 system side: the moment a `/jog-edit` line is in jog's finalized
 reply, the trigger fires, so a question asked alongside it gets no
 chance to be answered first.
+
+**Rummage is jog's code-reality arm.** When a deepening thread
+surfaces a claim that may have drifted because the *implementation*
+changed — not because the user's intent shifted — jog consults
+`@rummage` rather than speculating from goal text. Rummage holds the
+code-reality the user cannot derive from goals; the route is a
+profile-gap decision, not a task handoff.
 
 jog is a sibling chat agent to `tend` and `rummage`, one active at a
 time; the `/jog` slash command switches to it and the REPL prompt tag
@@ -86,9 +93,10 @@ interview on the handoff.
   fix/clarify/enrich from `tend` over the jog→tend channel in
   `triggers`, terminal for a thread (never emitted in the same turn as
   an open question to the user); v1 direct-apply with a non-blocking
-  diff; the `/jog`
-  sibling-agent shell on the strongest model tier; a single-author
-  assumption.
+  diff; the `/jog` sibling-agent shell on the strongest model tier;
+  consulting `@rummage` for code-reality when a deepening thread
+  surfaces a possible implementation drift (a spec claim that may be
+  stale because the code changed); a single-author assumption.
 - Out of scope:
   - **Push / scheduled / spaced-repetition invocation** — parked; it
     needs durable state jog does not keep in v1.
@@ -99,9 +107,11 @@ interview on the handoff.
     user's to drift from, which changes jog's nature. Flagged to revisit.
   - **Writing goals itself** — only `tend` writes goals; jog
     commissions the edit.
-  - **Probing the running system** — jog's subject is the user, not the
-    code, so it writes no `tinker-test-case:` investigation code and has
-    no `cleanup-hook` involvement (unlike `rummage`).
+  - **Probing the running system directly** — jog's subject is the
+    user, not the code, so it writes no `tinker-test-case:` investigation
+    code and has no `cleanup-hook` involvement (unlike `rummage`).
+    When code-reality is needed, jog routes to rummage rather than
+    probing itself.
   - **The v2 interview on the jog→tend handoff.**
 """
 parent_id = "divergence-investigation"
@@ -130,3 +140,7 @@ reason = "This goal produces code, which follows `coding-standards` (capability-
 [[related]]
 id = "peer-consult"
 reason = "jog participates as both sender and receiver of `@` messages alongside its existing deepening conversation with the user."
+
+[[related]]
+id = "rummage"
+reason = "When jog's deepening thread surfaces a possible implementation drift — a spec claim that may be stale because the code changed — jog consults @rummage for code-reality rather than speculating from goal text. Rummage holds the code-reality the user cannot derive from goals; the route is a profile-gap decision."
