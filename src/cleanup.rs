@@ -1,10 +1,11 @@
 //! Cleanup of tinker-test-case markers before each goal session.
 //!
-//! See `## Tinkering` in the tinker prompt and section 5 of
+//! See `## Investigation code` in the rummage system prompt and section 5 of
 //! `packaged-goals/coding-standards.toml` for the marker convention.
 //!
-//! Tinker's tinkering accumulates across its turns and is wiped
-//! between goal-session runs. This module is what does the wiping: walks the
+//! Rummage's investigation code (scratch tests, fuzz harnesses, instrumentation)
+//! accumulates across its turns and is wiped between goal-session runs.
+//! This module is what does the wiping: walks the
 //! project tree, finds files containing comment-form markers, dispatches a
 //! cheap opencode agent to remove them, retries up to N times, and reports
 //! the outcome.
@@ -166,7 +167,7 @@ pub fn build_cleanup_prompt(files: &[PathBuf]) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        r#"You are a cleanup agent for tinker. Your only job is to remove or revert investigation markers left by tinker's tinkering. Don't touch anything else in the codebase.
+        r#"You are a cleanup agent for tinker. Your only job is to remove or revert investigation markers left by rummage's investigation work. Don't touch anything else in the codebase.
 
 ## What counts as a real marker
 
@@ -183,7 +184,7 @@ These references mention the marker name but aren't markers themselves:
 - A string literal containing the marker text (e.g. `const MARKER: &str = "tinker-test-case:";`).
 - A prose mention inside another comment, like `// tinker emits tinker-test-case: lines`.
 - A comment line whose reason is an angle-bracket placeholder — e.g. `// tinker-test-case: <one-line reason>` or `// tinker-test-case: <reason>`. These are format examples teaching the marker convention; real markers always carry a concrete reason.
-- Mentions in this project's own source describing the convention — typically in `src/cleanup.rs` (where the matcher and this very prompt live) and `src/tinker.rs` (where the convention is documented for tinker). Leave these intact.
+- Mentions in this project's own source describing the convention — typically in `src/cleanup.rs` (where the matcher and this very prompt live) and `src/rummage.rs` (where rummage's marker requirement is documented). Leave these intact.
 
 ## Files with real markers
 
@@ -193,8 +194,8 @@ These references mention the marker name but aren't markers themselves:
 
 For each real marker, identify its shape and clean accordingly:
 
-- **Inline addition** (the marker labels a temporary region the orchestrator added): remove the marked region — the test function, the instrumentation line, the adapter function, etc.
-- **In-place modification** (the marker labels a temporary change to existing code): revert to the prior state. The marker line may carry explicit undo instructions (e.g. `revert: DEFAULT_TIMEOUT_MS = 1000`); the original may also be commented out directly above the tinker version, in which case remove the tinker line and uncomment the original.
+- **Inline addition** (the marker labels a temporary region rummage added): remove the marked region — the test function, the instrumentation line, the adapter function, etc.
+- **In-place modification** (the marker labels a temporary change to existing code): revert to the prior state. The marker line may carry explicit undo instructions (e.g. `revert: DEFAULT_TIMEOUT_MS = 1000`); the original may also be commented out directly above the rummage-modified version, in which case remove the rummage-modified line and uncomment the original.
 - **File-level marker** (the marker is the first comment in the file): delete the entire file.
 
 ## When you finish

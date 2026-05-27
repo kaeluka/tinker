@@ -521,7 +521,7 @@ async fn run_loop(
                 (a.goal_queue.len(), a.active_goal_id.clone())
             };
             while let Ok(ev) = orch_rx.try_recv() {
-                handle_orch_event(&mut app.lock().unwrap(), ev, &msg_tx, &run_tx, fs.as_ref(), &log);
+                handle_orch_event(&mut app.lock().unwrap(), ev, &msg_tx, &run_tx, &rummage_msg_tx, &jog_msg_tx, fs.as_ref(), &log);
             }
             let (q_after, active_after) = {
                 let a = app.lock().unwrap();
@@ -558,12 +558,12 @@ async fn run_loop(
 
         // Drain rummage events
         while let Ok(ev) = rummage_orch_rx.try_recv() {
-            handle_rummage_event(&mut app.lock().unwrap(), ev, &run_tx, fs.as_ref(), &log);
+            handle_rummage_event(&mut app.lock().unwrap(), ev, &run_tx, &msg_tx, &jog_msg_tx, &rummage_msg_tx, fs.as_ref(), &log);
         }
 
         // Drain jog events
         while let Ok(ev) = jog_orch_rx.try_recv() {
-            handle_jog_event(&mut app.lock().unwrap(), ev, &msg_tx, fs.as_ref(), &log);
+            handle_jog_event(&mut app.lock().unwrap(), ev, &msg_tx, &rummage_msg_tx, &jog_msg_tx, fs.as_ref(), &log);
         }
 
         // Terminal events (50ms poll)
@@ -748,10 +748,66 @@ fn parse_run_commands(text: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Parse `@<agent-name> <message>` lines from an agent reply.
+/// Recognizes `@tinker`, `@rummage`, `@jog` at the start of a trimmed line.
+/// Returns `(recipient, message)` pairs; lines without a message are ignored.
+fn parse_at_commands(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(msg) = line.strip_prefix("@tinker ") {
+            out.push(("tinker".to_string(), msg.trim().to_string()));
+        } else if let Some(msg) = line.strip_prefix("@rummage ") {
+            out.push(("rummage".to_string(), msg.trim().to_string()));
+        } else if let Some(msg) = line.strip_prefix("@jog ") {
+            out.push(("jog".to_string(), msg.trim().to_string()));
+        }
+    }
+    out
+}
+
+/// Deliver peer consultations collected from a completed agent reply.
+/// Pushes a system message for user visibility, increments the recipient's task
+/// counter, and sends the formatted message to the recipient's channel.
+fn dispatch_peer_consultations(
+    app: &mut App,
+    sender: &str,
+    consultations: &[(String, String)],
+    msg_tx: &mpsc::Sender<String>,
+    rummage_msg_tx: &mpsc::Sender<String>,
+    jog_msg_tx: &mpsc::Sender<String>,
+    log: &logger::LogSender,
+) {
+    for (recipient, msg) in consultations {
+        let formatted = format!("[from {}] {}", sender, msg);
+        let sys = format!("@{} → @{}: {}", sender, recipient, msg);
+        app.push_system_message(&sys);
+        log.emit(sender, logger::LogEvent::TinkerSystemMessageReceived { content: sys });
+        match recipient.as_str() {
+            "tinker" => {
+                app.tinker_tasks += 1;
+                let _ = msg_tx.try_send(formatted);
+            }
+            "rummage" => {
+                app.rummage_tasks += 1;
+                let _ = rummage_msg_tx.try_send(formatted);
+            }
+            "jog" => {
+                app.jog_tasks += 1;
+                let _ = jog_msg_tx.try_send(formatted);
+            }
+            _ => {}
+        }
+    }
+}
+
 fn handle_rummage_event(
     app: &mut App,
     ev: TinkerEvent,
     run_tx: &mpsc::Sender<(goal::Goal, Option<String>)>,
+    msg_tx: &mpsc::Sender<String>,
+    jog_msg_tx: &mpsc::Sender<String>,
+    rummage_msg_tx: &mpsc::Sender<String>,
     fs: &dyn Filesystem,
     log: &logger::LogSender,
 ) {
@@ -771,6 +827,7 @@ fn handle_rummage_event(
             if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
                 app.goals = load.goals;
             }
+            let consultations = parse_at_commands(&app.rummage_current_text);
             let run_commands = parse_run_commands(&app.rummage_current_text);
             let mut triggered: Vec<(goal::Goal, Option<String>)> = Vec::new();
             for (gid, reason) in run_commands {
@@ -780,6 +837,7 @@ fn handle_rummage_event(
                 }
             }
             app.finalize_rummage_message();
+            dispatch_peer_consultations(app, "rummage", &consultations, msg_tx, rummage_msg_tx, jog_msg_tx, log);
             for (g, reason_opt) in triggered {
                 start_or_confirm_goal(app, g, reason_opt, run_tx, log);
             }
@@ -807,6 +865,8 @@ fn handle_jog_event(
     app: &mut App,
     ev: TinkerEvent,
     msg_tx: &mpsc::Sender<String>,
+    rummage_msg_tx: &mpsc::Sender<String>,
+    jog_msg_tx: &mpsc::Sender<String>,
     fs: &dyn Filesystem,
     log: &logger::LogSender,
 ) {
@@ -821,8 +881,10 @@ fn handle_jog_event(
         }
         TinkerEvent::Done => {
             app.jog_tasks = app.jog_tasks.saturating_sub(1);
+            let consultations = parse_at_commands(&app.jog_current_text);
             let edits = parse_jog_edit_commands(&app.jog_current_text);
             app.finalize_jog_message();
+            dispatch_peer_consultations(app, "jog", &consultations, msg_tx, rummage_msg_tx, jog_msg_tx, log);
             // Reload goals so goal ids in /jog-edit lines can be validated.
             if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
                 app.goals = load.goals;
@@ -851,6 +913,8 @@ fn handle_orch_event(
     ev: TinkerEvent,
     msg_tx: &mpsc::Sender<String>,
     run_tx: &mpsc::Sender<(goal::Goal, Option<String>)>,
+    rummage_msg_tx: &mpsc::Sender<String>,
+    jog_msg_tx: &mpsc::Sender<String>,
     fs: &dyn Filesystem,
     log: &logger::LogSender,
 ) {
@@ -924,11 +988,12 @@ fn handle_orch_event(
                 app.correction_attempts = 0;
             }
             
-            // Parse /run commands from tinker's just-streamed reply.
+            // Parse @-consultation and /run commands from tinker's just-streamed reply.
             // The text is still in `current_assistant_text` at this point —
             // `finalize_assistant_message` only runs below after we've
             // collected triggers. Scanning `app.messages` here would look at
             // the PREVIOUS assistant turn, not the one we just received.
+            let consultations = parse_at_commands(&app.current_assistant_text);
             let run_commands = parse_run_commands(&app.current_assistant_text);
 
             let mut touched: Vec<(goal::Goal, String)> = Vec::new();
@@ -942,6 +1007,7 @@ fn handle_orch_event(
                 && !matches!(app.phase, Phase::Initializing)
             {
                 app.finalize_assistant_message();
+                dispatch_peer_consultations(app, "tinker", &consultations, msg_tx, rummage_msg_tx, jog_msg_tx, log);
 
                 // When a session is already running, ALL new /run triggers must queue up
                 // behind it. Dispatching directly to run_tx here would bypass app.goal_queue,
@@ -1014,26 +1080,22 @@ fn handle_orch_event(
                 return;
             }
 
+            app.finalize_assistant_message();
+            dispatch_peer_consultations(app, "tinker", &consultations, msg_tx, rummage_msg_tx, jog_msg_tx, log);
             if app.tinker_tasks == 0 {
                 match app.phase.clone() {
                     Phase::Initializing => {
-                        app.finalize_assistant_message();
                         app.push_system_message("Tinker ready. Ask me to add a goal.");
                         log.emit("harness", logger::LogEvent::TinkerSystemMessageReceived { content: "Tinker ready. Ask me to add a goal.".to_string() });
                         app.phase = Phase::Idle;
                     }
                     Phase::SummarizingBatch => {
-                        app.finalize_assistant_message();
                         app.batch_had_goals = false;
                         app.batch_summaries.clear();
                         app.phase = Phase::Idle;
                     }
-                    _ => {
-                        app.finalize_assistant_message();
-                    }
+                    _ => {}
                 }
-            } else {
-                app.finalize_assistant_message();
             }
         }
     }
@@ -1960,11 +2022,15 @@ mod tests {
         app.active_goal_id = Some("beta".into());
         app.current_assistant_text = "/run alpha across-turn reason\n".into();
 
+        let (rummage_tx, _rummage_rx) = mpsc::channel::<String>(4);
+        let (jog_tx, _jog_rx) = mpsc::channel::<String>(4);
         handle_orch_event(
             &mut app,
             TinkerEvent::Done,
             &msg_tx,
             &run_tx,
+            &rummage_tx,
+            &jog_tx,
             &mock_fs,
             &logger::noop_sender(),
         );
@@ -2012,10 +2078,16 @@ mod tests {
             "Current best understanding: the bug is X.\n/run goal-sessions failing test test_spec_foo pins correct behavior\n"
                 .into();
 
+        let (msg_tx2, _msg_rx2) = mpsc::channel::<String>(4);
+        let (jog_tx2, _jog_rx2) = mpsc::channel::<String>(4);
+        let (rummage_tx2, _rummage_rx2) = mpsc::channel::<String>(4);
         handle_rummage_event(
             &mut app,
             TinkerEvent::Done,
             &run_tx,
+            &msg_tx2,
+            &jog_tx2,
+            &rummage_tx2,
             &mock_fs,
             &logger::noop_sender(),
         );
@@ -2413,10 +2485,14 @@ mod tests {
             "Two findings here.\n/jog-edit rummage Clarify the case-2 durable test path.\n/jog-edit tui Document the active-agent prompt tag.\n"
                 .into();
 
+        let (rummage_tx, _rummage_rx) = mpsc::channel::<String>(4);
+        let (jog_tx, _jog_rx) = mpsc::channel::<String>(4);
         handle_jog_event(
             &mut app,
             TinkerEvent::Done,
             &msg_tx,
+            &rummage_tx,
+            &jog_tx,
             &mock_fs,
             &logger::noop_sender(),
         );
@@ -2446,10 +2522,14 @@ mod tests {
         app.tinker_dirs = vec![tinker_dir];
         app.jog_current_text = "/jog-edit nonexistent This goal does not exist.\n".into();
 
+        let (rummage_tx, _rummage_rx) = mpsc::channel::<String>(4);
+        let (jog_tx, _jog_rx) = mpsc::channel::<String>(4);
         handle_jog_event(
             &mut app,
             TinkerEvent::Done,
             &msg_tx,
+            &rummage_tx,
+            &jog_tx,
             &mock_fs,
             &logger::noop_sender(),
         );
@@ -2484,10 +2564,14 @@ mod tests {
         app.jog_current_text =
             "/jog-edit rummage The SCOPE section omits the jog→tinker channel.\n".into();
 
+        let (rummage_tx, _rummage_rx) = mpsc::channel::<String>(4);
+        let (jog_tx, _jog_rx) = mpsc::channel::<String>(4);
         handle_jog_event(
             &mut app,
             TinkerEvent::Done,
             &msg_tx,
+            &rummage_tx,
+            &jog_tx,
             &mock_fs,
             &logger::noop_sender(),
         );
@@ -2527,10 +2611,14 @@ mod tests {
             "I know better — the scope section omits the jog→tinker channel.\n/jog-edit rummage Add jog→tinker channel description to the SCOPE section.\n"
                 .into();
 
+        let (rummage_tx, _rummage_rx) = mpsc::channel::<String>(4);
+        let (jog_tx, _jog_rx) = mpsc::channel::<String>(4);
         handle_jog_event(
             &mut app,
             TinkerEvent::Done,
             &msg_tx,
+            &rummage_tx,
+            &jog_tx,
             &mock_fs,
             &logger::noop_sender(),
         );
@@ -2540,5 +2628,121 @@ mod tests {
         assert!(dispatched.contains("Add jog"), "tinker commission must carry the instruction");
         assert_eq!(app.jog_tasks, 0, "jog_tasks must decrement on Done");
         assert_eq!(app.tinker_tasks, 1, "tinker_tasks must increment for the commission");
+    }
+
+    // spec (peer-consult): parse_at_commands extracts @tinker, @rummage, @jog
+    // lines from agent output. Non-matching lines are silently skipped.
+    #[test]
+    fn test_spec_peer_consult_parse_at_tinker() {
+        let r = parse_at_commands("@tinker what does this module do?");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "tinker");
+        assert_eq!(r[0].1, "what does this module do?");
+    }
+
+    #[test]
+    fn test_spec_peer_consult_parse_at_rummage() {
+        let r = parse_at_commands("@rummage can you trace the call?");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "rummage");
+        assert_eq!(r[0].1, "can you trace the call?");
+    }
+
+    #[test]
+    fn test_spec_peer_consult_parse_at_jog() {
+        let r = parse_at_commands("@jog do you still mean X by this?");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "jog");
+        assert_eq!(r[0].1, "do you still mean X by this?");
+    }
+
+    #[test]
+    fn test_spec_peer_consult_parse_ignores_prose_lines() {
+        let r = parse_at_commands("some prose\n@tinker hello\nmore prose\n@rummage check this");
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].0, "tinker");
+        assert_eq!(r[1].0, "rummage");
+    }
+
+    #[test]
+    fn test_spec_peer_consult_parse_at_without_message_ignored() {
+        // "@tinker" with no trailing space+message must not match
+        let r = parse_at_commands("@tinker");
+        assert_eq!(r.len(), 0, "@tinker without a message must be ignored");
+    }
+
+    #[test]
+    fn test_spec_peer_consult_parse_multiple_at_lines() {
+        let r = parse_at_commands("@tinker q1\n@rummage q2\n@jog q3");
+        assert_eq!(r.len(), 3);
+        assert_eq!(r[0], ("tinker".to_string(), "q1".to_string()));
+        assert_eq!(r[1], ("rummage".to_string(), "q2".to_string()));
+        assert_eq!(r[2], ("jog".to_string(), "q3".to_string()));
+    }
+
+    // spec (peer-consult): dispatch_peer_consultations routes each consultation
+    // to the correct channel and formats the message with the sender name.
+    #[test]
+    fn test_spec_peer_consult_dispatch_routes_to_correct_channel() {
+        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
+        let (rummage_tx, mut rummage_rx) = mpsc::channel::<String>(8);
+        let (jog_tx, mut jog_rx) = mpsc::channel::<String>(8);
+
+        let mut app = App::new();
+        let consultations = vec![
+            ("tinker".to_string(), "question for tinker".to_string()),
+            ("rummage".to_string(), "question for rummage".to_string()),
+            ("jog".to_string(), "question for jog".to_string()),
+        ];
+        dispatch_peer_consultations(
+            &mut app,
+            "rummage",
+            &consultations,
+            &msg_tx,
+            &rummage_tx,
+            &jog_tx,
+            &logger::noop_sender(),
+        );
+
+        let tinker_msg = msg_rx.try_recv().expect("tinker must receive its consultation");
+        assert!(tinker_msg.contains("[from rummage]"), "message must carry sender attribution");
+        assert!(tinker_msg.contains("question for tinker"));
+        assert_eq!(app.tinker_tasks, 1, "tinker_tasks must increment");
+
+        let rummage_msg = rummage_rx.try_recv().expect("rummage must receive its consultation");
+        assert!(rummage_msg.contains("[from rummage]"));
+        assert_eq!(app.rummage_tasks, 1, "rummage_tasks must increment");
+
+        let jog_msg = jog_rx.try_recv().expect("jog must receive its consultation");
+        assert!(jog_msg.contains("[from rummage]"));
+        assert_eq!(app.jog_tasks, 1, "jog_tasks must increment");
+    }
+
+    // spec (peer-consult): a system message is pushed for each consultation
+    // so the user can observe the exchange in real time.
+    #[test]
+    fn test_spec_peer_consult_pushes_system_message_for_visibility() {
+        let (msg_tx, _) = mpsc::channel::<String>(8);
+        let (rummage_tx, _) = mpsc::channel::<String>(8);
+        let (jog_tx, _) = mpsc::channel::<String>(8);
+
+        let mut app = App::new();
+        let consultations = vec![("rummage".to_string(), "trace the init flow".to_string())];
+        dispatch_peer_consultations(
+            &mut app,
+            "tinker",
+            &consultations,
+            &msg_tx,
+            &rummage_tx,
+            &jog_tx,
+            &logger::noop_sender(),
+        );
+
+        let sys = app.messages.iter().find(|m| m.role == app::Role::System);
+        assert!(sys.is_some(), "a system message must be pushed for the consultation");
+        let text = &sys.unwrap().text;
+        assert!(text.contains("@tinker"), "system message must name the sender");
+        assert!(text.contains("@rummage"), "system message must name the recipient");
+        assert!(text.contains("trace the init flow"), "system message must include the message content");
     }
 }

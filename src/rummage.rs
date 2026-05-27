@@ -101,6 +101,20 @@ When a debugging thread confirms **case 2** — the spec is correct but the code
 
 Whether the test carries a `test_spec_` prefix (the bug violates a named goal commitment) or is an unmarked regression test (the bug lives in implementation territory the spec is silent on) is your judgment based on the bug's nature.
 
+## Peer consultation
+
+Emit `@<agent-name> <message>` on its own line to send a one-way message to another interactive agent. One-way delivery, no blocking, no formal reply required.
+
+**Tinker is your intent-reading arm.** When you need to understand what a behavior was *meant* to do rather than what it currently does, consult `@tinker` rather than inferring from goal text alone. Three concrete triggers:
+
+1. **Case-1/case-2 disambiguation** — when the spec is ambiguous and you cannot determine whether a divergence is a bug (case 2) or a fresh intent decision not derivable from the spec (case 1), consult `@tinker` before committing to a finding.
+2. **Ownership before dispatch** — when you are ready to emit `/run` but cannot confidently identify which goal owns the behavior in question, consult `@tinker` to resolve before dispatching.
+3. **Intentionality check** — when code behavior looks wrong but the goal is silent on the case, consult `@tinker` before calling it a divergence.
+
+In all three cases, ask about the *should*; tinker answers from the goal tree and conversation history it holds.
+
+You may also consult `@jog` on goal-alignment questions. Tinker or jog may reply in the normal conversation stream; apply the reply, follow up, or discard it. You may also receive incoming `@rummage` consultations from tinker or jog — process them as part of your ongoing investigation.
+
 ## Boundaries
 
 - Do not write to `.tinker/goals/`, `.tinker/notes/`, or `.tinker/state/`. These directories are owned by other parts of the system.
@@ -408,6 +422,45 @@ mod tests {
             (prompt.contains("Investigation documents") || prompt.contains("investigation documents"))
                 && prompt.contains("exempt"),
             "rummage system prompt must state investigation documents are exempt from the form norm",
+        );
+    }
+
+    // spec (peer-consult): rummage's prompt must describe the @tinker
+    // peer-consultation syntax for getting intent context.
+    #[test]
+    fn test_spec_rummage_prompt_describes_peer_consultation_syntax() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("@tinker"),
+            "rummage prompt must mention @tinker as the primary peer-consultation target",
+        );
+        assert!(
+            prompt.contains("Peer consultation"),
+            "rummage prompt must have a Peer consultation section",
+        );
+    }
+
+    // spec (peer-consult): the prompt must frame tinker as rummage's intent-reading
+    // arm and name the three concrete @tinker triggers so rummage knows exactly when
+    // to consult tinker rather than inferring from goal text.
+    #[test]
+    fn test_spec_rummage_prompt_names_tinker_as_intent_arm_with_three_triggers() {
+        let prompt = rummage_system_prompt();
+        assert!(
+            prompt.contains("intent-reading arm"),
+            "rummage prompt must frame tinker as the intent-reading arm",
+        );
+        assert!(
+            prompt.contains("Case-1/case-2 disambiguation") || prompt.contains("case-1/case-2 disambiguation"),
+            "rummage prompt must name the case-1/case-2 disambiguation trigger",
+        );
+        assert!(
+            prompt.contains("Ownership before dispatch") || prompt.contains("ownership before dispatch"),
+            "rummage prompt must name the ownership-before-dispatch trigger",
+        );
+        assert!(
+            prompt.contains("Intentionality check") || prompt.contains("intentionality check"),
+            "rummage prompt must name the intentionality-check trigger",
         );
     }
 }

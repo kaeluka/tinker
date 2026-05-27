@@ -80,10 +80,27 @@ in that emitter's goal; the protocol they share lives here.
 """
 parent_id = ""
 children = []
-related = [
-  { id = "goal-sessions", reason = "Each `/run` line becomes a dispatch into `goal-sessions`'s pending queue, with the parsed reason threaded into the session context. The trigger syntax has no effect without the dispatch mechanism on the other end." },
-  { id = "tinker", reason = "Tinker is the primary non-user emitter of this protocol — for edited goals and reactive post-batch scheduling. The decision of *when* tinker emits lives in `tinker`; the protocol it emits lives here." },
-  { id = "rummage", reason = "Rummage is the second non-user emitter: on a confirmed case-2 bug it emits `/run` to commission a fix, with a declarative reason pointing at the durable failing test it wrote. The scanner reads rummage's finalized output as well as tinker's." },
-  { id = "jog", reason = "jog is a third non-user emitter, but on a *new* channel: on an 'I know better' finding it dispatches `tinker` (not a goal session) to fix/clarify/enrich a goal. That channel carries a prescriptive, user-sourced instruction and is exempt from the `/run` declarative-reason rule." },
-  { id = "coding-standards", reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link." }
-]
+
+[[related]]
+id = "goal-sessions"
+reason = "Each `/run` line becomes a dispatch into `goal-sessions`'s pending queue, with the parsed reason threaded into the session context. The trigger syntax has no effect without the dispatch mechanism on the other end."
+
+[[related]]
+id = "tinker"
+reason = "Tinker is the primary non-user emitter of this protocol — for edited goals and reactive post-batch scheduling. The decision of *when* tinker emits lives in `tinker`; the protocol it emits lives here."
+
+[[related]]
+id = "rummage"
+reason = "Rummage is the second non-user emitter: on a confirmed case-2 bug it emits `/run` to commission a fix, with a declarative reason pointing at the durable failing test it wrote. The scanner reads rummage's finalized output as well as tinker's."
+
+[[related]]
+id = "jog"
+reason = "jog is a third non-user emitter, but on a *new* channel: on an 'I know better' finding it dispatches `tinker` (not a goal session) to fix/clarify/enrich a goal. That channel carries a prescriptive, user-sourced instruction and is exempt from the `/run` declarative-reason rule."
+
+[[related]]
+id = "peer-consult"
+reason = "`peer-consult` defines the `@<agent>` inter-agent messaging channel — a peer advisory protocol that sits alongside `/run` and `/jog-edit` as a sibling concern rather than an extension of the directive channels `triggers` governs."
+
+[[related]]
+id = "coding-standards"
+reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."

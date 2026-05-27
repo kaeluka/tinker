@@ -2,15 +2,13 @@ id = "cleanup-hook"
 summary = "governs: pre-session tinker-test-case: marker cleanup; three marker shapes (inline/in-place/file-level); start-of-comment-line detection rule; placeholder-reason exempt; retry 3x; block goal session on failure | triggers: cleanup behavior; marker recognition rules; rummage investigation code cleanup; placeholder exemption"
 description = """
 ## WHAT
-While tinker tinkers — writing temporary tests, exposing private
-symbols, swapping constants, adding scratch programs — every change
-it makes carries a marker comment of the form
-`tinker-test-case: <reason>`. Before any goal session runs, the
-system scans the project tree, finds every marker, and dispatches a
-cheap cleanup agent to remove or revert the change each one labels.
-It retries a few times; if markers still can't be cleaned, the goal
-session is blocked and the user is told which files still need
-attention.
+Before any goal session runs, the system scans the project tree for
+`tinker-test-case:` markers — left by rummage's active investigation
+work (scratch tests, fuzz harnesses, instrumentation) — and
+dispatches a cheap cleanup agent to remove or revert the change each
+one labels. It retries a few times; if markers still can't be
+cleaned, the goal session is blocked and the user is told which
+files still need attention.
 
 Markers come in three shapes. An **inline addition** labels a new
 region to remove. An **in-place modification** labels a change to
@@ -35,7 +33,7 @@ source:
 
 ## WHY
 Without a marker convention, investigation code accumulates and
-contaminates production. With one, tinker can probe freely —
+contaminates production. With one, rummage can probe freely —
 including in production source, including by exposing private
 symbols — and the cleanup step keeps the codebase honest.
 
@@ -57,14 +55,18 @@ prompt contains it.
   times before giving up; surfacing unrecoverable failures to the
   user; distinguishing real markers from both prose mentions and
   format-example mentions.
-- Out of scope: enforcing the marker at write time (tinker
+- Out of scope: enforcing the marker at write time (rummage
   self-enforces; this hook only cleans up after); recovering across
   project boundaries; reliance on version control for reverts.
 
 """
 parent_id = "goal-sessions"
 children = []
-related = [
-  { id = "coding-standards", reason = "The `tinker-test-case:` marker this hook detects and cleans is defined by section 5 ('Tinkerability') of `coding-standards`. The marker syntax, semantics, and three shapes (inline / in-place / file-level) come from there." },
-  { id = "rummage", reason = "Rummage is an active investigator that writes scratch tests, fuzz harnesses, and instrumentation marked with `tinker-test-case:`. This hook removes those traces alongside tinker's own investigation code, so a goal session never sees residue from either agent." }
-]
+
+[[related]]
+id = "coding-standards"
+reason = "The `tinker-test-case:` marker this hook detects and cleans is defined by section 5 ('Tinkerability') of `coding-standards`. The marker syntax, semantics, and three shapes (inline / in-place / file-level) come from there."
+
+[[related]]
+id = "rummage"
+reason = "Rummage is the active investigator that writes scratch tests, fuzz harnesses, and instrumentation marked with `tinker-test-case:`. This hook removes those traces before each goal session runs."
