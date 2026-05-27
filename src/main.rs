@@ -37,6 +37,18 @@ use std::{io, path::PathBuf, sync::{Arc, Mutex}, time::Duration};
 use tokio::sync::mpsc;
 
 
+fn print_help() {
+    println!("tinker — autonomous coding assistant\n");
+    println!("USAGE:");
+    println!("    tinker [OPTIONS]\n");
+    println!("OPTIONS:");
+    println!("    --claude                    Use the Claude backend (default: opencode)");
+    println!("    --tend-full-goal-context    Inject full goal text instead of compact index");
+    println!("    --default-model             Use the backend's default model for all tiers");
+    println!("    -h, --help                  Print this help and exit");
+    println!("\nhttps://github.com/kaeluka/tinker");
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Composition root: real capability implementations live here only.
@@ -44,19 +56,26 @@ async fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!("tinker — autonomous coding assistant\n");
-        println!("USAGE:");
-        println!("    tinker [OPTIONS]\n");
-        println!("OPTIONS:");
-        println!("    --claude                    Use the Claude backend (default: opencode)");
-        println!("    --tend-full-goal-context    Inject full goal text instead of compact index");
-        println!("    -h, --help                  Print this help and exit");
+        print_help();
         std::process::exit(0);
     }
 
     let use_default_model = args.iter().any(|a| a == "--default-model");
     let use_claude = args.iter().any(|a| a == "--claude");
     let use_full_goal_context = args.iter().any(|a| a == "--tend-full-goal-context");
+
+    const KNOWN_ARGS: &[&str] = &[
+        "--claude",
+        "--tend-full-goal-context",
+        "--default-model",
+        "--help",
+        "-h",
+    ];
+    if let Some(bad) = args.iter().skip(1).find(|a| !KNOWN_ARGS.contains(&a.as_str())) {
+        println!("error: unrecognized argument '{bad}'\n");
+        print_help();
+        std::process::exit(1);
+    }
 
     let work_dir = std::env::current_dir()?;
     let primary_tinker_dir = work_dir.join(".tinker");
@@ -2786,5 +2805,51 @@ mod tests {
             help_pos < tui_pos,
             "--help check (pos {help_pos}) must appear before enable_raw_mode() call (pos {tui_pos})",
         );
+    }
+
+    // spec (startup-args): unrecognized arguments trigger an error message naming the bad arg,
+    // followed by help text, and the process exits with code 1.
+    #[test]
+    fn test_spec_unknown_arg_detection_precedes_tui() {
+        let main_rs = include_str!("main.rs");
+        let unknown_pos = main_rs.find("unrecognized argument").expect("unknown-arg error message must exist in main.rs");
+        let tui_pos = main_rs.find("enable_raw_mode()?").expect("enable_raw_mode() call must exist in main.rs");
+        assert!(
+            unknown_pos < tui_pos,
+            "unknown-arg check (pos {unknown_pos}) must appear before enable_raw_mode() call (pos {tui_pos})",
+        );
+    }
+
+    #[test]
+    fn test_spec_unknown_arg_exits_with_code_1() {
+        let main_rs = include_str!("main.rs");
+        // After the unknown-arg message there must be a process::exit(1).
+        let unknown_pos = main_rs.find("unrecognized argument").expect("unknown-arg error message must exist in main.rs");
+        let exit1_pos = main_rs.find("process::exit(1)").expect("process::exit(1) must exist for unknown args");
+        assert!(
+            unknown_pos < exit1_pos,
+            "process::exit(1) (pos {exit1_pos}) must follow the unknown-arg error message (pos {unknown_pos})",
+        );
+    }
+
+    #[test]
+    fn test_spec_help_text_includes_repo_link() {
+        let main_rs = include_str!("main.rs");
+        assert!(
+            main_rs.contains("https://github.com/kaeluka/tinker"),
+            "help text must include the repo link https://github.com/kaeluka/tinker",
+        );
+    }
+
+    #[test]
+    fn test_spec_known_args_list_covers_all_startup_flags() {
+        let main_rs = include_str!("main.rs");
+        // KNOWN_ARGS must enumerate every flag the binary accepts.
+        for flag in &["--claude", "--tend-full-goal-context", "--default-model", "--help", "-h"] {
+            assert!(
+                main_rs.contains(flag),
+                "KNOWN_ARGS or help text must mention flag '{flag}'",
+            );
+        }
     }
 }

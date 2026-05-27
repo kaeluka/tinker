@@ -1,8 +1,8 @@
 id = "rummage"
-summary = "governs: rummage sibling agent for program behavior comprehension; three modes (debugging/recon/exploration); mode-shaped anchor + hypothesis loop + falsification-per-hypothesis; backward causal reasoning, LSP call-graph, bisection, fuzz; tinker-test-case: scratch code; case-2 durable failing test + /run; case-1 surface only; tinker as intent-reading arm (@tinker for disambiguation/ownership/intentionality) | triggers: rummage behavior; investigation technique selection; case-2 dispatch; LSP+webfetch grants; when to consult tinker"
+summary = "governs: rummage sibling agent for program behavior comprehension; three modes (debugging/recon/exploration); mode-shaped anchor + hypothesis loop + falsification-per-hypothesis; backward causal reasoning, LSP call-graph, bisection, fuzz; tinker-test-case: scratch code; case-2 durable failing test + /run; case-1 surface only; tend as intent-reading arm (@tend for disambiguation/ownership/intentionality) | triggers: rummage behavior; investigation technique selection; case-2 dispatch; LSP+webfetch grants; when to consult tend"
 description = """
 ## WHAT
-A sibling chat agent to tinker, dedicated to **understanding program
+A sibling chat agent to tend, dedicated to **understanding program
 behavior**. The user opens a rummage session when something needs
 explaining — a thrown exception, surprising output, a flow they
 don't fully trust, code they're about to change and want to
@@ -81,23 +81,23 @@ selects the owning goal by reading the goal files it already treats
 as signal. **Case 1** — where pinning the correct behavior would
 require a fresh intent decision not derivable from the spec — is
 not rummage's to act on: it recognizes the case, surfaces the
-finding, and leaves the decision to the human and tinker, because
+finding, and leaves the decision to the human and tend, because
 intent is human-owned.
 
-**Tinker is rummage's intent-reading arm.** When rummage needs to
+**Tend is rummage's intent-reading arm.** When rummage needs to
 understand what a behavior was *meant* to do rather than what it
-currently does, it consults tinker via `@tinker` rather than
+currently does, it consults tend via `@tend` rather than
 inferring from goal text alone. Three concrete triggers:
 (1) **Case-1/case-2 disambiguation** — when the spec is ambiguous
 and rummage cannot determine whether a divergence is a bug or a
-fresh intent decision not derivable from the spec, `@tinker` before
+fresh intent decision not derivable from the spec, `@tend` before
 committing to a finding; (2) **ownership before dispatch** — when
 rummage is ready to emit `/run` but cannot confidently identify
-which goal owns the behavior in question, `@tinker` to resolve;
+which goal owns the behavior in question, `@tend` to resolve;
 (3) **intentionality check** — when code behavior looks wrong but
-the goal is silent on the case, `@tinker` before calling it a
+the goal is silent on the case, `@tend` before calling it a
 divergence. In all three cases rummage asks about the *should*;
-tinker answers from the goal tree and conversation history it holds.
+tend answers from the goal tree and conversation history it holds.
 
 The output document is **hybrid**: current best understanding at
 the top (what rummage currently believes is happening, and why),
@@ -112,7 +112,7 @@ implies a spec-reality gap. Treating the goal as signal-with-noise
 rather than authoritative is the shared stance of the divergence
 investigators (per `divergence-investigation`); among them rummage
 audits the spec↔code gap and `jog` the intent↔spec gap. The producer
-agents — tinker and the goal sessions — treat goals as authoritative.
+agents — tend and the goal sessions — treat goals as authoritative.
 
 Output follows the `shared-language` standard. When the user
 pastes an error log or stack trace, that is not permission to
@@ -121,8 +121,8 @@ translates.
 
 A rummage session is an ongoing chat with multiple investigation
 threads. Nothing persists across tinker restarts in v1. UX shell:
-sibling chat agent to tinker, one active at a time; `/rummage` and
-`/tinker` slash commands switch; the REPL prompt tag names the
+sibling chat agent to tend, one active at a time; `/rummage` and
+`/tend` slash commands switch; the REPL prompt tag names the
 active agent. Runs on the strongest model tier available for the
 chosen backend (currently opus on Claude, the "smartest" tier on
 opencode).
@@ -146,7 +146,7 @@ stops a fresh stateless session from re-deriving the same bug it
 wrote. The case-1 boundary keeps rummage out of intent: when
 "correct" is a fresh judgment rather than a spec consequence,
 acting would have rummage inventing intent it does not own (per
-`user-system-interaction`). The `@tinker` consultation on
+`user-system-interaction`). The `@tend` consultation on
 ambiguous cases is the mechanism that keeps the case-1/case-2
 boundary honest without leaving rummage stranded — it asks the
 agent that holds the *should* rather than guessing from goal text
@@ -210,7 +210,7 @@ cannot verify.
   files as noise-aware signal; ongoing chat with multiple threads;
   commissioning a **case-2 fix** by writing a durable, marker-free
   failing test and autonomously emitting a declarative `/run` for
-  the owning goal; consulting tinker via `@tinker` for intent
+  the owning goal; consulting tend via `@tend` for intent
   context (case-1/case-2 disambiguation, ownership resolution
   before dispatch, intentionality checks).
 - Out of scope:
@@ -220,16 +220,16 @@ cannot verify.
     pins the correct behavior.
   - **Acting on a case-1 bug.** When determining the correct
     behavior requires a fresh intent decision the spec does not
-    derive, rummage surfaces the finding for the human and tinker
+    derive, rummage surfaces the finding for the human and tend
     rather than writing a test or dispatching — intent is
     human-owned.
   - **Persistence across tinker restarts** (v1 only).
-  - **Auto-detect handoff** between tinker and rummage — the
+  - **Auto-detect handoff** between tend and rummage — the
     automatic switch of the active *chat* agent, distinct from the
     case-2 goal-session dispatch, which is in scope.
   - **Writing to `.tinker/notes/notes.md` or `.tinker/state/`.**
-    `notes.md` is tinker-private deliberation;
-    `vocabulary.txt` is tinker-owned.
+    `notes.md` is tend-private deliberation;
+    `vocabulary.txt` is tend-owned.
   - **Reading the runtime introspection log**
     (`runtime.jsonl` and `runtime.json`) in v1. Revisit if the
     introspection substrate turns out useful for investigations.
@@ -243,7 +243,7 @@ children = []
 
 [[related]]
 id = "tui"
-reason = "The TUI renders the active-agent tag in the REPL prompt and recognizes the `/rummage` and `/tinker` slash commands. The UX shape of rummage as a sibling agent is realized at the TUI level."
+reason = "The TUI renders the active-agent tag in the REPL prompt and recognizes the `/rummage` and `/tend` slash commands. The UX shape of rummage as a sibling agent is realized at the TUI level."
 
 [[related]]
 id = "cleanup-hook"
@@ -263,8 +263,8 @@ reason = "rummage produces documents and chat for the user; `shared-language` go
 
 [[related]]
 id = "triggers"
-reason = "On a confirmed case-2 bug, rummage emits `/run <owning-goal-id>` to commission a fix — making it a second non-user emitter of the `/run` protocol `triggers` defines. Its reason stays declarative (a pointer to the durable failing test it wrote), so it complies with the declarative-pointer rule rather than needing the user-typed exemption. The protocol's scanner must read rummage's finalized output, not only tinker's."
+reason = "On a confirmed case-2 bug, rummage emits `/run <owning-goal-id>` to commission a fix — making it a second non-user emitter of the `/run` protocol `triggers` defines. Its reason stays declarative (a pointer to the durable failing test it wrote), so it complies with the declarative-pointer rule rather than needing the user-typed exemption. The protocol's scanner must read rummage's finalized output, not only tend's."
 
 [[related]]
 id = "peer-consult"
-reason = "Tinker is rummage's intent-reading arm: rummage consults `@tinker` when it needs to understand the *should* rather than inferring from goal text — specifically for case-1/case-2 disambiguation, ownership resolution before dispatch, and intentionality checks. Rummage also receives `@rummage` consultations from tinker on code-reality questions."
+reason = "Tend is rummage's intent-reading arm: rummage consults `@tend` when it needs to understand the *should* rather than inferring from goal text — specifically for case-1/case-2 disambiguation, ownership resolution before dispatch, and intentionality checks. Rummage also receives `@rummage` consultations from tend on code-reality questions."

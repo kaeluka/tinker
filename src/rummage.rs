@@ -444,7 +444,7 @@ mod tests {
     // arm and name the three concrete @tend triggers so rummage knows exactly when
     // to consult tend rather than inferring from goal text.
     #[test]
-    fn test_spec_rummage_prompt_names_tinker_as_intent_arm_with_three_triggers() {
+    fn test_spec_rummage_prompt_names_tend_as_intent_arm_with_three_triggers() {
         let prompt = rummage_system_prompt();
         assert!(
             prompt.contains("intent-reading arm"),
