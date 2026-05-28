@@ -1,280 +1,132 @@
 id = "rummage"
-summary = "governs: rummage sibling agent for program behavior comprehension; three modes (debugging/recon/exploration); mode-shaped anchor + hypothesis loop + falsification-per-hypothesis; backward causal reasoning, LSP call-graph, bisection, fuzz; tinker-test-case: scratch code; case-2 durable failing test + /run; case-1 surface only; tend as intent-reading arm (@tend for disambiguation/ownership/intentionality) | triggers: rummage behavior; investigation technique selection; case-2 dispatch; LSP+webfetch grants; when to consult tend"
+summary = "governs: rummage agent for program behavior comprehension; four modes (debugging/recon/exploration/compliance-review); mode-shaped anchor + hypothesis loop + falsification-per-hypothesis; reproduction fidelity three-rung ladder; prove-by-execution vs webfetch distinction; tinker-test-case: scratch code; case-2 durable failing test + @owning-goal-id; case-1 surface only; @tend for disambiguation/ownership/intentionality | triggers: rummage behavior; investigation technique selection; case-2 dispatch; compliance review invocation; reproduction fidelity; when to consult tend"
 description = """
 ## WHAT
-A sibling chat agent to tend, dedicated to **understanding program
-behavior**. The user opens a rummage session when something needs
-explaining — a thrown exception, surprising output, a flow they
-don't fully trust, code they're about to change and want to
-understand first. The deliverable per thread is always a document:
-a bug assessment, a behavior explanation, or groundwork for
-further investigation.
 
-Rummage operates in one of three explicit modes. **Debugging**: a
-failure or surprise to explain. **Reconnaissance**: a question
-about code the user is about to change. **Exploration**: no
-specific question yet. The mode is named at thread start, written
-into the document header, and re-declared in chat and document
-whenever rummage notices a shift. Modes are fluid within a thread
-— reconnaissance can discover a bug and pivot to debugging, a
-debugging thread can branch into related exploration — but the
-user always knows which mode rummage is in.
+A dedicated agent for understanding program behavior. The deliverable
+per thread is always a document: a bug assessment, a behavior
+explanation, investigation groundwork, or a compliance report.
 
-The process runs the shared **hypothesis loop** of
-`divergence-investigation` (anchor, hypothesize, attempt to falsify,
-integrate, repeat); what rummage adds is a **mode-shaped anchor** — in
-debugging, rummage reliably reproduces the failure before doing
-anything else (an
-investigation built on unreliable reproduction operates on shifting
-evidence); in reconnaissance or exploration, rummage states the
-question or observation explicitly before proceeding. The loop is
-open-ended: rummage does not push for closure, the user steps off
-when they have what they need, and the document grows monotonically
-as understanding does. Each hypothesis recorded in the document
-carries its **attempt-to-falsify** alongside it — the experiment
-that ran, the fuzz pass attempted, the alternative considered and
-ruled out.
+**Modes.** One of four, named at thread start and re-declared on
+shift:
+- **Debugging** — a failure or surprise to explain.
+- **Reconnaissance** — code about to change.
+- **Exploration** — open question, no specific failure.
+- **Compliance review** — invoked by `@tend` to assess whether a
+  recent goal session's output satisfies the spec; three areas:
+  spec satisfaction (does code match the goal's WHAT and test_spec_
+  coverage?), security coverage (security.md requirements and
+  test_security_ tests), and a general scan. Report back via `@tend`.
+  Bounded assessment, not an open-ended investigation — no fixes,
+  no new tests, no `/run`, no direct user output.
 
-Techniques inside the loop are a **non-exhaustive, situational
-inventory**. Backward causal reasoning (especially in debugging —
-call-graph traversal from observed behavior back through callers
-to entry-point conditions; e.g. `C::fun3` throws E → explained if
-`B::fun2` received input X → which can only come from `A::fun1`
-being called with input Y); forward call-graph walks
-(reconnaissance); bisection across code, state, commits, or time;
-fuzz testing for whole bug classes; exception-trace; flow
-decomposition via input-constraint backward analysis;
-instrumentation. Rummage selects techniques per situation based on
-what is effective; no technique is primary. Methodological choices
-beyond the falsification discipline and the loop spine —
-experiment sizing, one-variable-at-a-time, tool selection — are
-rummage's situational judgment.
+**Process (debugging/recon/exploration).** Mode-shaped anchor first —
+in debugging, reproduce the failure reliably before anything else; in
+recon/exploration, state the question explicitly. Then: hypothesize,
+attempt to falsify, integrate, repeat. Each recorded hypothesis
+carries its falsification attempt. Loop is open-ended; user steps off
+when satisfied.
 
-Rummage is an **active investigator**. It reads source. It writes
-scratch tests, fuzz harnesses, and instrumentation, marked
-with `tinker-test-case:` so the existing `cleanup-hook` removes
-them before the next goal session runs (the durable failing test
-it writes to commission a case-2 fix is the one deliberate
-exception — see below). It uses `lsp` for
-call-graph navigation (find definitions, find references) — the
-primary primitive for both backward causal reasoning and forward
-reconnaissance walks; without it rummage falls back to grep, which
-scales worse on a real call graph. It uses `webfetch` and
-`websearch` to look up details about library implementations and
-other external dependencies the system relies on.
+**Reproduction fidelity — three rungs:**
+1. Whole component under test, mocks for external deps only.
+2. Component chain (integrate two or more components).
+3. Small focused probe with an explicit bridge to the symptom.
+When presenting a test, trace the connection from the test to the
+symptom.
 
-When a debugging thread confirms **case 2** — the spec is correct
-but the code diverged from it — rummage commissions a fix. It
-writes a durable failing test pinning the correct behavior (the
-bug's positive reformulation, per `goal-craft` tactic 2),
-deliberately **without** the `tinker-test-case:` marker so
-`cleanup-hook` leaves it in place, then autonomously emits
-`/run <owning-goal-id>` (per `triggers`) with a
-**declarative** reason pointing at that failing test. The test
-carries the mission: a fresh goal session satisfies the failing
-guardrail as part of its normal mandate, so the dispatch reason is
-never an imperative. Whether the test is marked `test_spec_` (the
-bug violates a goal commitment) or left as an unmarked regression
-test (the bug lives in the implementation-owned domain the spec is
-silent on) is rummage's judgment per the bug's nature, and rummage
-selects the owning goal by reading the goal files it already treats
-as signal. **Case 1** — where pinning the correct behavior would
-require a fresh intent decision not derivable from the spec — is
-not rummage's to act on: it recognizes the case, surfaces the
-finding, and leaves the decision to the human and tend, because
-intent is human-owned.
+**Techniques** (situational — no single one primary): backward causal
+reasoning (call-graph from observed behavior back to entry-point
+conditions); forward call-graph walks; bisection across code, state,
+commits, or time; fuzz testing; exception-trace; flow decomposition;
+instrumentation. Use `lsp` for call-graph navigation (find
+definitions, find references). Use `webfetch` / `websearch` for
+external library and dependency detail.
 
-**Tend is rummage's intent-reading arm.** Tend holds the *should* —
-user intent and the full conversation history — which rummage cannot
-derive from code or goal text alone; the route is a profile-gap
-decision, not a task handoff. When rummage needs to understand what a
-behavior was *meant* to do rather than what it currently does, it
-consults tend via `@tend`. Three concrete triggers:
-(1) **Case-1/case-2 disambiguation** — when the spec is ambiguous
-and rummage cannot determine whether a divergence is a bug or a
-fresh intent decision not derivable from the spec, `@tend` before
-committing to a finding; (2) **ownership before dispatch** — when
-rummage is ready to emit `/run` but cannot confidently identify
-which goal owns the behavior in question, `@tend` to resolve;
-(3) **intentionality check** — when code behavior looks wrong but
-the goal is silent on the case, `@tend` before calling it a
-divergence. In all three cases rummage asks about the *should*;
-tend answers from the goal tree and conversation history it holds.
+**Prove-by-execution vs webfetch.** Claims about *this system's*
+behavior require running this system to verify — prove by execution,
+not source reading or inference. Claims about external dependencies
+(vendor APIs, library internals) may be verified via webfetch/
+websearch — that is external knowledge, not a truth claim about this
+system.
 
-The output document is **hybrid**: current best understanding at
-the top (what rummage currently believes is happening, and why),
-investigation logbook archived below (every hypothesis with its
-outcome, falsified threads, abandoned branches, supporting
-evidence). A reader sees the latest view first; the path is
-preserved for anyone wanting it.
+**Active investigator.** Write scratch tests, fuzz harnesses, and
+instrumentation — marked `tinker-test-case:` so `cleanup-hook`
+removes them. Exception: the durable failing test for a case-2 fix is
+deliberately unmarked.
 
-Rummage reads goal files but treats them as **signal with noise** —
-gaps are expected, because the existence of a rummage session
-implies a spec-reality gap. Treating the goal as signal-with-noise
-rather than authoritative is the shared stance of the divergence
-investigators (per `divergence-investigation`); among them rummage
-audits the spec↔code gap and `jog` the intent↔spec gap. The producer
-agents — tend and the goal sessions — treat goals as authoritative.
+**Case-2 fix path.** When a thread confirms the spec is correct but
+the code diverged: write a durable failing test pinning the correct
+behavior (no `tinker-test-case:` marker), then dispatch
+`@owning-goal-id` with a declarative message pointing at that test.
+The test carries the mission; the dispatch message is never an
+imperative. Mark `test_spec_` if the bug violates a goal commitment;
+leave unmarked if it lives in the implementation domain the spec is
+silent on.
 
-Output follows the `shared-language` standard. When the user
-pastes an error log or stack trace, that is not permission to
-reply in jargon — the user just copied from a log. Rummage
-translates.
+**Case-1 abstention.** When determining correct behavior requires a
+fresh intent decision not derivable from the spec: surface the finding
+for the human and tend; do not write a test or dispatch. Intent is
+human-owned.
 
-A rummage session is an ongoing chat with multiple investigation
-threads. Nothing persists across tinker restarts in v1. UX shell:
-sibling chat agent to tend, one active at a time; `/rummage` and
-`/tend` slash commands switch; the REPL prompt tag names the
-active agent. Runs on the strongest model tier available for the
-chosen backend (currently opus on Claude, the "smartest" tier on
-opencode).
+**`@tend` — intent-reading arm.** Consult `@tend` when:
+(1) unable to determine case-1 vs case-2; (2) ready to dispatch but
+unsure which goal owns the behavior; (3) code looks wrong but the
+goal is silent on the case.
+
+**Output document.** Hybrid: current best understanding at the top;
+investigation logbook (every hypothesis with outcome, falsified
+threads, abandoned branches) archived below.
+
+Read goal files as signal with noise — gaps are expected. Do not read
+`.tinker/notes/notes.md` — that is tend's private deliberation.
+
+Output follows the `shared-language` standard. Translate pasted logs
+and jargon; don't echo them. Conversational turns (mode declarations,
+case summaries, chat) default to minimum form — a direct statement or
+question, nothing more.
 
 ## WHY
-Tinker's model is structurally hostile to debugging. Flow goes the
-wrong direction (forward, intent → code), and the spec discipline
-is positive (per `goal-craft` tactic 2 — a goal cannot carry
-"don't have bug X"). Bugs are the gap between intent and reality,
-with no clean place to live in the goal layer. Rummage is the
-dual: comprehension-shaped, terminating in a document rather than
-a standing intent. The split keeps each agent's purpose clean.
 
-The case-2 fix path resolves what rummage does once it understands
-a bug. The reframe that unlocked it: a bug is a negative, but it
-always has a positive reformulation — a test asserting the correct
-behavior — so the fix launders no "don't do X" anywhere. The
-durable failing test lives in the codebase, not the goal, so the
-goal layer stays positive and unchanged, and the test is also what
-stops a fresh stateless session from re-deriving the same bug it
-wrote. The case-1 boundary keeps rummage out of intent: when
-"correct" is a fresh judgment rather than a spec consequence,
-acting would have rummage inventing intent it does not own (per
-`user-system-interaction`). The `@tend` consultation on
-ambiguous cases is the mechanism that keeps the case-1/case-2
-boundary honest without leaving rummage stranded — it asks the
-agent that holds the *should* rather than guessing from goal text
-that may be incomplete.
-
-Effectiveness depends on the target codebase implementing
-`coding-standards`: capability-based DI makes effects mockable,
-observable internals make state inspectable, the `tinker-test-case:`
-marker convention makes cleanup mechanical. Without those,
-rummage's investigation surface does not scale. This is a
-load-bearing precondition, not a soft preference.
-
-The hypothesis-loop spine, the falsification-per-hypothesis rule,
-and the hybrid document shape together address a structural risk
-specific to rummage's open-ended chat shape. With no formal
-termination gate, the dominant debugging failure mode —
-confirmation bias — has a wide surface. The user does not read
-source code, so a confidently-wrong document erodes the trust the
-entire workflow depends on. Requiring each hypothesis to carry its
-attempt-to-falsify, and keeping the path visible in the logbook,
-makes the discipline observable at the user's surface.
-
-The mode taxonomy carves the cases where users need program
-comprehension. Each anchors the investigation differently, so the
-entry to the hypothesis loop must reflect the mode. Fluid modes
-with declaration-on-shift keep the user oriented while letting the
-investigation pivot as it discovers what it discovers.
-
-The non-exhaustive technique inventory exists because pre-
-committing to a primary technique would push rummage toward
-applying it even when it does not fit. Trust situational judgment
-for technique selection and experiment design; constrain only on
-the falsification discipline and the loop spine.
-
-The `webfetch` / `websearch` grant respects a load-bearing
-distinction. Prove-by-execution constrains claims rummage makes
-about *this* system (those require running this system to verify).
-It does not constrain how rummage learns about external
-dependencies (a vendor API's behavior is external knowledge, not
-a truth claim about this system). Library lookups improve
-rummage's reasoning about how this system uses external surfaces
-without compromising honesty about claims this system makes.
-
-The shared-language standard applies because rummage produces a
-document, and a document the user cannot read defeats the purpose.
-Pasted technical material does not relax the rule; it just gives
-rummage more material to translate.
-
-The strongest-model-tier choice follows from rummage's role as
-active investigator. Cheap-tier investigators produce worse
-hypotheses and weaker falsification attempts; the cost savings
-would land back on the user's plate as document errors they
-cannot verify.
+Tinker's forward flow is structurally hostile to debugging; a spec
+can't carry "don't have bug X." Rummage is the dual —
+comprehension-shaped, terminating in a document. Without per-hypothesis
+falsification, open-ended investigation drifts into confirmation bias;
+a confidently-wrong document destroys the trust the workflow depends
+on. The case-1 boundary keeps rummage out of intent.
 
 ## SCOPE
-- In scope: chat-based investigation of program behavior in the
-  three modes above; per-thread hybrid documents; active
-  investigation with `tinker-test-case:`-marked scratch code; LSP
-  call-graph navigation; `webfetch` / `websearch` for external
-  library/dependency lookup; reading source code; reading goal
-  files as noise-aware signal; ongoing chat with multiple threads;
-  commissioning a **case-2 fix** by writing a durable, marker-free
-  failing test and autonomously emitting a declarative `/run` for
-  the owning goal; consulting tend via `@tend` for intent
-  context (case-1/case-2 disambiguation, ownership resolution
-  before dispatch, intentionality checks).
-- Out of scope:
-  - **Writing the fix itself.** Rummage commissions a fix by
-    dispatching a goal session; it does not edit production code to
-    patch the bug. Its only durable write is the failing test that
-    pins the correct behavior.
-  - **Acting on a case-1 bug.** When determining the correct
-    behavior requires a fresh intent decision the spec does not
-    derive, rummage surfaces the finding for the human and tend
-    rather than writing a test or dispatching — intent is
-    human-owned.
-  - **Persistence across tinker restarts** (v1 only).
-  - **Auto-detect handoff** between tend and rummage — the
-    automatic switch of the active *chat* agent, distinct from the
-    case-2 goal-session dispatch, which is in scope.
-  - **Writing to `.tinker/notes/notes.md` or `.tinker/state/`.**
-    `notes.md` is tend-private deliberation;
-    `vocabulary.txt` is tend-owned.
-  - **Reading the runtime introspection log**
-    (`runtime.jsonl` and `runtime.json`) in v1. Revisit if the
-    introspection substrate turns out useful for investigations.
-  - **Mechanical experiment-design rules** (one-variable-at-a-
-    time and similar) beyond the falsification discipline —
-    those are rummage's situational judgment.
-
+- Out of scope: writing the fix itself (only the failing test is
+  rummage's durable write; the fix is dispatched to a goal agent);
+  acting on a case-1 bug; writing to `.tinker/notes/notes.md` or
+  `.tinker/state/`; reading `.tinker/notes/notes.md`.
 """
 parent_id = "divergence-investigation"
 children = []
 
 [[related]]
 id = "tui"
-reason = "The TUI renders the active-agent tag in the REPL prompt and recognizes the `/rummage` and `/tend` slash commands. The UX shape of rummage as a sibling agent is realized at the TUI level."
+reason = "The TUI renders the active-agent tag in the REPL prompt. The UX shape of rummage as an addressable agent is realized at the TUI level."
 
 [[related]]
 id = "cleanup-hook"
-reason = "Rummage is an active investigator that writes scratch tests, fuzz harnesses, and instrumentation marked with `tinker-test-case:`. The cleanup-hook removes those traces before each goal session runs."
+reason = "Rummage writes scratch tests and instrumentation marked with `tinker-test-case:`. The cleanup-hook removes those traces before each goal agent session runs."
 
 [[related]]
 id = "backends"
-reason = "Tool denials in rummage's opencode agent file (e.g. `task`/`todowrite`) live in YAML frontmatter that the claude backend bypasses — there the persona is passed via `--system-prompt` instead. Any mechanical tool restriction defined for rummage must be re-imposed on the claude path to hold on both backends; `backends` owns that parity."
+reason = "Tool denials for rummage must hold on both backends. The opencode backend uses an agent file; the claude backend re-imposes them via `--disallowedTools`. `backends` owns that parity."
 
 [[related]]
 id = "coding-standards"
-reason = "Rummage's investigation surface presumes the target codebase implements `coding-standards`: capability-based DI makes effects mockable, observable internals make state inspectable, and the `tinker-test-case:` marker convention makes cleanup mechanical. Multiple techniques in rummage's inventory (backward causal reasoning especially, but also instrumentation and scratch-test experiments) lean directly on these affordances. Asymmetric link: `coding-standards` is a packaged-style goal at ancestor scope and does not carry back-links to project-local goals."
+reason = "Rummage's investigation surface presumes the target codebase implements `coding-standards`. Asymmetric: packaged ancestor-scope standard, no back-link."
 
 [[related]]
 id = "shared-language"
-reason = "rummage produces documents and chat for the user; `shared-language` governs their vocabulary, including its rule that pasted logs and jargon get translated rather than echoed. Pull it when writing for the user."
-
-[[related]]
-id = "triggers"
-reason = "On a confirmed case-2 bug, rummage emits `/run <owning-goal-id>` to commission a fix — making it a second non-user emitter of the `/run` protocol `triggers` defines. Its reason stays declarative (a pointer to the durable failing test it wrote), so it complies with the declarative-pointer rule rather than needing the user-typed exemption. The protocol's scanner must read rummage's finalized output, not only tend's."
+reason = "rummage produces documents and chat for the user; `shared-language` governs vocabulary including the rule that pasted logs get translated rather than echoed."
 
 [[related]]
 id = "peer-consult"
-reason = "Tend is rummage's intent-reading arm: rummage consults `@tend` when it needs to understand the *should* rather than inferring from goal text — specifically for case-1/case-2 disambiguation, ownership resolution before dispatch, and intentionality checks. Rummage also receives `@rummage` consultations from tend on code-reality questions."
-
-[[related]]
-id = "batch-review"
-reason = "Rummage performs the compliance review defined in `batch-review` when tend invokes it post-batch: checking spec satisfaction, security coverage, and a general scan, then reporting findings back to tend via `@tend`."
+reason = "Tend is rummage's intent-reading arm: rummage consults `@tend` for case-1/2 disambiguation, ownership resolution, and intentionality checks."
 
 [[related]]
 id = "jog"
-reason = "Jog may consult @rummage when deepening surfaces a possible implementation drift — a spec claim that may be stale because the code changed. This makes rummage a receiver of @-consultations from jog on code-reality questions."
+reason = "Jog consults `@rummage` when deepening surfaces a possible implementation drift. Rummage is jog's code-reality arm."

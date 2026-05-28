@@ -74,7 +74,14 @@ why `jog` is dialectical and `rummage` is not.
   investigator beyond these two until one is actually needed.
 """
 parent_id = "the-cycles"
-children = ["rummage", "jog"]
+
+[[children]]
+id = "rummage"
+reason = "spec↔code skeptic — investigates whether code satisfies the goal spec; autonomous because code is executable"
+
+[[children]]
+id = "jog"
+reason = "intent↔spec skeptic — audits whether the spec still reflects user intent; dialectical because intent is tacit"
 
 [[related]]
 id = "forward-generation"

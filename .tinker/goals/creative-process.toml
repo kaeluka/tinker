@@ -134,7 +134,10 @@ two LLMs cannot replace the human in a dialectical process."
 
 """
 parent_id = "the-false-promise"
-children = ["goal-craft"]
+
+[[children]]
+id = "goal-craft"
+reason = "five content-quality tactics for writing goals that work as both standing intent and as the prompt agents read"
 
 [[related]]
 id = "user-persona"

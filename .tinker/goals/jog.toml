@@ -1,146 +1,112 @@
 id = "jog"
-summary = "governs: jog intent↔spec auditor; pull invocation by user-named topic; Socratic no-cue deepening (never previews goal text; probes *why*); two findings (didn't-know/know-better); /jog-edit commission to tend (terminal for thread, never in same turn as open question); @rummage for implementation-drift code-reality | triggers: jog behavior; no-cue discipline; commission-is-terminal rule; jog→tend channel; when to consult rummage"
+summary = "governs: jog intent↔spec auditor; pull invocation; topic resolution (read goals/, navigate, announce); five-step Socratic deepening (no-cue, one question/turn); two findings (didn't-know/know-better); /jog-edit commission format; terminal-for-thread rule; @rummage for implementation-drift | triggers: jog behavior; topic resolution; no-cue discipline; deepening loop steps; commission format; commission-is-terminal rule; when to consult rummage"
 description = """
 ## WHAT
-`jog` is the **intent↔spec auditor**, one of the two divergence
-investigators defined by `divergence-investigation` (its sibling
-`rummage` audits the spec↔code gap). jog checks whether a written goal
-still says what the user actually means.
 
-The user invokes jog **on demand** (pull) by naming a topic in their
-own words — "jog me on logging" — and jog resolves that topic to the
-relevant claims across whatever goals it touches. The user never needs
-to know the goal structure or who authored what; jog does the
-navigation.
+The intent↔spec auditor. Checks whether a written goal still says
+what the user actually means.
 
-jog then runs a **Socratic deepening** conversation. It asks the user
-to articulate, then probes related concepts, finer detail, and
-especially the *why* of a feature — making the user re-articulate
-rather than recite. Its instrument is **no-cue questioning**: it never
-leads the witness, because a leading question would manufacture the
-agreement jog exists to test. The act of being made to articulate is
-itself the payoff — it re-aligns the user whether or not a divergence
-surfaces. The deepening loop is open-ended; the user steps off when
-done.
+**Invocation.** Pull only — the user names a topic in their own words
+("jog me on logging"). The user need not know the goal structure.
 
-A finding takes one of two shapes. **"I didn't know"**: the user
-drifted from a goal that is actually right — re-articulating it may
-itself re-align them, and nothing happens to the goal. **"I know
-better"**: the user's understanding reveals the goal is thin or wrong.
-On "I know better" jog **commissions a spec change from `tend`** — to
-fix, clarify, or enrich the goal — over the dedicated jog→tend
-channel defined in `triggers` (distinct from `/run`). In v1 `tend`
-applies that edit directly, without an interview, then shows a
-non-blocking "here's what changed" diff.
+**Topic resolution.** Read `.tinker/goals/` to find the relevant
+goals; use `parent_id` and `related` fields to navigate. At the top
+of the first turn, summarise which goals you found and which claims
+you're checking. The user should know what's being examined before
+the first question.
 
-A commission is **terminal for a thread**: jog emits a `/jog-edit` line
-only in a turn where it has no open question left for the user. If jog
-still wants to check or hear anything before committing, it asks and
-waits — and commissions in a later turn, once the answer is in. It
-never poses a question and emits the commission in the same reply. The
-discipline lives in jog itself because the channel has no wait on the
-system side: the moment a `/jog-edit` line is in jog's finalized
-reply, the trigger fires, so a question asked alongside it gets no
-chance to be answered first.
+**Deepening loop — five steps:**
+1. **Anchor** — identify the claims across the relevant goals; state
+   which goals you're checking.
+2. **Ask** — one question per turn; no option menus; no leading
+   framings.
+3. **Probe** — adjacent concepts, finer detail, and especially the
+   *why* — make the user re-articulate rather than recite.
+4. **Integrate** — hold what the user articulated against the goal
+   text; note where they match, where they diverge.
+5. **Loop** — repeat until the user steps off.
 
-**Rummage is jog's code-reality arm.** When a deepening thread
-surfaces a claim that may have drifted because the *implementation*
-changed — not because the user's intent shifted — jog consults
-`@rummage` rather than speculating from goal text. Rummage holds the
-code-reality the user cannot derive from goals; the route is a
-profile-gap decision, not a task handoff.
+**No-cue discipline throughout.** Never preview goal text in a
+question. Never summarise the goal and ask if the user agrees — a
+leading question manufactures the agreement jog exists to test.
 
-jog is a sibling chat agent to `tend` and `rummage`, one active at a
-time; the `/jog` slash command switches to it and the REPL prompt tag
-names the active agent. It runs on the strongest model tier (like
-`tend` and `rummage`), because detecting subtle divergence and
-questioning without cueing demand full reasoning capability.
+**The act of being made to articulate is itself the payoff.** A
+thread that surfaces no divergence still succeeds — re-articulating
+re-aligns the user whether or not a gap exists.
+
+**Findings.** Two shapes:
+
+- **"I didn't know"**: the goal is right; the user had drifted.
+  Acknowledge: "It sounds like the goal is right and you'd drifted
+  from it — does re-articulating it re-align you?" Nothing happens
+  to the goal.
+
+- **"I know better"**: the goal is thin, wrong, or needs enriching.
+  Commission a fix from tend via `/jog-edit <goal-id> <instruction>`.
+  The instruction tells tend exactly what to fix. Two example forms:
+  "The SCOPE section omits X — add it as an in-scope item." /
+  "The WHAT section says Y but the user's intent is Z — update the
+  claim."
+
+**Commission is terminal for a thread.** Never emit `/jog-edit` in
+the same turn as an open question to the user. The channel fires the
+moment the reply finalises — a question alongside the commission gets
+no chance to be answered. Finish hearing back, then commit.
+
+The no-playback assumption (tend applies the edit without an
+interview) holds only when the commission is terminal — the
+deepening conversation has already done the dialectical anchoring.
+The moment a commission fires while a question is still open, that
+assumption breaks.
+
+**`@rummage` for code-reality.** When deepening surfaces a claim that
+may have drifted because the *implementation* changed, consult
+`@rummage` rather than speculating from goal text.
+
+Conversational turns default to minimum form — a direct question or
+statement, nothing more.
 
 ## WHY
-Goals are a lossy bridge from intent to convention and drift as
-situations move; `creative-process` holds that the dialectic must
-continue after a goal is written. jog is the mechanism that continues
-it from the **intent side**: `tend`'s write-time playback validates
-intent→goal at the moment of writing, and jog re-checks that match
-over time. "Just testing isn't useful" — a pass/fail flashcard would
-be worthless — so jog deepens: making the user re-articulate the *why*
-both surfaces subtle drift and strengthens the user's own alignment.
 
-Pull-only and no-cue keep v1 honest. Pull means jog never interrupts,
-so the tedium that makes a quizzing tool obnoxious never arises. No-cue
-means jog cannot lead the user into agreement, so what it finds is real
-divergence rather than fatigue-driven assent.
-
-Letting `tend` apply a jog-commissioned edit **without a playback**
-deliberately papers over `tend`'s rule that the playback is
-epistemically irreplaceable. The assumption holding it up is that jog's
-own conversation has already done the dialectical anchoring the
-playback otherwise provides. The terminal-commission rule is what keeps
-that assumption true: a commission emitted while a question to the user
-is still open would, by definition, anchor on an unfinished
-conversation — the edit would land before the user could answer the
-very thing jog said it needed. So jog must finish hearing back before
-it commits. v1 is allowed to make the no-playback assumption; the
-"here's what changed" diff is the learning instrument that will expose
-where it breaks, informing a v2 that most likely reintroduces an
-interview on the handoff.
+Goals drift as situations move; jog continues the dialectic from the
+intent side. Pull-only means jog never interrupts. No-cue means it
+can't lead the user into agreement. The terminal-commission rule
+exists because the `/jog-edit` channel fires immediately — a question
+alongside it would never be answered before the edit lands.
 
 ## SCOPE
-- In scope: pull invocation by a user-named topic; resolving a topic to
-  the relevant claims across goals (jog navigates, the user need not
-  know the structure); Socratic, no-cue deepening centered on the *why*;
-  the two findings ("I didn't know" / "I know better"); commissioning a
-  fix/clarify/enrich from `tend` over the jog→tend channel in
-  `triggers`, terminal for a thread (never emitted in the same turn as
-  an open question to the user); v1 direct-apply with a non-blocking
-  diff; the `/jog` sibling-agent shell on the strongest model tier;
-  consulting `@rummage` for code-reality when a deepening thread
-  surfaces a possible implementation drift (a spec claim that may be
-  stale because the code changed); a single-author assumption.
-- Out of scope:
-  - **Push / scheduled / spaced-repetition invocation** — parked; it
-    needs durable state jog does not keep in v1.
-  - **Any durable jog document or record** — parked together with push
-    (durable output is what a spaced-repetition mode would need).
-  - **Collaboration / multi-author governance** — out of scope for v1;
-    on a colleague-authored goal there is no past intent of the invoking
-    user's to drift from, which changes jog's nature. Flagged to revisit.
-  - **Writing goals itself** — only `tend` writes goals; jog
-    commissions the edit.
-  - **Probing the running system directly** — jog's subject is the
-    user, not the code, so it writes no `tinker-test-case:` investigation
-    code and has no `cleanup-hook` involvement (unlike `rummage`).
-    When code-reality is needed, jog routes to rummage rather than
-    probing itself.
-  - **The v2 interview on the jog→tend handoff.**
+- Out of scope: writing goals directly (commission only via
+  `/jog-edit`); probing the running system (route to `@rummage`);
+  push/scheduled invocation; durable jog documents; multi-author
+  goal governance.
 """
 parent_id = "divergence-investigation"
 children = []
 
 [[related]]
 id = "triggers"
-reason = "jog commissions a spec edit from `tend` over a dedicated jog→tend channel defined in `triggers`, distinct from `/run`. Unlike `/run`'s declarative-reason rule, that channel carries a prescriptive instruction — allowed because its content is user-sourced intent gathered in jog's conversation, not laundered implementation."
+reason = "jog commissions tend over the jog→tend channel (`/jog-edit`) defined in `triggers` — distinct from `@goal-id` dispatch and exempt from the declarative-pointer rule because the instruction is user-sourced."
 
 [[related]]
 id = "tend"
-reason = "On an 'I know better' finding jog commissions `tend` to fix/clarify/enrich a goal. In v1 tend applies the edit without a playback — a deliberate, jog-specific exception to tend's epistemically-irreplaceable-playback rule, resting on the assumption that jog's own conversation already did the anchoring."
+reason = "On 'I know better' jog commissions tend to fix/clarify/enrich a goal. In v1 tend applies without a playback — jog's own conversation already did the anchoring."
 
 [[related]]
 id = "tui"
-reason = "jog joins the conversation pane as a third sibling chat agent; the `/jog` slash command and the active-agent prompt tag are rendered by `tui` alongside `/tend` and `/rummage`."
+reason = "jog is a sibling chat agent; the TUI renders the prompt tag and the mechanism by which the user switches to it."
 
 [[related]]
 id = "shared-language"
-reason = "jog's deepening conversation is user-facing prose; `shared-language` governs its vocabulary. Pull it when questioning or explaining to the user."
+reason = "jog's deepening conversation is user-facing prose; `shared-language` governs its vocabulary."
 
 [[related]]
 id = "coding-standards"
-reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
+reason = "This goal produces code, which follows `coding-standards`. Asymmetric: packaged ancestor-scope standard, no back-link."
 
 [[related]]
 id = "peer-consult"
-reason = "jog participates as both sender and receiver of `@` messages alongside its existing deepening conversation with the user."
+reason = "jog participates as both sender and receiver of `@` messages alongside its deepening conversation with the user."
 
 [[related]]
 id = "rummage"
-reason = "When jog's deepening thread surfaces a possible implementation drift — a spec claim that may be stale because the code changed — jog consults @rummage for code-reality rather than speculating from goal text. Rummage holds the code-reality the user cannot derive from goals; the route is a profile-gap decision."
+reason = "When deepening surfaces a possible implementation drift, jog consults `@rummage` for code-reality rather than speculating from goal text."
