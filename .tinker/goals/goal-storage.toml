@@ -1,5 +1,5 @@
 id = "goal-storage"
-summary = "governs: goal file storage as TOML at .tinker/goals/<id>.toml; ancestor-directory merge (cwd-most wins on duplicates); malformed file reported without blocking siblings; session IDs in memory only (not persisted) | triggers: goal file format/parsing; ancestor merge behavior; schema changes affecting storage layer"
+summary = "governs: goal file storage as TOML at .tinker/goals/<id>.toml; ancestor-directory merge (cwd-most wins on duplicates); malformed file reported without blocking siblings; session IDs in memory only (not persisted); [[children]] and [[related]] both carry id+reason | triggers: goal file format/parsing; ancestor merge behavior; schema changes affecting storage layer"
 description = """
 ## WHAT
 Goals are persistent files associated with a project. They live in a
@@ -18,6 +18,14 @@ Goal files store intent only — not session state. Session IDs and
 history are never persisted to disk, so the goal file is the single
 source of truth across restarts.
 
+The `children` and `related` link lists both use the array-of-tables
+syntax (`[[children]]` / `[[related]]`), each entry carrying `id`
+and `reason` fields. The reason on a `[[related]]` entry explains
+how the two goals interact; the reason on a `[[children]]` entry
+explains why that goal is a sub-aspect of its parent. Both serve as
+the navigation index for agents deciding what to pull, and for tend's
+cross-goal alignment.
+
 ## WHY
 Goals are the user's standing intent. They have to survive restarts,
 be human-editable, and diff cleanly in version control. Sharing
@@ -31,11 +39,18 @@ that could drift from or override what the goal says.
 - In scope: a human-editable text format for goals; recovery from a
   single malformed file (the rest still load); ancestor-directory
   merge with the project's copy winning on duplicates; following
-  symlinks transparently.
-- Out of scope: nested goal subdirectories; runtime format
-  migrations; persisting session state or history; a per-file
-  `change_log` (pending work is triggered via `/run`, per
-  `triggers`, not recorded on the spec).
+  symlinks transparently; the `[[children]]` and `[[related]]`
+  link-list schema (id + reason per entry for both).
+- Out of scope: nested goal subdirectories; persisting session state
+  or history; a per-file `change_log` (pending work is triggered via
+  the dispatch protocol, not recorded on the spec).
+- Transition note: during the migration from `children = [...]`
+  (plain string array) to `[[children]]` (array of tables with id +
+  reason), the parser must accept both formats — treating string
+  entries as `ChildLink { id, reason: "" }`. This backward compat
+  must ship in the same change that introduces `ChildLink`, so a new
+  binary can start against old TOML files without losing goals from
+  the goal list.
 
 """
 parent_id = ""

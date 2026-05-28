@@ -69,7 +69,10 @@ backend explicit and small.
 
 """
 parent_id = ""
-children = ["model-config"]
+
+[[children]]
+id = "model-config"
+reason = "user-editable .tinker/config.toml overriding model tier assignments per backend — six slots, absent slots fall back to built-in defaults"
 
 [[related]]
 id = "startup-args"

@@ -35,53 +35,52 @@ you made, not a pile of guesses the AI left behind.
 
 ## How it works
 
-Tinker has two roles that work together.
+Tinker organizes work across three layers: your **intent** — what you want
+to build, before it has precise language — the **goal** that writes it down
+explicitly, and the **code** that implements the goal. Each layer is
+answerable to the one before it.
 
-**You** bring the judgment. You know what feels right and what does not. You
-spot the friction, the things that could work better. You decide when a
-design is good enough and when it needs another pass. The tool is named after
-what you do: you tinker.
+The system runs in both directions.
 
-**Tend** (the conversational agent) handles the rules. It reads your
-goals, checks them against each other, finds the gaps and conflicts, and
-ensures the system that emerges follows them. It does not write code itself —
-that is what goal sessions do. It is good at following instructions and bad at
-guessing what you meant. When it cannot figure something out from the rules
-alone, it stops and asks you. It does not make things up. When the framing
-itself is wrong — when the current question is not the right question —
-tend names the shift explicitly before continuing. It never silently
-redirects.
+**Forward — building.** You bring the judgment. You spot the friction, feel
+what fits and what does not, and decide when a result is good enough. The
+tool is named after what you do: tinker.
 
-Two more agents live in the same conversation pane. Both face the opposite
-direction from tend: instead of building forward from intent to code, they
-look for gaps.
+**Tend** (the conversational agent) draws out what you want, writes it as a
+goal, and reads it back to you. You correct it. It reads it back again.
+Once the goal says what you mean, tend dispatches a **goal session** — a
+persistent agent dedicated to that goal, which reads the spec, writes the
+code, and reports back to tend when done. Multiple goal sessions can be
+active at once; you select any goal in the goal list to see its session log.
+
+Tend does not guess. When it cannot resolve something from the rules alone,
+it stops and asks. When the framing is wrong — when your question is not the
+right question — tend names the shift explicitly before continuing. It never
+silently redirects.
+
+**Backward — checking.** Two agents run the other direction, looking for
+gaps between adjacent layers.
 
 **Rummage** checks whether the code does what the goal says. When something
 needs explaining — a bug, surprising output, behavior you do not trust, code
-you are about to change and want to understand first — you bring in rummage.
-It investigates: reads what is there, writes scratch tests, and traces the
-problem from its symptom backward to the conditions that caused it. The
-deliverable is a document: an explanation, an assessment, or groundwork for
-the next step.
+you are about to change — rummage investigates: reads what is there, writes
+scratch tests, traces the problem from symptom to cause. When it confirms
+the code diverged from the goal, it writes a failing test and sends the goal
+agent that owns that code a message pointing at the test.
 
 **Jog** checks whether the goal still says what you mean. Goals are written
-at a point in time; your understanding moves. You open jog by naming a topic
-in your own words — "jog me on logging" — and jog holds a conversation with
-you. It asks you to articulate what you know, then probes the why, without
-first telling you what the goal says. If what you say matches what is
-written, nothing changes. If it does not, jog hands the edit off to tend, which applies it and shows
-you what changed — without running another interview, because jog's
-conversation already did that work.
+at a point in time; your understanding moves. Open jog by naming a topic in
+your own words — "jog me on logging" — and jog questions you, without first
+telling you what the goal says. If your understanding has drifted, jog hands
+the edit to tend, which applies it and shows you what changed.
+
+The cycle is closed: everything built forward is a candidate for scrutiny
+backward. Code that cannot be explained by its goal, or a goal that no
+longer matches your intent, is a failure the backward pass is there to
+catch.
 
 You switch between the three agents with `/tend`, `/rummage`, and `/jog`.
 The prompt line always shows which is active.
-
-The two of you work in rounds. You say what you want. Tend writes it
-down as a goal and reads it back to you. You correct it. It reads it back
-again. Once the goal says what you mean, tend hands it to a **goal
-session** — a focused agent that reads the goal, writes the code, and
-reports back what it did. Only one goal session runs at a time, so you
-always know what is happening.
 
 Goals are kept deliberately sparse. Each line in a goal must be anchored by
 something outside the implementation — a decision you actually made, an

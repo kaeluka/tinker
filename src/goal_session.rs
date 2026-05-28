@@ -37,7 +37,7 @@ what exists, do it without hesitation. The human owns the Intent \
 /// control character (\x01) never appears in normal LLM output.
 pub const TRIGGER_REASON_MARKER: char = '\x01';
 
-const SUMMARY_REQUEST: &str = "\
+pub const SUMMARY_REQUEST: &str = "\
 Provide a structured summary of this session with four parts:
 
 1. What was accomplished. 2-3 sentences. Be specific about which files were created or modified. You MUST also list every `test_spec_` function you created or modified, prefixed by file path (e.g. `src/lexer.rs: test_spec_parses_arithmetic`). If you wrote zero `test_spec_` functions, explain why — and consider whether the `Tests as guardrails` standard (apply where relevant) actually permits that gap.
@@ -48,11 +48,18 @@ Provide a structured summary of this session with four parts:
 
 4. How to try it. One concrete invocation line — the exact command(s) the user can run to see the artifact in action.";
 
+/// Unified session event type. Replaces the former per-agent event enums
+/// (`GoalEvent` and the implicit TendEvent coupling). All sessions — tend,
+/// rummage, jog, and any goal agent — emit these through the single
+/// `session_rx` channel in the run loop.
 #[derive(Debug)]
-pub enum GoalEvent {
-    Text { goal_id: String, text: String },
-    RunDone,
-    SummaryDone { goal_id: String, summary: String },
+pub enum SessionEvent {
+    /// The LLM session ID returned by the first run (used for in-process resumption).
+    LlmSessionId { goal_id: String, session_id: String },
+    /// A streamed text chunk from the LLM.
+    Chunk { goal_id: String, text: String },
+    /// The session has finished processing the current message.
+    Done { goal_id: String },
     /// Cleanup of tinker-test-case markers failed before this goal session
     /// could start. `dirty_files` lists files still containing markers;
     /// `error` is set when cleanup itself errored before it could finish.
@@ -61,6 +68,12 @@ pub enum GoalEvent {
         dirty_files: Vec<std::path::PathBuf>,
         error: Option<String>,
     },
+    /// The goal session finished and produced a structured summary.
+    /// Routed directly to tend as a peer consultation so tend can synthesize
+    /// and respond to the user without batch machinery.
+    /// Transitional: will be replaced by `@tend` blocks from the LLM once
+    /// tend.toml carries the summary instruction.
+    SummaryReady { goal_id: String, summary: String },
 }
 
 /// Builds a Markdown table of the goal's neighboring goals in the graph —
@@ -77,11 +90,13 @@ fn build_neighborhood_table(goal: &Goal) -> String {
         ));
     }
 
-    for child_id in &goal.children {
-        rows.push((
-            child_id.clone(),
-            "child goal (read for sub-aspect details)".to_string(),
-        ));
+    for child in &goal.children {
+        let reason = if child.reason.is_empty() {
+            "child goal (read for sub-aspect details)".to_string()
+        } else {
+            child.reason.clone()
+        };
+        rows.push((child.id.clone(), reason));
     }
 
     for related in &goal.related {
@@ -99,7 +114,18 @@ fn build_neighborhood_table(goal: &Goal) -> String {
     table
 }
 
-pub(crate) fn goal_init_message(goal: &Goal, reason: Option<&str>) -> String {
+/// Builds the init message for any goal session. This is the single
+/// construction path for all sessions (goal agents, tend, rummage, jog —
+/// once their descriptions migrate to TOML).
+///
+/// The message includes:
+/// 1. Identity — "You are the agent for goal `<id>`."
+/// 2. Navigation — compact goal index and on-demand pull path.
+/// 3. Message-passing semantics — how @goal-id routing works.
+/// 4. The goal's own description (WHAT/WHY/SCOPE).
+/// 5. Rules (VCS, directory writes, ownership mandate).
+/// 6. Trigger reason (if present).
+pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &str) -> String {
     let table = build_neighborhood_table(goal);
     let neighbors_section = if table.is_empty() {
         String::new()
@@ -114,7 +140,32 @@ pub(crate) fn goal_init_message(goal: &Goal, reason: Option<&str>) -> String {
     };
 
     let mut prompt = format!(
-        "You are a goal session for `tinker`, an autonomous coding assistant.\n\
+        "You are the agent for goal `{id}`.\n\
+         \n\
+         ## Goal index\n\
+         \n\
+         {compact_index}\n\
+         \n\
+         Pull any goal's full text on demand by reading `.tinker/goals/<goal-id>.toml`.\n\
+         \n\
+         ## Message passing\n\
+         \n\
+         Use `@<goal-id> <message>` to send a message to another agent. Non-`@`-block \
+         output is your private working log (rendered in the log pane, not delivered to \
+         other agents). `@`-blocks in your reply are extracted after you finish and routed \
+         to the named recipients. No blocking calls — replies arrive in the normal message \
+         stream. When you complete significant work, send `@tend` a structured summary: \
+         what was accomplished, design changes, decisions made beyond the goal, how to try it.\n\
+         \n\
+         **Before sending `@goal-id`, read `.tinker/goals/<goal-id>.toml`.** The goal is \
+         the agent's role. You cannot write a useful message without knowing what that \
+         agent does and what it needs.\n\
+         \n\
+         **Two shared resources available to all agents.**\n\
+         - `@tend` — for intent and *should*: what the user wants, what a goal means, \
+         whether a behavior is intentional. Tend holds the goal tree and conversation history.\n\
+         - `@rummage` — for code reality and *is*: what the code actually does, how a flow \
+         works, whether an implementation matches a spec.\n\
          \n\
          ## Your goal\n\
          \n\
@@ -138,6 +189,7 @@ pub(crate) fn goal_init_message(goal: &Goal, reason: Option<&str>) -> String {
          When you have made meaningful progress (or decided no action is \
          warranted), stop.",
         id = goal.id,
+        compact_index = compact_index,
         description = goal.description,
         neighbors_section = neighbors_section,
         vcs_rules = VCS_RULES,
@@ -148,6 +200,11 @@ pub(crate) fn goal_init_message(goal: &Goal, reason: Option<&str>) -> String {
         prompt.push_str(&format!("\n\n## Reason for triggering\n{}", r));
     }
     prompt
+}
+
+/// Backward-compat alias used by goal-session logging before compact_index was added.
+pub(crate) fn goal_init_message(goal: &Goal, reason: Option<&str>) -> String {
+    session_init_message(goal, reason, "[]")
 }
 
 pub async fn run_silent(
@@ -175,21 +232,18 @@ pub async fn run_silent(
 pub async fn run_goal(
     goal: Goal,
     reason: Option<String>,
+    compact_index: String,
     work_dir: PathBuf,
-    tx: mpsc::Sender<GoalEvent>,
+    tx: mpsc::Sender<SessionEvent>,
     oc: Arc<dyn OpenCodeRunner>,
 ) -> Result<(String, String)> {
     let goal_id = goal.id.clone();
-    // Every dispatch is a fresh session — per `goal-sessions`, there is no
-    // in-process resumption across triggers. The session receives its own
-    // goal in full plus a neighborhood table for on-demand traversal.
-    let message = goal_init_message(&goal, reason.as_deref());
+    let message = session_init_message(&goal, reason.as_deref(), &compact_index);
 
     // Emit the trigger reason as the very first log line, marked for bold
-    // rendering by the TUI (tui-goal decision: "the specific 'reason' it was
-    // triggered must be rendered in the log pane in bold font").
+    // rendering by the TUI.
     if let Some(r) = &reason {
-        let _ = tx.try_send(GoalEvent::Text {
+        let _ = tx.try_send(SessionEvent::Chunk {
             goal_id: goal_id.clone(),
             text: format!("{}{}\n", TRIGGER_REASON_MARKER, r),
         });
@@ -200,10 +254,17 @@ pub async fn run_goal(
     let full_output_clone = full_output.clone();
     let tx_txt = tx.clone();
     let gid2 = goal_id.clone();
-    let on_sid: Box<dyn FnMut(String) + Send> = Box::new(|_| {});
+    let tx_sid = tx.clone();
+    let gid3 = goal_id.clone();
+    let on_sid: Box<dyn FnMut(String) + Send> = Box::new(move |sid: String| {
+        let _ = tx_sid.try_send(SessionEvent::LlmSessionId {
+            goal_id: gid3.clone(),
+            session_id: sid,
+        });
+    });
     let on_chunk: Box<dyn FnMut(String) + Send> = Box::new(move |chunk: String| {
         full_output_clone.lock().unwrap().push_str(&chunk);
-        let _ = tx_txt.try_send(GoalEvent::Text {
+        let _ = tx_txt.try_send(SessionEvent::Chunk {
             goal_id: gid2.clone(),
             text: chunk,
         });
@@ -212,7 +273,7 @@ pub async fn run_goal(
         .run(&message, None, &work_dir, on_sid, on_chunk)
         .await?;
 
-    let _ = tx.send(GoalEvent::RunDone).await;
+    let _ = tx.send(SessionEvent::Done { goal_id: goal_id.clone() }).await;
 
     // Intra-dispatch continuity: the structured-summary request continues
     // the same LLM conversation as the main work, so the summary can refer
@@ -222,7 +283,7 @@ pub async fn run_goal(
         .unwrap_or_default();
 
     let _ = tx
-        .send(GoalEvent::SummaryDone {
+        .send(SessionEvent::SummaryReady {
             goal_id,
             summary: summary.clone(),
         })
@@ -244,6 +305,7 @@ mod tests {
             parent_id: "".into(),
             children: vec![],
             related: vec![],
+            tier: None,
             source_path: None,
         }
     }
@@ -433,6 +495,7 @@ mod tests {
         let _ = run_goal(
             goal,
             Some("reason".into()),
+            "[]".into(),
             "/work".into(),
             tx,
             runner.clone(),
@@ -454,11 +517,11 @@ mod tests {
     // session can decide what to pull on demand.
     #[test]
     fn test_spec_goal_init_has_neighborhood_table() {
-        use crate::goal::RelatedLink;
+        use crate::goal::{ChildLink, RelatedLink};
 
         let mut goal = make_goal("calc", "build calc");
         goal.parent_id = "math".into();
-        goal.children = vec!["rounding".into()];
+        goal.children = vec![ChildLink { id: "rounding".into(), reason: "".into() }];
         goal.related = vec![RelatedLink {
             id: "coding-standards".into(),
             reason: "apply these standards to all source code".into(),
@@ -518,6 +581,45 @@ mod tests {
         assert!(
             msg.contains(TINKER_DIR_WRITE_RULES),
             "write prohibition must still be present in Rules"
+        );
+    }
+
+    // spec: goal-agents preamble — before sending an @-block to another agent, the
+    // agent must read that goal's TOML file so it knows the recipient's role. The
+    // preamble must contain the read-before-message mandate verbatim so the LLM
+    // treats "reading before messaging" as a hard requirement, not an option.
+    #[test]
+    fn test_spec_preamble_includes_read_before_message_mandate() {
+        let goal = make_goal("widget", "build a widget");
+        let msg = session_init_message(&goal, None, "[]");
+        assert!(
+            msg.contains("Before sending") && msg.contains("read `.tinker/goals/"),
+            "preamble must contain the read-before-message mandate"
+        );
+        assert!(
+            msg.contains("cannot write a useful message without knowing"),
+            "preamble must explain why reading is required before sending"
+        );
+    }
+
+    // spec: goal-agents preamble — two shared resources (@tend for intent/should,
+    // @rummage for code-reality/is) must be named in the preamble so every agent
+    // knows when to consult them without having to read the respective goal files.
+    #[test]
+    fn test_spec_preamble_includes_tend_rummage_shared_resources() {
+        let goal = make_goal("widget", "build a widget");
+        let msg = session_init_message(&goal, None, "[]");
+        assert!(
+            msg.contains("Two shared resources available to all agents"),
+            "preamble must name the two shared-resource heading"
+        );
+        assert!(
+            msg.contains("@tend") && msg.contains("intent") && msg.contains("should"),
+            "preamble must describe @tend as the intent/*should* resource"
+        );
+        assert!(
+            msg.contains("@rummage") && msg.contains("code reality") && msg.contains("is"),
+            "preamble must describe @rummage as the code-reality/*is* resource"
         );
     }
 

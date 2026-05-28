@@ -1,5 +1,5 @@
 id = "goal-structure-standard"
-summary = "governs: goal tree structural rules; five operations (merge/nest-down/nest-up/new-root/retire); level-of-detail coherence heuristic; parent-summary re-check when child edited; symmetric related-links both-sides (per-side reason text allowed); write-time re-validation; packaged-goal symmetry exception | triggers: creating/editing goals; structural placement decisions; related-link symmetry checks"
+summary = "governs: goal tree structural rules; five operations (merge/nest-down/nest-up/new-root/retire); level-of-detail coherence heuristic; parent-summary re-check when child edited; [[children]] carry id+reason per entry; symmetric related-links both-sides (per-side reason text allowed); write-time re-validation; packaged-goal symmetry exception | triggers: creating/editing goals; structural placement decisions; related-link symmetry checks; child-link reason authoring"
 description = """
 ## WHAT
 A set of structural rules tend uses to organize goals
@@ -21,15 +21,19 @@ deeper or more technical than the rest, it breaks the zoom level and
 must be extracted into a child.
 
 Two TOML link primitives are kept distinct:
-- `parent_id` / `children` capture **containment / specialization**
-  (B is a sub-aspect of A). Parent goals must **summarize their
+- `parent_id` / `[[children]]` capture **containment /
+  specialization** (B is a sub-aspect of A). Like `[[related]]`
+  entries, each `[[children]]` entry carries `id` and `reason`; the
+  reason answers "why is this goal a sub-aspect of its parent?" and
+  serves as the navigation index for an agent deciding whether to
+  pull the child's full text. Parent goals must **summarize their
   children** well enough to support drill-down filtering during
   cross-goal alignment — alignment starts at parents and drills down
   only when warranted, instead of scanning every goal flat. If a
   parent can't meaningfully summarize its children, the structure is
   wrong: the children don't belong together, or the parent is
-  misnamed.
-- `related` captures **interaction** (B's behavior depends on or
+  misnamed. When nesting a new child, a reason is required.
+- `[[related]]` captures **interaction** (B's behavior depends on or
   affects A's), as reasoned cross-cutting links. Related-links are
   **symmetric** — both goals must list each other — but the reason
   text on each side may differ, because the relationship reads
@@ -77,13 +81,21 @@ warranted. Related-links capture the cross-cutting interactions (e.g.
 `shared-language` affecting many user-facing surfaces outside its
 branch) that the containment hierarchy alone can't express.
 
+Per-link reasons on `[[children]]` entries match the design of
+`[[related]]` entries: agents navigate the goal graph by reading
+reasons and pulling full text only when warranted. Without a reason,
+a child ID is opaque — the agent must load the child to know whether
+it's relevant. With a reason, the same decision is made from the
+compact index, keeping navigation cheap.
+
 ## SCOPE
 - In scope: the five tree operations (four integration plus Retire)
   and the level-of-detail coherence heuristic; the parent-summary
-  coherence rule; the
-  symmetric reasoned related-links primitive; write-time re-validation
-  of both rules on every edit, with partner edits bundled into the
-  same write turn; the packaged-vs-project-local symmetry exception.
+  coherence rule; `[[children]]` entries carrying `id` and `reason`
+  per entry (reason required when nesting); the symmetric reasoned
+  `[[related]]` links primitive; write-time re-validation of both
+  rules on every edit, with partner edits bundled into the same write
+  turn; the packaged-vs-project-local symmetry exception.
 - Out of scope: automated background refactoring of goal files (tend
   applies these rules interactively during conversation); one-shot
   mass backfilling of parent summaries or related-links across

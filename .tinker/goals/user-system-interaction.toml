@@ -67,7 +67,18 @@ and eroded trust in a working feature — made the gap visible.
 
 """
 parent_id = "the-false-promise"
-children = ["user-persona", "shared-language", "implementation-ownership"]
+
+[[children]]
+id = "user-persona"
+reason = "formalizes the user as an experienced dev who doesn't read source — sets the design-partner communication posture"
+
+[[children]]
+id = "shared-language"
+reason = "vocabulary standard and form norm for all user-facing surfaces (tend chat, batch summaries, READMEs)"
+
+[[children]]
+id = "implementation-ownership"
+reason = "mandate giving goal sessions full autonomy over source implementation without the default LLM structural-caution"
 
 [[related]]
 id = "tinker-introspection"

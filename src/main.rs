@@ -16,8 +16,8 @@ mod tui;
 mod test_utils;
 
 use anyhow::Result;
-use app::{ActiveAgent, App, Focus, LoopMode, Phase};
-use cap::{Filesystem, OpenCodeRunner};
+use app::{ActiveAgent, App, Focus, Phase};
+use cap::{Chunk, Filesystem, OpenCodeRunner};
 use realfs::RealFilesystem;
 use crossterm::{
     event::{
@@ -28,14 +28,193 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use goal::{discover_tinker_dirs, load_all_goals};
-use goal_session::{run_goal, GoalEvent};
+use goal_session::SessionEvent;
 use opencode::{RealOpenCodeRunner, GOAL_MODEL as OPENCODE_GOAL_MODEL, TINKER_MODEL as OPENCODE_TINKER_MODEL, SCHEDULER_MODEL as OPENCODE_SCHEDULER_MODEL};
 use claude::{ClaudeRunner, GOAL_MODEL as CLAUDE_GOAL_MODEL, TINKER_MODEL as CLAUDE_TINKER_MODEL, SCHEDULER_MODEL as CLAUDE_SCHEDULER_MODEL};
 use tend::{tend_agent_content, tend_init_prompt, send_message, TendEvent};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{io, path::PathBuf, sync::{Arc, Mutex}, time::Duration};
+use std::collections::HashMap;
 use tokio::sync::mpsc;
 
+fn description_from_toml_str(s: &str) -> String {
+    let marker = "description = \"\"\"\n";
+    let start = s.find(marker).expect("TOML must have description field") + marker.len();
+    let end = start + s[start..].find("\n\"\"\"").expect("description field must close");
+    s[start..end].to_string()
+}
+
+/// Lazy-spawn request: sent when `@goal-id` arrives and that agent isn't in
+/// the session registry yet, or when the user triggers a goal via the tree UI.
+struct SpawnGoalRequest {
+    goal_id: String,
+    /// The dispatch message — trigger reason for first turn, peer message for
+    /// subsequent turns routed before the session was alive.
+    message: String,
+}
+
+/// Persistent goal agent loop. One task per spawned goal agent.
+/// Receives messages via `msg_rx`, runs the LLM with session resumption, and
+/// emits SessionEvents back on `session_tx`. Cleanup hook fires only before
+/// the first LLM turn of a new session (llm_session_id is None).
+async fn goal_agent_loop(
+    goal: goal::Goal,
+    mut msg_rx: mpsc::Receiver<String>,
+    session_tx: mpsc::Sender<SessionEvent>,
+    oc: Arc<dyn OpenCodeRunner>,
+    oc_cleanup: Arc<dyn OpenCodeRunner>,
+    fs: Arc<dyn Filesystem>,
+    work_dir: PathBuf,
+    app_ref: Arc<Mutex<App>>,
+    log: logger::LogSender,
+    backend_name: String,
+) {
+    let goal_id = goal.id.clone();
+    let mut llm_session_id: Option<String> = None;
+
+    while let Some(dispatch_msg) = msg_rx.recv().await {
+        // Cleanup hook: fires only before the first turn of a new session.
+        if llm_session_id.is_none() {
+            let cleanup_t0 = std::time::Instant::now();
+            let cleanup_result = cleanup::run_cleanup(oc_cleanup.as_ref(), fs.as_ref(), &work_dir).await;
+            let cleanup_ms = cleanup_t0.elapsed().as_millis() as u64;
+            match cleanup_result {
+                Ok(cleanup::CleanupOutcome::Clean) => {
+                    log.emit("goal_session", logger::LogEvent::CleanupHookRun {
+                        goal_id: goal_id.clone(),
+                        outcome: "clean".to_string(),
+                        duration_ms: cleanup_ms,
+                    });
+                }
+                Ok(cleanup::CleanupOutcome::FailedAfterRetries(files)) => {
+                    log.emit("goal_session", logger::LogEvent::CleanupHookRun {
+                        goal_id: goal_id.clone(),
+                        outcome: "blocked".to_string(),
+                        duration_ms: cleanup_ms,
+                    });
+                    let _ = session_tx.send(SessionEvent::CleanupBlocked {
+                        goal_id: goal_id.clone(),
+                        dirty_files: files,
+                        error: None,
+                    }).await;
+                    continue;
+                }
+                Err(e) => {
+                    log.emit("goal_session", logger::LogEvent::CleanupHookRun {
+                        goal_id: goal_id.clone(),
+                        outcome: format!("error: {e:#}"),
+                        duration_ms: cleanup_ms,
+                    });
+                    let _ = session_tx.send(SessionEvent::CleanupBlocked {
+                        goal_id: goal_id.clone(),
+                        dirty_files: vec![],
+                        error: Some(format!("{e:#}")),
+                    }).await;
+                    continue;
+                }
+            }
+        }
+
+        // Build the LLM message. First turn: full framework preamble + reason.
+        // Subsequent turns: forward the dispatch message directly.
+        let llm_message = if llm_session_id.is_none() {
+            let compact_index = {
+                let a = app_ref.lock().unwrap();
+                if a.goals.is_empty() { "[]".to_string() }
+                else { goal::build_compact_index(&a.goals) }
+            };
+            // Emit trigger reason as first log line (bold in TUI).
+            let _ = session_tx.try_send(SessionEvent::Chunk {
+                goal_id: goal_id.clone(),
+                text: format!("{}{}\n", goal_session::TRIGGER_REASON_MARKER, dispatch_msg),
+            });
+            log.emit("goal_session", logger::LogEvent::GoalSessionDispatched {
+                goal_id: goal_id.clone(),
+                reason: Some(dispatch_msg.clone()),
+                init_message_chars: 0,
+                backend: backend_name.clone(),
+            });
+            log.emit("goal_session", logger::LogEvent::GoalSessionStarted {
+                goal_id: goal_id.clone(),
+            });
+            goal_session::session_init_message(&goal, Some(&dispatch_msg), &compact_index)
+        } else {
+            dispatch_msg
+        };
+
+        let full_output: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+        let full_output_clone = full_output.clone();
+        let tx_sid = session_tx.clone();
+        let gid_sid = goal_id.clone();
+        let tx_chunk = session_tx.clone();
+        let gid_chunk = goal_id.clone();
+
+        let on_sid: Chunk = Box::new(move |sid: String| {
+            let _ = tx_sid.try_send(SessionEvent::LlmSessionId {
+                goal_id: gid_sid.clone(),
+                session_id: sid,
+            });
+        });
+        let on_chunk: Chunk = Box::new(move |chunk: String| {
+            full_output_clone.lock().unwrap().push_str(&chunk);
+            let _ = tx_chunk.try_send(SessionEvent::Chunk {
+                goal_id: gid_chunk.clone(),
+                text: chunk,
+            });
+        });
+
+        let session_t0 = std::time::Instant::now();
+        let run_result = oc.run(&llm_message, llm_session_id.as_deref(), &work_dir, on_sid, on_chunk).await;
+        let session_ms = session_t0.elapsed().as_millis() as u64;
+
+        let output = full_output.lock().unwrap().clone();
+        match run_result {
+            Ok(new_sid) => {
+                llm_session_id = Some(new_sid.clone());
+                let tool_calls = logger::count_tool_calls(&output);
+                let files_modified = logger::extract_modified_files(&output);
+                let usage = logger::parse_usage_from_text(&output);
+                log.emit("goal_session", logger::LogEvent::GoalSessionFinished {
+                    goal_id: goal_id.clone(),
+                    exit_status: "clean".to_string(),
+                    duration_ms: session_ms,
+                    files_modified_count: files_modified.len(),
+                    files_modified,
+                    tool_calls,
+                    summary_chars: 0,
+                    full_output: output,
+                    usage,
+                    backend: backend_name.clone(),
+                });
+                let _ = session_tx.send(SessionEvent::Done { goal_id: goal_id.clone() }).await;
+                // Structured summary continues the same LLM conversation.
+                let summary = goal_session::run_silent(oc.as_ref(), goal_session::SUMMARY_REQUEST, Some(&new_sid), &work_dir)
+                    .await.unwrap_or_default();
+                let _ = session_tx.send(SessionEvent::SummaryReady {
+                    goal_id: goal_id.clone(),
+                    summary,
+                }).await;
+            }
+            Err(e) => {
+                log.emit("goal_session", logger::LogEvent::GoalSessionFinished {
+                    goal_id: goal_id.clone(),
+                    exit_status: format!("crash: {e:#}"),
+                    duration_ms: session_ms,
+                    files_modified_count: 0,
+                    files_modified: vec![],
+                    tool_calls: 0,
+                    summary_chars: 0,
+                    full_output: output,
+                    usage: None,
+                    backend: backend_name.clone(),
+                });
+                // Clear session_id so next message starts a fresh session.
+                llm_session_id = None;
+                let _ = session_tx.send(SessionEvent::Done { goal_id: goal_id.clone() }).await;
+            }
+        }
+    }
+}
 
 fn print_help() {
     println!("tinker — autonomous coding assistant\n");
@@ -100,10 +279,11 @@ async fn main() -> Result<()> {
     // cleanup for the pre-session tinker-test-case hook (cheapest).
     // With --default-model, all runners omit -m and let opencode pick its default.
     // With --claude, use ClaudeRunner with opus/sonnet/haiku tiers.
-    let (oc_tend, oc_goal, oc_cleanup_runner, oc_rummage, oc_jog): (Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>) = if use_claude {
-        // Claude backend: pass tend persona via --system-prompt instead of agent file.
-        // task/todowrite are denied mechanically via --disallowedTools to match the
-        // identity-level enforcement in the opencode agent files for tend and rummage.
+    // Six runner instances:
+    // oc_tend, oc_goal, oc_goal_high (goal agents with tier="high"), oc_cleanup, oc_rummage, oc_jog
+    let (oc_tend, oc_goal, oc_goal_high, oc_cleanup_runner, oc_rummage, oc_jog):
+        (Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>,
+         Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>) = if use_claude {
         let tinker_m = model_config.claude_high(CLAUDE_TINKER_MODEL);
         let goal_m = model_config.claude_mid(CLAUDE_GOAL_MODEL);
         let cleanup_m = model_config.claude_low(CLAUDE_SCHEDULER_MODEL);
@@ -116,10 +296,11 @@ async fn main() -> Result<()> {
             Arc::new(ClaudeRunner::with_system_prompt(tinker_m, tend_prompt)
                 .with_denied_tools(["task", "todowrite"])),
             Arc::new(ClaudeRunner::new(goal_m)),
+            Arc::new(ClaudeRunner::new(tinker_m)),
             Arc::new(ClaudeRunner::new(cleanup_m)),
-            Arc::new(ClaudeRunner::with_system_prompt(tinker_m, rummage::rummage_system_prompt())
+            Arc::new(ClaudeRunner::with_system_prompt(tinker_m, description_from_toml_str(include_str!("../.tinker/goals/rummage.toml")))
                 .with_denied_tools(["task", "todowrite"])),
-            Arc::new(ClaudeRunner::with_system_prompt(tinker_m, jog::jog_system_prompt())
+            Arc::new(ClaudeRunner::with_system_prompt(tinker_m, description_from_toml_str(include_str!("../.tinker/goals/jog.toml")))
                 .with_denied_tools(["task", "todowrite"])),
         )
     } else if use_default_model {
@@ -127,8 +308,9 @@ async fn main() -> Result<()> {
             Arc::new(RealOpenCodeRunner::default_with_agent("tend")),
             Arc::new(RealOpenCodeRunner::new_default()),
             Arc::new(RealOpenCodeRunner::new_default()),
-            Arc::new(RealOpenCodeRunner::default_with_agent("rummage")), // smartest tier
-            Arc::new(RealOpenCodeRunner::default_with_agent("jog")), // smartest tier
+            Arc::new(RealOpenCodeRunner::new_default()),
+            Arc::new(RealOpenCodeRunner::default_with_agent("rummage")),
+            Arc::new(RealOpenCodeRunner::default_with_agent("jog")),
         )
     } else {
         let tinker_m = model_config.opencode_high(OPENCODE_TINKER_MODEL);
@@ -137,6 +319,7 @@ async fn main() -> Result<()> {
         (
             Arc::new(RealOpenCodeRunner::with_agent(tinker_m, "tend")),
             Arc::new(RealOpenCodeRunner::new(goal_m)),
+            Arc::new(RealOpenCodeRunner::new(tinker_m)),
             Arc::new(RealOpenCodeRunner::new(cleanup_m)),
             Arc::new(RealOpenCodeRunner::with_agent(tinker_m, "rummage")),
             Arc::new(RealOpenCodeRunner::with_agent(tinker_m, "jog")),
@@ -149,11 +332,9 @@ async fn main() -> Result<()> {
         primary_tinker_dir.join("state").join("runtime.json"),
     );
 
-    // Silently write the tend agent file on every startup.
-    // This keeps the installed file in sync with tend_agent_content()
-    // as the persona evolves, rather than leaving a stale copy from a previous
-    // run. Skip when using Claude backend — the persona is passed via
-    // --system-prompt instead of an agent file.
+    // Silently write agent files on every startup so the installed copies stay
+    // in sync with the TOML descriptions. Skip when using Claude backend —
+    // the persona is passed via --system-prompt instead of an agent file.
     if !use_claude {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
@@ -197,8 +378,8 @@ async fn main() -> Result<()> {
 
     let (orch_tx, mut orch_rx) = mpsc::channel::<TendEvent>(64);
     let (msg_tx, mut msg_rx) = mpsc::channel::<String>(16);
-    let (goal_tx, mut goal_rx) = mpsc::channel::<GoalEvent>(128);
-    let (run_tx, mut run_rx) = mpsc::channel::<(goal::Goal, Option<String>)>(4);
+    let (session_tx, mut session_rx) = mpsc::channel::<SessionEvent>(128);
+    let (goal_spawn_tx, mut goal_spawn_rx) = mpsc::channel::<SpawnGoalRequest>(32);
     let (rummage_orch_tx, mut rummage_orch_rx) = mpsc::channel::<TendEvent>(64);
     let (rummage_msg_tx, mut rummage_msg_rx) = mpsc::channel::<String>(16);
     let (jog_orch_tx, mut jog_orch_rx) = mpsc::channel::<TendEvent>(64);
@@ -250,18 +431,6 @@ async fn main() -> Result<()> {
                 backend: backend_name_orch.clone(),
             });
             log_orch.emit("tend", logger::LogEvent::TinkerReplyEmitted { text: full_reply.clone() });
-            // Emit run commands found in the reply
-            for line in full_reply.lines() {
-                if let Some(rest) = line.trim().strip_prefix("/run ") {
-                    let rest = rest.trim();
-                    let (gid, reason) = if let Some((g, r)) = rest.split_once(char::is_whitespace) {
-                        (g.to_string(), r.trim().to_string())
-                    } else {
-                        (rest.to_string(), String::new())
-                    };
-                    log_orch.emit("tend", logger::LogEvent::RunCommandEmitted { goal_id: gid, reason });
-                }
-            }
 
             while let Some(msg) = msg_rx.recv().await {
                 let sid = app_ref.lock().unwrap().tend_session_id.clone();
@@ -284,140 +453,6 @@ async fn main() -> Result<()> {
                     backend: backend_name_orch.clone(),
                 });
                 log_orch.emit("tend", logger::LogEvent::TinkerReplyEmitted { text: full_reply.clone() });
-                for line in full_reply.lines() {
-                    if let Some(rest) = line.trim().strip_prefix("/run ") {
-                        let rest = rest.trim();
-                        let (gid, reason) = if let Some((g, r)) = rest.split_once(char::is_whitespace) {
-                            (g.to_string(), r.trim().to_string())
-                        } else {
-                            (rest.to_string(), String::new())
-                        };
-                        log_orch.emit("tend", logger::LogEvent::RunCommandEmitted { goal_id: gid, reason });
-                    }
-                }
-            }
-        });
-    }
-
-    // Goal runner task — one goal at a time. Updates go back to each goal's source file.
-    // Before each goal session, runs the tinker-test-case cleanup hook (see
-    // `src/cleanup.rs` and `## Tinkering` in the tend prompt).
-    // Per `goal-sessions` decision: every dispatch is a fresh session — no
-    // in-process resumption across triggers.
-    {
-        let work_dir = work_dir.clone();
-        let goal_tx = goal_tx.clone();
-        let oc = oc_goal.clone();
-        let oc_cleanup = oc_cleanup_runner.clone();
-        let fs = fs.clone();
-        let log_goal = log.clone();
-        let backend_name_goal = backend_name.to_string();
-        tokio::spawn(async move {
-            while let Some((goal, reason)) = run_rx.recv().await {
-                log_goal.emit("goal_session", logger::LogEvent::GoalSessionDispatched {
-                    goal_id: goal.id.clone(),
-                    reason: reason.clone(),
-                    init_message_chars: goal_session::goal_init_message(&goal, reason.as_deref()).len(),
-                    backend: backend_name_goal.clone(),
-                });
-
-                let cleanup_t0 = std::time::Instant::now();
-                let cleanup_result = cleanup::run_cleanup(
-                    oc_cleanup.as_ref(),
-                    fs.as_ref(),
-                    &work_dir,
-                )
-                .await;
-                let cleanup_ms = cleanup_t0.elapsed().as_millis() as u64;
-
-                match cleanup_result {
-                    Ok(cleanup::CleanupOutcome::Clean) => {
-                        log_goal.emit("goal_session", logger::LogEvent::CleanupHookRun {
-                            goal_id: goal.id.clone(),
-                            outcome: "clean".to_string(),
-                            duration_ms: cleanup_ms,
-                        });
-                    }
-                    Ok(cleanup::CleanupOutcome::FailedAfterRetries(files)) => {
-                        log_goal.emit("goal_session", logger::LogEvent::CleanupHookRun {
-                            goal_id: goal.id.clone(),
-                            outcome: "blocked".to_string(),
-                            duration_ms: cleanup_ms,
-                        });
-                        let _ = goal_tx
-                            .send(GoalEvent::CleanupBlocked {
-                                goal_id: goal.id.clone(),
-                                dirty_files: files,
-                                error: None,
-                            })
-                            .await;
-                        continue;
-                    }
-                    Err(e) => {
-                        log_goal.emit("goal_session", logger::LogEvent::CleanupHookRun {
-                            goal_id: goal.id.clone(),
-                            outcome: format!("error: {e:#}"),
-                            duration_ms: cleanup_ms,
-                        });
-                        let _ = goal_tx
-                            .send(GoalEvent::CleanupBlocked {
-                                goal_id: goal.id.clone(),
-                                dirty_files: vec![],
-                                error: Some(format!("{e:#}")),
-                            })
-                            .await;
-                        continue;
-                    }
-                }
-
-                log_goal.emit("goal_session", logger::LogEvent::GoalSessionStarted {
-                    goal_id: goal.id.clone(),
-                });
-
-                let session_t0 = std::time::Instant::now();
-                let result = run_goal(
-                    goal.clone(),
-                    reason,
-                    work_dir.clone(),
-                    goal_tx.clone(),
-                    oc.clone(),
-                )
-                .await;
-                let session_ms = session_t0.elapsed().as_millis() as u64;
-
-                match result {
-                    Ok((full_output, summary)) => {
-                        let tool_calls = logger::count_tool_calls(&full_output);
-                        let files_modified = logger::extract_modified_files(&full_output);
-                        let usage = logger::parse_usage_from_text(&full_output);
-                        log_goal.emit("goal_session", logger::LogEvent::GoalSessionFinished {
-                            goal_id: goal.id.clone(),
-                            exit_status: "clean".to_string(),
-                            duration_ms: session_ms,
-                            files_modified_count: files_modified.len(),
-                            files_modified,
-                            tool_calls,
-                            summary_chars: summary.len(),
-                            full_output,
-                            usage,
-                            backend: backend_name_goal.clone(),
-                        });
-                    }
-                    Err(_) => {
-                        log_goal.emit("goal_session", logger::LogEvent::GoalSessionFinished {
-                            goal_id: goal.id.clone(),
-                            exit_status: "crash".to_string(),
-                            duration_ms: session_ms,
-                            files_modified_count: 0,
-                            files_modified: vec![],
-                            tool_calls: 0,
-                            summary_chars: 0,
-                            full_output: String::new(),
-                            usage: None,
-                            backend: backend_name_goal.clone(),
-                        });
-                    }
-                }
             }
         });
     }
@@ -507,12 +542,18 @@ async fn main() -> Result<()> {
         &mut terminal,
         app.clone(),
         &mut orch_rx,
-        &mut goal_rx,
+        &mut session_rx,
         msg_tx,
-        run_tx,
+        goal_spawn_tx,
+        &mut goal_spawn_rx,
+        oc_goal,
+        oc_goal_high,
+        oc_cleanup_runner,
         fs.clone(),
         work_dir.clone(),
+        session_tx,
         log,
+        backend_name,
         &mut rummage_orch_rx,
         rummage_msg_tx,
         &mut jog_orch_rx,
@@ -526,75 +567,111 @@ async fn main() -> Result<()> {
     result
 }
 
+fn tend_event_to_session(goal_id: &str, ev: TendEvent) -> SessionEvent {
+    match ev {
+        TendEvent::SessionId(id) => SessionEvent::LlmSessionId { goal_id: goal_id.to_string(), session_id: id },
+        TendEvent::Text(t) => SessionEvent::Chunk { goal_id: goal_id.to_string(), text: t },
+        TendEvent::Done => SessionEvent::Done { goal_id: goal_id.to_string() },
+    }
+}
+
 async fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: Arc<Mutex<App>>,
     orch_rx: &mut mpsc::Receiver<TendEvent>,
-    goal_rx: &mut mpsc::Receiver<GoalEvent>,
+    session_rx: &mut mpsc::Receiver<SessionEvent>,
     msg_tx: mpsc::Sender<String>,
-    run_tx: mpsc::Sender<(goal::Goal, Option<String>)>,
+    goal_spawn_tx: mpsc::Sender<SpawnGoalRequest>,
+    goal_spawn_rx: &mut mpsc::Receiver<SpawnGoalRequest>,
+    oc_goal: Arc<dyn OpenCodeRunner>,
+    oc_goal_high: Arc<dyn OpenCodeRunner>,
+    oc_cleanup_runner: Arc<dyn OpenCodeRunner>,
     fs: Arc<dyn Filesystem>,
-    _work_dir: std::path::PathBuf,
+    work_dir: std::path::PathBuf,
+    session_tx: mpsc::Sender<SessionEvent>,
     log: logger::LogSender,
+    backend_name: &str,
     rummage_orch_rx: &mut mpsc::Receiver<TendEvent>,
     rummage_msg_tx: mpsc::Sender<String>,
     jog_orch_rx: &mut mpsc::Receiver<TendEvent>,
     jog_msg_tx: mpsc::Sender<String>,
 ) -> Result<()> {
+    // Session registry: maps goal_id → message channel sender.
+    // Pre-populated for the three interactive agents; goal agents added lazily on first @goal-id.
+    let mut session_senders: HashMap<String, mpsc::Sender<String>> = HashMap::new();
+    session_senders.insert("tend".to_string(), msg_tx.clone());
+    session_senders.insert("rummage".to_string(), rummage_msg_tx.clone());
+    session_senders.insert("jog".to_string(), jog_msg_tx.clone());
     loop {
         // Draw
         terminal.draw(|f| tui::draw(f, &mut app.lock().unwrap()))?;
 
-        // Drain tinker events — capture queue state before for change detection
-        {
-            let (q_before, active_before) = {
-                let a = app.lock().unwrap();
-                (a.goal_queue.len(), a.active_goal_id.clone())
-            };
-            while let Ok(ev) = orch_rx.try_recv() {
-                handle_orch_event(&mut app.lock().unwrap(), ev, &msg_tx, &run_tx, &rummage_msg_tx, &jog_msg_tx, fs.as_ref(), &log);
+        // Drain lazy goal-agent spawn requests. For each request:
+        // - If the goal is already in the registry: route the message.
+        // - If not: create a channel, register it, spawn a persistent task.
+        while let Ok(req) = goal_spawn_rx.try_recv() {
+            if let Some(tx) = session_senders.get(&req.goal_id) {
+                let _ = tx.try_send(req.message);
+            } else {
+                let goal = app.lock().unwrap().goals.iter().find(|g| g.id == req.goal_id).cloned();
+                if let Some(goal) = goal {
+                    let (msg_tx_goal, msg_rx_goal) = mpsc::channel::<String>(16);
+                    session_senders.insert(req.goal_id.clone(), msg_tx_goal.clone());
+                    let _ = msg_tx_goal.try_send(req.message);
+                    // Select runner tier from goal TOML (default: mid).
+                    let oc_for_goal = match goal.tier.as_deref() {
+                        Some("high") => oc_goal_high.clone(),
+                        _ => oc_goal.clone(),
+                    };
+                    let session_tx_goal = session_tx.clone();
+                    let oc_cleanup_goal = oc_cleanup_runner.clone();
+                    let fs_goal = fs.clone();
+                    let work_dir_goal = work_dir.clone();
+                    let app_ref_goal = app.clone();
+                    let log_goal = log.clone();
+                    let backend_goal = backend_name.to_string();
+                    tokio::spawn(async move {
+                        goal_agent_loop(
+                            goal, msg_rx_goal, session_tx_goal,
+                            oc_for_goal, oc_cleanup_goal, fs_goal,
+                            work_dir_goal, app_ref_goal, log_goal, backend_goal,
+                        ).await;
+                    });
+                }
             }
-            let (q_after, active_after) = {
-                let a = app.lock().unwrap();
-                (a.goal_queue.len(), a.active_goal_id.clone())
-            };
-            if q_after != q_before || active_after != active_before {
+        }
+
+        // Drain tend events — convert TendEvent to SessionEvent
+        while let Ok(ev) = orch_rx.try_recv() {
+            let sev = tend_event_to_session("tend", ev);
+            handle_session_event(&mut app.lock().unwrap(), sev, &msg_tx, &goal_spawn_tx, &session_senders, fs.as_ref(), &log);
+        }
+
+        // Drain goal session events (unified channel)
+        {
+            let active_before = app.lock().unwrap().active_goal_id.clone();
+            while let Ok(ev) = session_rx.try_recv() {
+                handle_session_event(&mut app.lock().unwrap(), ev, &msg_tx, &goal_spawn_tx, &session_senders, fs.as_ref(), &log);
+            }
+            let active_after = app.lock().unwrap().active_goal_id.clone();
+            if active_after != active_before {
                 log.emit("tui", logger::LogEvent::TuiQueueChanged {
-                    queue_len: q_after,
+                    queue_len: 0,
                     running_goal_id: active_after,
                 });
             }
         }
 
-        // Drain goal events
-        {
-            let (q_before, active_before) = {
-                let a = app.lock().unwrap();
-                (a.goal_queue.len(), a.active_goal_id.clone())
-            };
-            while let Ok(ev) = goal_rx.try_recv() {
-                handle_goal_event(&mut app.lock().unwrap(), ev, &msg_tx, &run_tx, &log);
-            }
-            let (q_after, active_after) = {
-                let a = app.lock().unwrap();
-                (a.goal_queue.len(), a.active_goal_id.clone())
-            };
-            if q_after != q_before || active_after != active_before {
-                log.emit("tui", logger::LogEvent::TuiQueueChanged {
-                    queue_len: q_after,
-                    running_goal_id: active_after,
-                });
-            }
-        }
-
-        // Drain rummage events
+        // Drain rummage events — convert TendEvent to SessionEvent
         while let Ok(ev) = rummage_orch_rx.try_recv() {
-            handle_rummage_event(&mut app.lock().unwrap(), ev, &run_tx, &msg_tx, &jog_msg_tx, &rummage_msg_tx, fs.as_ref(), &log);
+            let sev = tend_event_to_session("rummage", ev);
+            handle_session_event(&mut app.lock().unwrap(), sev, &msg_tx, &goal_spawn_tx, &session_senders, fs.as_ref(), &log);
         }
 
-        // Drain jog events
+        // Drain jog events — convert TendEvent to SessionEvent
         while let Ok(ev) = jog_orch_rx.try_recv() {
-            handle_jog_event(&mut app.lock().unwrap(), ev, &msg_tx, &rummage_msg_tx, &jog_msg_tx, fs.as_ref(), &log);
+            let sev = tend_event_to_session("jog", ev);
+            handle_session_event(&mut app.lock().unwrap(), sev, &msg_tx, &goal_spawn_tx, &session_senders, fs.as_ref(), &log);
         }
 
         // Terminal events (50ms poll)
@@ -693,60 +770,31 @@ async fn run_loop(
                     let _ = jog_msg_tx.send(msg).await;
                 }
                 KeyAction::RunGoal(id, reason) => {
-                    let goal = {
+                    let goal_exists = {
                         let a = app.lock().unwrap();
-                        a.goals.iter().find(|g| g.id == id).cloned()
+                        a.goals.iter().any(|g| g.id == id)
                     };
-                    if let Some(goal) = goal {
-                        let mut a = app.lock().unwrap();
-                        if matches!(a.phase, Phase::RunningGoal(_)) {
-                            // Spec (goal-sessions): "when a user-typed /run lands behind a
-                            // pending tinker /run, each invocation is preserved as a
-                            // separate queue entry with its own reason."
-                            a.goal_queue.push_back((goal.clone(), reason.clone()));
-                            a.batch_had_goals = true;
-                            let queued_msg = format!(
-                                "queued: `{}`{}",
-                                goal.id,
+                    if goal_exists {
+                        let sys_msg = {
+                            let id_ref = &id;
+                            format!(
+                                "triggered: `{}`{}",
+                                id_ref,
                                 reason.as_ref().map(|r| format!(": {}", r)).unwrap_or_default(),
-                            );
-                            a.push_system_message(&queued_msg);
-                            log.emit("dispatcher", logger::LogEvent::TinkerSystemMessageReceived { content: queued_msg });
-                        } else {
-                            start_or_confirm_goal(&mut a, goal, reason, &run_tx, &log);
-                        }
-                    }
-                }
-                KeyAction::ApproveNextGoal => {
-                    let next = {
-                        let a = app.lock().unwrap();
-                        if let Phase::AwaitingConfirm(id) = &a.phase {
-                            let g = a.goals.iter().find(|g| &g.id == id).cloned();
-                            // also grab reason from front of queue if it's there
-                            let mut reason = None;
-                            if let Some(front) = a.goal_queue.front() {
-                                if front.0.id == *id {
-                                    reason = front.1.clone();
-                                }
-                            }
-                            g.map(|g| (g, reason))
-                        } else {
-                            None
-                        }
-                    };
-                    if let Some((goal, reason)) = next {
+                            )
+                        };
                         {
                             let mut a = app.lock().unwrap();
-                            if let Some(front) = a.goal_queue.front() {
-                                if front.0.id == goal.id {
-                                    a.goal_queue.pop_front();
-                                }
-                            }
-                            a.phase = Phase::RunningGoal(goal.id.clone());
-                            a.active_goal_id = Some(goal.id.clone());
-                            a.batch_had_goals = true;
+                            a.push_system_message(&sys_msg);
+                            a.active_goal_id = Some(id.clone());
+                            a.active_goal_reason = reason.clone();
                         }
-                        let _ = run_tx.send((goal, reason)).await;
+                        log.emit("dispatcher", logger::LogEvent::TinkerSystemMessageReceived { content: sys_msg });
+                        let dispatch_msg = reason.unwrap_or_default();
+                        let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
+                            goal_id: id,
+                            message: dispatch_msg,
+                        });
                     }
                 }
                 KeyAction::None => {}
@@ -760,38 +808,20 @@ async fn run_loop(
     Ok(())
 }
 
-/// Parse `/run <goal-id> <reason>` lines from a tend reply.
-/// Each matching line yields `(goal_id, reason)` where reason may be empty.
-/// Non-matching lines (prose, other slash commands) are silently skipped.
-fn parse_run_commands(text: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("/run ") {
-            let rest = rest.trim();
-            if let Some((gid, reason)) = rest.split_once(char::is_whitespace) {
-                out.push((gid.to_string(), reason.trim().to_string()));
-            } else {
-                out.push((rest.to_string(), String::new()));
-            }
-        }
-    }
-    out
-}
-
 /// Parse `@<agent-name> <message>` lines from an agent reply.
 /// Extracts `@`-blocks from an agent reply.
 ///
-/// Each block begins at an `@tend`, `@rummage`, or `@jog` line and extends
-/// through all subsequent lines until the next `@`-line or end of text.
-/// The `@`-line may carry inline content (`@tend msg`) or stand alone (`@tend`)
-/// with the message on subsequent lines; both forms are equivalent.
-/// Prose before the first `@`-line is not part of any block.
+/// Each block begins at an `@<known-id>` line and extends through all subsequent
+/// lines until the next `@`-line or end of text. The `@`-line may carry inline
+/// content (`@tend msg`) or stand alone with the message on body lines. Both
+/// forms are equivalent. Prose before the first `@`-line is not delivered.
 /// Empty blocks (no inline content and no body lines) are silently dropped.
 ///
+/// `known_ids` is the set of agent IDs that can receive `@`-routed messages.
+/// Only `@<id>` lines where `id` is in this set open a new block.
+///
 /// Returns `(recipient, message)` pairs where `message` is the full block body.
-fn parse_at_commands(text: &str) -> Vec<(String, String)> {
-    const AGENTS: &[&str] = &["tend", "rummage", "jog"];
+fn parse_at_commands(text: &str, known_ids: &[&str]) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     let mut current: Option<(String, Vec<String>)> = None;
 
@@ -800,12 +830,12 @@ fn parse_at_commands(text: &str) -> Vec<(String, String)> {
 
         // Detect whether this line opens a new @-block.
         let mut new_block: Option<(String, String)> = None;
-        for agent in AGENTS {
-            let prefix = format!("@{}", agent);
+        for id in known_ids {
+            let prefix = format!("@{}", id);
             if let Some(rest) = trimmed.strip_prefix(prefix.as_str()) {
                 // Valid if followed by space (inline) or nothing (standalone).
                 if rest.is_empty() || rest.starts_with(' ') {
-                    new_block = Some((agent.to_string(), rest.trim_start().to_string()));
+                    new_block = Some((id.to_string(), rest.trim_start().to_string()));
                     break;
                 }
             }
@@ -842,15 +872,14 @@ fn parse_at_commands(text: &str) -> Vec<(String, String)> {
 }
 
 /// Deliver peer consultations collected from a completed agent reply.
-/// Pushes a system message for user visibility, increments the recipient's task
-/// counter, and sends the formatted message to the recipient's channel.
+/// Routes to the session registry for known agents; triggers lazy spawn via
+/// `goal_spawn_tx` for goal IDs not yet in the registry.
 fn dispatch_peer_consultations(
     app: &mut App,
     sender: &str,
     consultations: &[(String, String)],
-    msg_tx: &mpsc::Sender<String>,
-    rummage_msg_tx: &mpsc::Sender<String>,
-    jog_msg_tx: &mpsc::Sender<String>,
+    session_senders: &HashMap<String, mpsc::Sender<String>>,
+    goal_spawn_tx: &mpsc::Sender<SpawnGoalRequest>,
     log: &logger::LogSender,
 ) {
     for (recipient, msg) in consultations {
@@ -858,67 +887,39 @@ fn dispatch_peer_consultations(
         let sys = format!("@{} → @{}: {}", sender, recipient, msg);
         app.push_system_message(&sys);
         log.emit(sender, logger::LogEvent::TinkerSystemMessageReceived { content: sys });
-        match recipient.as_str() {
-            "tend" => {
-                app.tend_tasks += 1;
-                let _ = msg_tx.try_send(formatted);
+        if let Some(tx) = session_senders.get(recipient) {
+            match recipient.as_str() {
+                "tend" => app.tend_tasks += 1,
+                "rummage" => app.rummage_tasks += 1,
+                "jog" => app.jog_tasks += 1,
+                _ => {}
             }
-            "rummage" => {
-                app.rummage_tasks += 1;
-                let _ = rummage_msg_tx.try_send(formatted);
-            }
-            "jog" => {
-                app.jog_tasks += 1;
-                let _ = jog_msg_tx.try_send(formatted);
-            }
-            _ => {}
+            let _ = tx.try_send(formatted);
+        } else if app.goals.iter().any(|g| &g.id == recipient) {
+            // Goal agent not yet spawned — request lazy start.
+            let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
+                goal_id: recipient.clone(),
+                message: formatted,
+            });
         }
     }
 }
 
-fn handle_rummage_event(
-    app: &mut App,
-    ev: TendEvent,
-    run_tx: &mpsc::Sender<(goal::Goal, Option<String>)>,
-    msg_tx: &mpsc::Sender<String>,
-    jog_msg_tx: &mpsc::Sender<String>,
-    rummage_msg_tx: &mpsc::Sender<String>,
-    fs: &dyn Filesystem,
-    log: &logger::LogSender,
-) {
-    match ev {
-        TendEvent::SessionId(id) => {
-            if app.rummage_session_id.is_none() {
-                app.rummage_session_id = Some(id);
-            }
-        }
-        TendEvent::Text(chunk) => {
-            app.append_rummage_chunk(&chunk);
-        }
-        TendEvent::Done => {
-            app.rummage_tasks = app.rummage_tasks.saturating_sub(1);
-            // Reload goals so /run commands rummage emits for case-2 fix dispatch
-            // can be resolved to Goal structs.
-            if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
-                app.goals = load.goals;
-            }
-            let consultations = parse_at_commands(&app.rummage_current_text);
-            let run_commands = parse_run_commands(&app.rummage_current_text);
-            let mut triggered: Vec<(goal::Goal, Option<String>)> = Vec::new();
-            for (gid, reason) in run_commands {
-                if let Some(g) = app.goals.iter().find(|g| g.id == gid).cloned() {
-                    let reason_opt = if reason.is_empty() { None } else { Some(reason) };
-                    triggered.push((g, reason_opt));
-                }
-            }
-            app.finalize_rummage_message();
-            dispatch_peer_consultations(app, "rummage", &consultations, msg_tx, rummage_msg_tx, jog_msg_tx, log);
-            for (g, reason_opt) in triggered {
-                start_or_confirm_goal(app, g, reason_opt, run_tx, log);
-            }
+/// Collect all IDs the @-block parser should recognise: current registry entries
+/// plus all known goal IDs (so agents can address goals not yet spawned).
+fn known_agent_ids<'a>(
+    session_senders: &'a HashMap<String, mpsc::Sender<String>>,
+    goals: &'a [goal::Goal],
+) -> Vec<&'a str> {
+    let mut ids: Vec<&str> = session_senders.keys().map(|s| s.as_str()).collect();
+    for g in goals {
+        if !ids.contains(&g.id.as_str()) {
+            ids.push(g.id.as_str());
         }
     }
+    ids
 }
+
 
 // The instruction field is prescriptive (user-sourced intent from jog's deepening),
 // unlike /run reasons which are declarative spec-delta pointers.
@@ -936,261 +937,150 @@ fn parse_jog_edit_commands(text: &str) -> Vec<(String, String)> {
     out
 }
 
-fn handle_jog_event(
-    app: &mut App,
-    ev: TendEvent,
-    msg_tx: &mpsc::Sender<String>,
-    rummage_msg_tx: &mpsc::Sender<String>,
-    jog_msg_tx: &mpsc::Sender<String>,
-    fs: &dyn Filesystem,
-    log: &logger::LogSender,
-) {
-    match ev {
-        TendEvent::SessionId(id) => {
-            if app.jog_session_id.is_none() {
-                app.jog_session_id = Some(id);
-            }
-        }
-        TendEvent::Text(chunk) => {
-            app.append_jog_chunk(&chunk);
-        }
-        TendEvent::Done => {
-            app.jog_tasks = app.jog_tasks.saturating_sub(1);
-            let consultations = parse_at_commands(&app.jog_current_text);
-            let edits = parse_jog_edit_commands(&app.jog_current_text);
-            app.finalize_jog_message();
-            dispatch_peer_consultations(app, "jog", &consultations, msg_tx, rummage_msg_tx, jog_msg_tx, log);
-            // Reload goals so goal ids in /jog-edit lines can be validated.
-            if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
-                app.goals = load.goals;
-            }
-            for (gid, instruction) in edits {
-                let goal_exists = app.goals.iter().any(|g| g.id == gid);
-                if goal_exists {
-                    // Commission the edit from tend. Jog's conversation has already
-                    // done the dialectical anchoring the playback otherwise provides,
-                    // so tend applies the edit directly and shows a non-blocking diff.
-                    let tend_msg = format!(
-                        "Jog audit — `{}`: {}. Apply this edit to the goal directly; jog's conversation has already provided the dialectical anchoring. After the edit, show what changed.",
-                        gid, instruction
-                    );
-                    app.tend_tasks += 1;
-                    let _ = msg_tx.try_send(tend_msg.clone());
-                    log.emit("jog", logger::LogEvent::TinkerSystemMessageReceived { content: tend_msg });
-                }
-            }
-        }
-    }
-}
 
-fn handle_orch_event(
+/// Unified session event handler. Routes events from any agent session to the
+/// appropriate App state updates and peer consultations.
+fn handle_session_event(
     app: &mut App,
-    ev: TendEvent,
+    ev: SessionEvent,
     msg_tx: &mpsc::Sender<String>,
-    run_tx: &mpsc::Sender<(goal::Goal, Option<String>)>,
-    rummage_msg_tx: &mpsc::Sender<String>,
-    jog_msg_tx: &mpsc::Sender<String>,
+    goal_spawn_tx: &mpsc::Sender<SpawnGoalRequest>,
+    session_senders: &HashMap<String, mpsc::Sender<String>>,
     fs: &dyn Filesystem,
     log: &logger::LogSender,
 ) {
     match ev {
-        TendEvent::SessionId(id) => {
-            if app.tend_session_id.is_none() {
-                app.tend_session_id = Some(id);
+        SessionEvent::LlmSessionId { goal_id, session_id } => {
+            match goal_id.as_str() {
+                "tend" => { if app.tend_session_id.is_none() { app.tend_session_id = Some(session_id); } }
+                "rummage" => { if app.rummage_session_id.is_none() { app.rummage_session_id = Some(session_id); } }
+                "jog" => { if app.jog_session_id.is_none() { app.jog_session_id = Some(session_id); } }
+                _ => {}
             }
         }
-        TendEvent::Text(chunk) => {
-            app.append_assistant_chunk(&chunk);
-        }
-        TendEvent::Done => {
-            app.tend_tasks = app.tend_tasks.saturating_sub(1);
-            // Snapshot prior state so we can detect what changed.
-            let prev_errors = app.parse_errors.clone();
-            // Reload goals — tend may have just created/edited a TOML file.
-            // Without this, scheduling races the 2s watcher and won't see the new goal.
-            if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
-                app.goals = load.goals;
-                app.update_parse_errors(load.errors);
+        SessionEvent::Chunk { goal_id, text } => {
+            match goal_id.as_str() {
+                "tend" => app.append_assistant_chunk(&text),
+                "rummage" => app.append_rummage_chunk(&text),
+                "jog" => app.append_jog_chunk(&text),
+                _ => app.append_goal_log(&goal_id, &text),
             }
-            // Detect new errors introduced by this tend edit.
-            let new_errors: Vec<(std::path::PathBuf, String)> = app
-                .parse_errors
-                .iter()
-                .filter(|(p, e)| !prev_errors.iter().any(|(pp, ee)| pp == p && ee == e))
-                .cloned()
-                .collect();
-            if !new_errors.is_empty() {
-                if app.correction_attempts < 2 {
-                    app.finalize_assistant_message();
-                    let listing = new_errors
+            // Accumulate for @-block detection on Done
+            app.current_session_text.entry(goal_id).or_default().push_str(&text);
+        }
+        SessionEvent::Done { goal_id } => {
+            let session_text = app.current_session_text.remove(&goal_id).unwrap_or_default();
+            match goal_id.as_str() {
+                "tend" => {
+                    app.tend_tasks = app.tend_tasks.saturating_sub(1);
+                    // Reload goals — tend may have just created/edited a TOML file.
+                    let prev_errors = app.parse_errors.clone();
+                    if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
+                        app.goals = load.goals;
+                        app.update_parse_errors(load.errors);
+                    }
+                    let new_errors: Vec<(std::path::PathBuf, String)> = app
+                        .parse_errors
                         .iter()
-                        .map(|(p, e)| {
-                            let name = p
-                                .file_name()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("?");
-                            format!("- `{}`: {}", name, e)
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let msg = format!(
-                        "The goal file you just edited failed to parse:\n\n{}\n\n\
-                         Read the file, identify the structural error (typical causes: \
-                         unclosed `\"\"\"`, a duplicate top-level key, or content placed \
-                         inside the description block instead of after its closing `\"\"\"`), \
-                         and rewrite the full file with the Write tool. The file must have \
-                         these top-level keys in order: {}.",
-                        listing, goal::GOAL_SCHEMA_KEYS_ORDER,
-                    );
-                    app.correction_attempts += 1;
-                    let correction_msg = format!(
-                        "Goal file invalid; asking tend to fix (attempt {}/2).",
-                        app.correction_attempts
-                    );
-                    app.push_system_message(&correction_msg);
-                    log.emit("correction-injector", logger::LogEvent::TinkerSystemMessageReceived { content: correction_msg });
-                    if msg_tx.try_send(msg).is_ok() {
-                        app.tend_tasks += 1;
-                    };
-                    return;
-                } else {
-                    let still_invalid_msg = "Goal file still invalid after 2 attempts; leaving as-is. Edit manually if needed.";
-                    app.push_system_message(still_invalid_msg);
-                    log.emit("correction-injector", logger::LogEvent::TinkerSystemMessageReceived { content: still_invalid_msg.to_string() });
-                    app.correction_attempts = 0;
-                }
-            } else {
-                app.correction_attempts = 0;
-            }
-            
-            // Parse @-consultation and /run commands from tend's just-streamed reply.
-            // The text is still in `current_assistant_text` at this point —
-            // `finalize_assistant_message` only runs below after we've
-            // collected triggers. Scanning `app.messages` here would look at
-            // the PREVIOUS assistant turn, not the one we just received.
-            let consultations = parse_at_commands(&app.current_assistant_text);
-            let run_commands = parse_run_commands(&app.current_assistant_text);
-
-            let mut touched: Vec<(goal::Goal, String)> = Vec::new();
-            for (gid, reason) in run_commands {
-                if let Some(g) = app.goals.iter().find(|g| g.id == gid).cloned() {
-                    touched.push((g, reason));
-                }
-            }
-
-            if !touched.is_empty()
-                && !matches!(app.phase, Phase::Initializing)
-            {
-                app.finalize_assistant_message();
-                dispatch_peer_consultations(app, "tend", &consultations, msg_tx, rummage_msg_tx, jog_msg_tx, log);
-
-                // When a session is already running, ALL new /run triggers must queue up
-                // behind it. Dispatching directly to run_tx here would bypass app.goal_queue,
-                // break the TUI queue display, and mis-sequence the batch-summary trigger.
-                // Spec (goal-sessions): "The queue does not deduplicate by goal-id; sessions
-                // run in FIFO order regardless of repetition."
-                if matches!(app.phase, Phase::RunningGoal(_)) {
-                    let added: Vec<(goal::Goal, Option<String>)> = touched
-                        .into_iter()
-                        .map(|(g, r)| (g, if r.is_empty() { None } else { Some(r) }))
+                        .filter(|(p, e)| !prev_errors.iter().any(|(pp, ee)| pp == p && ee == e))
+                        .cloned()
                         .collect();
-                    let msg = if added.len() == 1 {
-                        format!(
-                            "queued: `{}`{}",
-                            added[0].0.id,
-                            added[0].1.as_ref().map(|r| format!(": {}", r)).unwrap_or_default(),
-                        )
-                    } else {
-                        let mut buf = format!("queued {} sessions:", added.len());
-                        for (g, r) in &added {
-                            buf.push_str(&format!(
-                                "\n- `{}`{}",
-                                g.id,
-                                r.as_ref().map(|rr| format!(": {}", rr)).unwrap_or_default()
-                            ));
+                    if !new_errors.is_empty() {
+                        if app.correction_attempts < 2 {
+                            app.finalize_assistant_message();
+                            let listing = new_errors
+                                .iter()
+                                .map(|(p, e)| {
+                                    let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("?");
+                                    format!("- `{}`: {}", name, e)
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            let msg = format!(
+                                "The goal file you just edited failed to parse:\n\n{}\n\n\
+                                 Read the file, identify the structural error (typical causes: \
+                                 unclosed `\"\"\"`, a duplicate top-level key, or content placed \
+                                 inside the description block instead of after its closing `\"\"\"`), \
+                                 and rewrite the full file with the Write tool. The file must have \
+                                 these top-level keys in order: {}.",
+                                listing, goal::GOAL_SCHEMA_KEYS_ORDER,
+                            );
+                            app.correction_attempts += 1;
+                            let correction_msg = format!(
+                                "Goal file invalid; asking tend to fix (attempt {}/2).",
+                                app.correction_attempts
+                            );
+                            app.push_system_message(&correction_msg);
+                            log.emit("correction-injector", logger::LogEvent::TinkerSystemMessageReceived { content: correction_msg });
+                            if msg_tx.try_send(msg).is_ok() {
+                                app.tend_tasks += 1;
+                            }
+                            return;
+                        } else {
+                            let still_invalid_msg = "Goal file still invalid after 2 attempts; leaving as-is. Edit manually if needed.";
+                            app.push_system_message(still_invalid_msg);
+                            log.emit("correction-injector", logger::LogEvent::TinkerSystemMessageReceived { content: still_invalid_msg.to_string() });
+                            app.correction_attempts = 0;
                         }
-                        buf
-                    };
-                    app.batch_had_goals = true;
-                    for entry in added {
-                        app.goal_queue.push_back(entry);
+                    } else {
+                        app.correction_attempts = 0;
                     }
-                    app.push_system_message(&msg);
-                    log.emit("dispatcher", logger::LogEvent::TinkerSystemMessageReceived { content: msg });
-                    return;
-                }
-
-                let mut iter = touched.into_iter();
-                let (first_goal, first_reason) = iter.next().unwrap();
-                let first_reason_opt = if first_reason.is_empty() { None } else { Some(first_reason) };
-
-                for (g, r) in iter {
-                    let r_opt = if r.is_empty() { None } else { Some(r) };
-                    app.goal_queue.push_back((g, r_opt));
-                }
-
-                let total = app.goal_queue.len() + 1;
-                let summary = if total == 1 {
-                    format!(
-                        "triggered: `{}`{}",
-                        first_goal.id,
-                        first_reason_opt.as_ref().map(|r| format!(": {}", r)).unwrap_or_default(),
-                    )
-                } else {
-                    let mut buf = format!(
-                        "triggered: `{}`{} + {} more queued",
-                        first_goal.id,
-                        first_reason_opt.as_ref().map(|r| format!(": {}", r)).unwrap_or_default(),
-                        total - 1,
-                    );
-                    for (g, r) in &app.goal_queue {
-                        buf.push_str(&format!("\n- `{}`{}", g.id, r.as_ref().map(|rr| format!(": {}", rr)).unwrap_or_default()));
-                    }
-                    buf
-                };
-                app.push_system_message(&summary);
-                log.emit("dispatcher", logger::LogEvent::TinkerSystemMessageReceived { content: summary });
-
-                start_or_confirm_goal(app, first_goal, first_reason_opt, run_tx, log);
-                return;
-            }
-
-            app.finalize_assistant_message();
-            dispatch_peer_consultations(app, "tend", &consultations, msg_tx, rummage_msg_tx, jog_msg_tx, log);
-            if app.tend_tasks == 0 {
-                match app.phase.clone() {
-                    Phase::Initializing => {
+                    app.finalize_assistant_message();
+                    let known_ids = known_agent_ids(session_senders, &app.goals);
+                    let consultations = parse_at_commands(&session_text, &known_ids);
+                    dispatch_peer_consultations(app, "tend", &consultations, session_senders, goal_spawn_tx, log);
+                    if app.tend_tasks == 0 && app.phase == Phase::Initializing {
                         app.push_system_message("Tend ready. Ask me to add a goal.");
                         log.emit("harness", logger::LogEvent::TinkerSystemMessageReceived { content: "Tend ready. Ask me to add a goal.".to_string() });
                         app.phase = Phase::Idle;
                     }
-                    Phase::SummarizingBatch => {
-                        app.batch_had_goals = false;
-                        app.batch_summaries.clear();
-                        app.phase = Phase::Idle;
+                }
+                "rummage" => {
+                    app.rummage_tasks = app.rummage_tasks.saturating_sub(1);
+                    if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
+                        app.goals = load.goals;
                     }
-                    _ => {}
+                    app.finalize_rummage_message();
+                    let known_ids = known_agent_ids(session_senders, &app.goals);
+                    let consultations = parse_at_commands(&session_text, &known_ids);
+                    dispatch_peer_consultations(app, "rummage", &consultations, session_senders, goal_spawn_tx, log);
+                }
+                "jog" => {
+                    app.jog_tasks = app.jog_tasks.saturating_sub(1);
+                    let known_ids = known_agent_ids(session_senders, &app.goals);
+                    let consultations = parse_at_commands(&session_text, &known_ids);
+                    let edits = parse_jog_edit_commands(&session_text);
+                    app.finalize_jog_message();
+                    dispatch_peer_consultations(app, "jog", &consultations, session_senders, goal_spawn_tx, log);
+                    if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
+                        app.goals = load.goals;
+                    }
+                    for (gid, instruction) in edits {
+                        let goal_exists = app.goals.iter().any(|g| g.id == gid);
+                        if goal_exists {
+                            let tend_msg = format!(
+                                "Jog audit — `{}`: {}. Apply this edit to the goal directly; jog's conversation has already provided the dialectical anchoring. After the edit, show what changed.",
+                                gid, instruction
+                            );
+                            app.tend_tasks += 1;
+                            let _ = msg_tx.try_send(tend_msg.clone());
+                            log.emit("jog", logger::LogEvent::TinkerSystemMessageReceived { content: tend_msg });
+                        }
+                    }
+                }
+                _ => {
+                    // Goal session done — clear active tracking
+                    if app.active_goal_id.as_deref() == Some(&goal_id) {
+                        app.active_goal_id = None;
+                        app.active_goal_reason = None;
+                    }
+                    let known_ids = known_agent_ids(session_senders, &app.goals);
+                    let consultations = parse_at_commands(&session_text, &known_ids);
+                    dispatch_peer_consultations(app, &goal_id, &consultations, session_senders, goal_spawn_tx, log);
                 }
             }
         }
-    }
-}
-
-fn handle_goal_event(
-    app: &mut App,
-    ev: GoalEvent,
-    msg_tx: &mpsc::Sender<String>,
-    run_tx: &mpsc::Sender<(goal::Goal, Option<String>)>,
-    log: &logger::LogSender,
-) {
-    match ev {
-        GoalEvent::Text { goal_id, text } => {
-            app.append_goal_log(&goal_id, &text);
-        }
-        GoalEvent::RunDone => {
-            // Summary collection is happening in the goal runner task; wait for SummaryDone.
-        }
-        GoalEvent::CleanupBlocked { goal_id, dirty_files, error } => {
+        SessionEvent::CleanupBlocked { goal_id, dirty_files, error } => {
             let msg = if let Some(e) = error {
                 format!("Goal `{goal_id}` blocked: tinker-test-case cleanup errored ({e}).")
             } else {
@@ -1206,77 +1096,20 @@ fn handle_goal_event(
             };
             app.push_system_message(&msg);
             log.emit("cleanup", logger::LogEvent::TinkerSystemMessageReceived { content: msg });
-            // Roll back the phase set in start_or_confirm_goal so the UI
-            // doesn't show this goal as running.
             if app.active_goal_id.as_deref() == Some(&goal_id) {
                 app.active_goal_id = None;
                 app.active_goal_reason = None;
             }
-            if matches!(&app.phase, Phase::RunningGoal(id) if id == &goal_id) {
-                app.phase = Phase::Idle;
-            }
         }
-        GoalEvent::SummaryDone { goal_id, summary } => {
-            app.active_goal_id = None;
-            app.active_goal_reason = None;
-            // Record the summary for the eventual batch summary.
-            app.batch_summaries.push((goal_id.clone(), summary.clone()));
-            // If more goals are queued, run the next one. Otherwise the batch
-            // is drained — ask tend to summarize and reactively schedule.
-            if let Some((next_goal, next_reason)) = app.goal_queue.pop_front() {
-                start_or_confirm_goal(app, next_goal, next_reason, run_tx, log);
-            } else if app.batch_had_goals {
-                let summary_msg = build_batch_summary_request(&app.batch_summaries);
-                app.batch_had_goals = false;
-                app.batch_summaries.clear();
-                app.phase = Phase::SummarizingBatch;
-                if msg_tx.try_send(summary_msg).is_ok() {
-                    app.tend_tasks += 1;
-                }
-            } else if app.phase != Phase::Initializing {
-                app.phase = Phase::Idle;
-            }
+        SessionEvent::SummaryReady { goal_id, summary } => {
+            // Route summary directly to tend as a peer consultation.
+            // This replaces the batch-summary machinery: tend synthesizes each
+            // goal session's result individually as it arrives.
+            let tend_msg = format!("[from {}] Session summary:\n{}", goal_id, summary);
+            app.tend_tasks += 1;
+            let _ = msg_tx.try_send(tend_msg);
         }
     }
-}
-
-fn build_batch_summary_request(summaries: &[(String, String)]) -> String {
-    if summaries.is_empty() {
-        return "Briefly summarize what was just accomplished in this batch (1-2 paragraphs). End with a one-line invitation for the user to try the result.".to_string();
-    }
-    let body = summaries
-        .iter()
-        .map(|(id, sum)| format!("Goal `{}`:\n{}\n", id, sum))
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "All goal sessions for this batch have finished. Per-goal summaries (each is structured: accomplishments, software design changes, decisions made beyond the goal, how to try it):\n\n{body}\n\
-         Compose a message to the user with three parts:\n\
-         \n\
-         1. What changed. 1-2 paragraphs covering what was accomplished across the batch. If multiple goals ran, mention each. Include the salient software-design changes (new modules/interfaces/types) inline where they help the user picture the artifact.\n\
-         \n\
-         2. Decisions worth knowing. Surface the \"decisions made beyond the goal\" items from the per-goal summaries — the user needs to be able to vet or override these.\n\
-         \n\
-         3. Try it now. End with a concrete invitation: pull the \"how to try it\" line(s) from the per-goal summaries, suggest one or two things to watch for, and ask the user to report back what they observed.\n\
-         \n\
-         After your prose, scan the batch above for cross-cutting signals. For each goal in your goal list that was NOT in this batch and has a concrete next step given what just changed, emit one `/run <goal-id> <reason>` line where reason is a focused single sentence. The `/run` lines must appear after your prose, on their own lines. Only emit `/run` lines for goals with a genuine next step — prefer no emission over a vague one."
-    )
-}
-
-fn start_or_confirm_goal(app: &mut App, goal: goal::Goal, reason: Option<String>, run_tx: &mpsc::Sender<(goal::Goal, Option<String>)>, log: &logger::LogSender) {
-    app.phase = Phase::RunningGoal(goal.id.clone());
-    app.active_goal_id = Some(goal.id.clone());
-    app.active_goal_reason = reason.clone();
-    app.batch_had_goals = true;
-
-    // Suppress duplicate if tend's /run summary already announced this goal.
-    if !app.messages.iter().any(|m| m.text.contains("triggered: `") && m.text.contains(&goal.id)) {
-        let msg = format!("triggered: `{}`{}", goal.id, reason.as_ref().map(|r| format!(": {}", r)).unwrap_or_default());
-        app.push_system_message(&msg);
-        log.emit("dispatcher", logger::LogEvent::TinkerSystemMessageReceived { content: msg });
-    }
-
-    let _ = run_tx.try_send((goal, reason));
 }
 
 
@@ -1286,10 +1119,7 @@ enum KeyAction {
     SendToTend(String),
     SendToRummage(String),
     SendToJog(String),
-    ApproveNextGoal,
-    /// Run a specific goal immediately, bypassing the scheduler. The optional
-    /// reason mirrors tend's `/run <id> <reason>` syntax and the
-    /// modal's reason-prompt submit.
+    /// Dispatch a goal agent session with an optional trigger reason.
     RunGoal(String, Option<String>),
 }
 
@@ -1390,10 +1220,6 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
             (_, KeyCode::Enter) => {
                 let input = app.input.trim().to_string();
                 if input.is_empty() {
-                    // Confirm next goal in manual mode
-                    if matches!(app.phase, Phase::AwaitingConfirm(_)) {
-                        return KeyAction::ApproveNextGoal;
-                    }
                     return KeyAction::None;
                 }
 
@@ -1403,76 +1229,9 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                     return KeyAction::Quit;
                 }
                 if input == "/help" {
-                    let help_msg = "Commands: /run <goal-id>, /pause, /resume, /skip, /quit, /help, /tend, /rummage, /jog. Tab = goal tree.";
+                    let help_msg = "Commands: @<goal-id> [msg], /quit, /help, /tend, /rummage, /jog. Tab = goal tree.";
                     app.push_system_message(help_msg);
                     log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: help_msg.to_string() });
-                    app.input.clear();
-                    return KeyAction::None;
-                }
-                if input == "/pause" {
-                    app.loop_mode = LoopMode::Manual;
-                    app.push_system_message("Manual mode: press Enter to approve each goal run.");
-                    log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: "Manual mode: press Enter to approve each goal run.".to_string() });
-                    app.input.clear();
-                    return KeyAction::None;
-                }
-                if input == "/resume" {
-                    app.loop_mode = LoopMode::Auto;
-                    app.push_system_message("Auto mode: goals run automatically.");
-                    log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: "Auto mode: goals run automatically.".to_string() });
-                    app.input.clear();
-                    return KeyAction::None;
-                }
-                if let Some(rest) = input.strip_prefix("/run") {
-                    let rest = rest.trim();
-                    app.input.clear();
-                    if rest.is_empty() {
-                        // Bare `/run` opens the reason-prompt modal for the
-                        // currently-selected goal in the tree.
-                        if let Some(g) = app.selected_goal() {
-                            app.modal = Some(crate::app::ModalState {
-                                goal_id: g.id,
-                                input: String::new(),
-                            });
-                        } else {
-                            app.push_system_message("No goal selected. Tab to the tree and pick one.");
-                            log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: "No goal selected. Tab to the tree and pick one.".to_string() });
-                        }
-                        return KeyAction::None;
-                    }
-                    // `/run <id> [reason]` — reason is everything after the id.
-                    let (id, reason) = match rest.split_once(char::is_whitespace) {
-                        Some((id, r)) => (id, Some(r.trim().to_string()).filter(|s| !s.is_empty())),
-                        None => (rest, None),
-                    };
-                    let exists = app.goals.iter().any(|g| g.id == id);
-                    if exists {
-                        return KeyAction::RunGoal(id.to_string(), reason);
-                    }
-                    let no_goal_msg = format!("No goal with id `{}`.", id);
-                    app.push_system_message(&no_goal_msg);
-                    log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: no_goal_msg });
-                    return KeyAction::None;
-                }
-                if input == "/skip" {
-                    if matches!(app.phase, Phase::AwaitingConfirm(_)) {
-                        // The currently-confirming goal sits at the front of
-                        // the queue (pushed there by start_or_confirm_goal in
-                        // Manual mode). Drop it.
-                        let _ = app.goal_queue.pop_front();
-                        // Advance to the next queued goal, if any.
-                        if let Some((next_goal, _)) = app.goal_queue.front() {
-                            let next_id = next_goal.id.clone();
-                            let skip_msg = format!("Skipped. Next: `{}`.", next_id);
-                            app.push_system_message(&skip_msg);
-                            log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: skip_msg });
-                            app.phase = Phase::AwaitingConfirm(next_id);
-                        } else {
-                            app.phase = Phase::Idle;
-                            app.push_system_message("Skipped. Waiting for input.");
-                            log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: "Skipped. Waiting for input.".to_string() });
-                        }
-                    }
                     app.input.clear();
                     return KeyAction::None;
                 }
@@ -1583,43 +1342,45 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
 mod tests {
     use super::*;
 
-    // spec: goal-sessions decision — "After a batch drains, [per-goal]
-    // summaries are folded into a single user-facing message." The
-    // fold prompt must reference each goal's summary content and instruct
-    // tinker to produce a unified, try-it-now message.
-    #[test]
-    fn test_spec_build_batch_summary_request_folds_per_goal_summaries() {
-        let summaries = vec![
-            ("calc".to_string(), "added add() and tests".to_string()),
-            ("docs".to_string(), "wrote README".to_string()),
-        ];
-        let prompt = build_batch_summary_request(&summaries);
-        // Each per-goal summary content must be present in the fold prompt.
-        assert!(prompt.contains("calc"));
-        assert!(prompt.contains("added add() and tests"));
-        assert!(prompt.contains("docs"));
-        assert!(prompt.contains("wrote README"));
-        // Must instruct tinker to compose a single user-facing
-        // message with the "try it" / next-step invitation.
-        assert!(prompt.to_lowercase().contains("try it"));
+    fn make_test_session_senders(
+        msg_tx: &mpsc::Sender<String>,
+    ) -> (HashMap<String, mpsc::Sender<String>>, mpsc::Receiver<String>, mpsc::Receiver<String>) {
+        let (rummage_tx, rummage_rx) = mpsc::channel::<String>(8);
+        let (jog_tx, jog_rx) = mpsc::channel::<String>(8);
+        let mut senders = HashMap::new();
+        senders.insert("tend".to_string(), msg_tx.clone());
+        senders.insert("rummage".to_string(), rummage_tx);
+        senders.insert("jog".to_string(), jog_tx);
+        (senders, rummage_rx, jog_rx)
     }
 
-    // spec (triggers): the batch summary request must instruct
-    // tinker to emit /run lines for downstream reactive goals,
-    // with them appearing after the prose — machine side of tinker-
-    // owned scheduling.
+    // REMOVED: test_spec_build_batch_summary_request_folds_per_goal_summaries
+    // (build_batch_summary_request deleted — batch machinery retired)
+    // REMOVED: test_spec_batch_summary_request_instructs_reactive_run_lines
+    // (same reason)
+
+    // spec: goal-agents — SummaryReady events route directly to tend without
+    // batch collection. This replaces the old batch-summary machinery.
     #[test]
-    fn test_spec_batch_summary_request_instructs_reactive_run_lines() {
-        let summaries = vec![("calc".to_string(), "did stuff".to_string())];
-        let prompt = build_batch_summary_request(&summaries);
-        assert!(
-            prompt.contains("/run"),
-            "batch summary request must instruct tinker to emit /run lines",
+    fn test_spec_summary_routes_directly_to_tend_not_batched() {
+        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (senders, _, _) = make_test_session_senders(&msg_tx);
+        let mock_fs = crate::test_utils::MockFs::new();
+        let mut app = App::new();
+        handle_session_event(
+            &mut app,
+            SessionEvent::SummaryReady { goal_id: "calc".into(), summary: "did things".into() },
+            &msg_tx,
+            &spawn_tx,
+            &senders,
+            &mock_fs,
+            &logger::noop_sender(),
         );
-        assert!(
-            prompt.to_lowercase().contains("after") && prompt.contains("prose"),
-            "batch summary request must specify /run lines go after the prose",
-        );
+        let msg = msg_rx.try_recv().expect("SummaryReady must dispatch to tend");
+        assert!(msg.contains("calc"), "summary message must name the goal");
+        assert!(msg.contains("did things"), "summary message must carry the summary");
+        assert_eq!(app.tend_tasks, 1, "tend_tasks must increment for the summary");
     }
 
     // RealFilesystem (std::fs underneath) must follow symlinks transparently.
@@ -1750,14 +1511,9 @@ mod tests {
         );
     }
 
-    // spec (tui, triggers): system messages emitted when /run
-    // lines are parsed must use "triggered:" format, not the retired
-    // "Scheduler:" naming from the old scheduler component. The message is
-    // a Role::System entry (rendered grey in the TUI) and must contain both
-    // the goal id and the reason from the /run line.
+    // spec (tui, triggers): dispatch messages use "triggered:" format.
     #[test]
     fn test_spec_dispatched_run_uses_triggered_system_message_format() {
-        // Replicate what handle_orch_event::Done builds for the single-goal case.
         let goal_id = "tui";
         let reason = "implement the thing";
         let reason_opt = Some(reason.to_string());
@@ -1766,418 +1522,24 @@ mod tests {
             goal_id,
             reason_opt.as_ref().map(|r| format!(": {}", r)).unwrap_or_default(),
         );
-        assert!(
-            summary.starts_with("triggered:"),
-            "dispatch message must start with 'triggered:'; got: {summary}",
-        );
-        assert!(
-            !summary.contains("Scheduler:"),
-            "retired 'Scheduler:' naming must not appear in dispatch message",
-        );
+        assert!(summary.starts_with("triggered:"), "dispatch message must start with 'triggered:'");
+        assert!(!summary.contains("Scheduler:"), "retired 'Scheduler:' naming must not appear");
         assert!(summary.contains(goal_id), "goal id must appear in message");
         assert!(summary.contains(reason), "reason must appear in message");
     }
 
-    // spec (triggers): covers the `/run <goal-id> <reason>` trigger syntax.
-    // Calls the production
-    // `parse_run_commands` function directly (extracted from the inline
-    // parser that previously lived in `handle_orch_event::Done`).
-    //
-    //   1. Chat-line trigger: the parser takes plain text; the call site
-    //      passes `app.current_assistant_text` (the just-streamed reply,
-    //      not historical `app.messages`). Verified here by leaving
-    //      `app.messages` empty and putting triggers only in the text arg.
-    //   2. `change_log` removed: `parse_run_commands` takes only text — no
-    //      goal state. Structural removal from the Goal struct is separately
-    //      covered by `goal::tests::test_spec_goal_has_no_change_log_field`.
-    //   3. Multiple `/run` lines per turn each produce a trigger, in order.
-    //   4. Non-`/run` prose passes through without generating triggers.
-    #[test]
-    fn test_spec_run_command_parsing() {
-        // (Decision 1) Confirm App exposes `current_assistant_text` and
-        // that an empty `messages` list does not block parsing.
-        let mut app = App::new();
-        assert!(app.messages.is_empty());
-        assert!(app.current_assistant_text.is_empty());
-
-        // (Decisions 1, 3, 4) Build a realistic tinker turn:
-        //   - prose preamble (must not yield a trigger)
-        //   - three `/run` lines with reasons (must each yield a trigger)
-        //   - prose interleaved (must not yield a trigger)
-        //   - a `/run` line with no reason (yields trigger with empty reason)
-        app.current_assistant_text = String::from(
-            "Acknowledged. I will dispatch a few goals.\n\
-             /run alpha investigate the failing test\n\
-             Some commentary in between.\n\
-             /run beta resync the index\n\
-             /run gamma   please clean up the cache\n\
-             /run delta\n\
-             That is all for now.\n",
-        );
-
-        let triggers = parse_run_commands(&app.current_assistant_text);
-
-        // Decision 3 + Decision 4: exactly four `/run` lines parsed; prose
-        // lines did not produce triggers.
-        assert_eq!(
-            triggers.len(),
-            4,
-            "expected 4 /run triggers (prose lines must not parse); got {:?}",
-            triggers,
-        );
-
-        // Decision 3: order is preserved across multiple `/run` lines.
-        assert_eq!(triggers[0].0, "alpha");
-        assert_eq!(triggers[0].1, "investigate the failing test");
-        assert_eq!(triggers[1].0, "beta");
-        assert_eq!(triggers[1].1, "resync the index");
-        assert_eq!(triggers[2].0, "gamma");
-        // Internal whitespace between gid and reason is collapsed by trim().
-        assert_eq!(triggers[2].1, "please clean up the cache");
-
-        // A `/run` line with only a goal id (no reason) yields an empty
-        // reason string — the dispatch site converts that to `None`.
-        assert_eq!(triggers[3].0, "delta");
-        assert_eq!(triggers[3].1, "");
-
-        // Decision 2: parsing does not consult goal state at all.
-        assert!(app.goals.is_empty());
-        let triggers_again = parse_run_commands(&app.current_assistant_text);
-        assert_eq!(
-            triggers, triggers_again,
-            "parser must depend only on chat text, never on goal fields",
-        );
-
-        // Decision 4 (sharper check): a turn containing ONLY prose yields
-        // zero triggers.
-        let prose_only =
-            "Sure, I will keep an eye on that. No goals to fire right now.\n\
-             We could revisit later.\n";
-        assert!(
-            parse_run_commands(prose_only).is_empty(),
-            "prose-only chat must produce no triggers",
-        );
-
-        // Decision 1 (sharper check): the parser must NOT match a `/run`-like
-        // token that lacks the leading slash or appears mid-line.
-        let not_a_trigger =
-            "Here is some advice: run alpha would be a good idea.\n\
-             foo /run alpha not at line start\n";
-        assert!(
-            parse_run_commands(not_a_trigger).is_empty(),
-            "only line-leading `/run ` triggers must parse; got {:?}",
-            parse_run_commands(not_a_trigger),
-        );
-    }
-
-    // spec: goal-sessions decision — "For manual runs (user typing `/run` at
-    // the input prompt ...), the reason is collected from the user. This
-    // reason must be passed explicitly into the agent's prompt/context."
-    // Covers the REPL-input parse path, which is distinct from the
-    // tinker-driven `parse_run_commands` path used for created /
-    // edited / reactive goals.
-    #[test]
-    fn test_spec_repl_manual_run_with_reason_dispatches_correctly() {
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        let mut app = App::new();
-        app.goals = vec![goal::Goal {
-            id: "tui".into(),
-            summary: String::new(),
-            description: "build the tui".into(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            source_path: None,
-        }];
-        app.input = "/run tui verify the reason is threaded".into();
-        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender());
-        match action {
-            KeyAction::RunGoal(id, reason) => {
-                assert_eq!(id, "tui", "goal id must be extracted from REPL input");
-                assert_eq!(
-                    reason,
-                    Some("verify the reason is threaded".to_string()),
-                    "reason must be everything after the goal id",
-                );
-            }
-            _ => panic!("expected KeyAction::RunGoal from manual /run with reason"),
-        }
-    }
-
-    // spec: goal-sessions — `/run <id>` with no trailing reason text must
-    // yield `None` for reason (not `Some("")`) so the agent prompt's
-    // "## Reason for triggering" section is omitted entirely.
-    #[test]
-    fn test_spec_repl_run_without_reason_yields_none() {
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        let mut app = App::new();
-        app.goals = vec![goal::Goal {
-            id: "tui".into(),
-            summary: String::new(),
-            description: "build the tui".into(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            source_path: None,
-        }];
-        app.input = "/run tui".into();
-        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender());
-        match action {
-            KeyAction::RunGoal(id, reason) => {
-                assert_eq!(id, "tui");
-                assert_eq!(reason, None, "bare /run <id> must yield None reason, not Some(\"\")");
-            }
-            _ => panic!("expected KeyAction::RunGoal from /run without reason"),
-        }
-    }
-
-    // spec: goal-sessions decision — "One goal session at a time." When a
-    // SummaryDone event fires and a second goal is queued, it must be
-    // dispatched immediately rather than swallowed. Conversely, the first
-    // goal must not be re-dispatched. This enforces the serial drain: each
-    // SummaryDone advances to exactly the next queued goal.
-    #[test]
-    fn test_spec_one_goal_session_at_a_time_queue_drains_serially() {
-        let (run_tx, mut run_rx) = mpsc::channel::<(goal::Goal, Option<String>)>(4);
-        let (msg_tx, _msg_rx) = mpsc::channel::<String>(4);
-
-        let second = goal::Goal {
-            id: "second".into(),
-            summary: String::new(),
-            description: "second goal".into(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            source_path: None,
-        };
-
-        let mut app = App::new();
-        // Simulate: "first" is running, "second" is queued behind it.
-        app.phase = Phase::RunningGoal("first".into());
-        app.batch_had_goals = true;
-        app.goal_queue.push_back((second.clone(), Some("do the thing".into())));
-
-        // Fire SummaryDone for "first".
-        handle_goal_event(
-            &mut app,
-            GoalEvent::SummaryDone {
-                goal_id: "first".into(),
-                summary: "done".into(),
-            },
-            &msg_tx,
-            &run_tx,
-            &logger::noop_sender(),
-        );
-
-        // "second" must have been dispatched — exactly one item on the channel.
-        let dispatched = run_rx.try_recv().expect("second goal must be dispatched after first finishes");
-        assert_eq!(dispatched.0.id, "second", "dispatched goal must be the queued one");
-        assert_eq!(dispatched.1.as_deref(), Some("do the thing"));
-
-        // No further dispatch — queue was length 1.
-        assert!(run_rx.try_recv().is_err(), "no additional goals must be dispatched");
-
-        // Phase transitions to RunningGoal for "second", not back to Idle.
-        assert!(
-            matches!(&app.phase, Phase::RunningGoal(id) if id == "second"),
-            "phase must be RunningGoal(second) after serial dispatch",
-        );
-    }
-
-    // spec (goal-sessions): "The queue does not deduplicate by goal-id; sessions run
-    // in FIFO order regardless of repetition." The queue data structure must hold two
-    // separate entries for the same goal-id, each with its own reason.
-    #[test]
-    fn test_spec_queue_preserves_same_goal_id_no_dedup_fifo() {
-        let alpha = goal::Goal {
-            id: "alpha".into(),
-            summary: String::new(),
-            description: "alpha goal".into(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            source_path: None,
-        };
-        let mut app = App::new();
-        app.goal_queue.push_back((alpha.clone(), Some("first reason".into())));
-        app.goal_queue.push_back((alpha.clone(), Some("second reason".into())));
-        assert_eq!(app.goal_queue.len(), 2, "same goal-id must not be deduplicated");
-
-        let (g1, r1) = app.goal_queue.pop_front().unwrap();
-        assert_eq!(g1.id, "alpha");
-        assert_eq!(r1.as_deref(), Some("first reason"), "first entry must carry its own reason");
-
-        let (g2, r2) = app.goal_queue.pop_front().unwrap();
-        assert_eq!(g2.id, "alpha");
-        assert_eq!(r2.as_deref(), Some("second reason"), "second entry must carry its own reason");
-    }
-
-    // spec (goal-sessions): "The pending-session queue is in-memory only, like the
-    // sessions themselves. It dies on tinker restart." A fresh App has an empty queue —
-    // nothing loaded from disk.
-    #[test]
-    fn test_spec_queue_in_memory_only_starts_empty() {
-        let app = App::new();
-        assert!(
-            app.goal_queue.is_empty(),
-            "goal queue must start empty (in-memory only, never persisted to disk)",
-        );
-    }
-
-    // spec (goal-sessions): when the queue holds two invocations of the same goal-id
-    // with different reasons, SummaryDone must drain them in FIFO order, dispatching
-    // each with its own reason intact — not deduplicated or reordered.
-    #[test]
-    fn test_spec_queue_same_goal_drains_fifo_with_separate_reasons() {
-        let (run_tx, mut run_rx) = mpsc::channel::<(goal::Goal, Option<String>)>(8);
-        let (msg_tx, _msg_rx) = mpsc::channel::<String>(4);
-
-        let alpha = goal::Goal {
-            id: "alpha".into(),
-            summary: String::new(),
-            description: "alpha goal".into(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            source_path: None,
-        };
-
-        let mut app = App::new();
-        app.phase = Phase::RunningGoal("alpha".into());
-        app.batch_had_goals = true;
-        // Two separate invocations of the same goal queued with distinct reasons.
-        app.goal_queue.push_back((alpha.clone(), Some("second run".into())));
-        app.goal_queue.push_back((alpha.clone(), Some("third run".into())));
-
-        handle_goal_event(
-            &mut app,
-            GoalEvent::SummaryDone { goal_id: "alpha".into(), summary: "first done".into() },
-            &msg_tx,
-            &run_tx,
-            &logger::noop_sender(),
-        );
-
-        let dispatched = run_rx.try_recv().expect("second alpha must be dispatched next");
-        assert_eq!(dispatched.0.id, "alpha");
-        assert_eq!(dispatched.1.as_deref(), Some("second run"), "FIFO: second reason dispatched first");
-
-        assert_eq!(app.goal_queue.len(), 1, "third run still queued");
-        assert_eq!(
-            app.goal_queue[0].1.as_deref(),
-            Some("third run"),
-            "third entry preserved in queue with its own reason",
-        );
-        assert!(matches!(&app.phase, Phase::RunningGoal(id) if id == "alpha"));
-    }
-
-    // spec (goal-sessions): "When tinker emits several /run lines for one goal
-    // across turns… each invocation is preserved as a separate queue entry." When a session
-    // is already running and tinker emits a new /run, the new invocation must go
-    // into app.goal_queue — not be dispatched directly to run_tx.
-    #[test]
-    fn test_spec_tinker_run_while_running_goes_to_queue_not_run_tx() {
-        use crate::test_utils::MockFs;
-        use std::path::PathBuf;
-
-        let (run_tx, mut run_rx) = mpsc::channel::<(goal::Goal, Option<String>)>(8);
-        let (msg_tx, _msg_rx) = mpsc::channel::<String>(4);
-
-        let tinker_dir = PathBuf::from("/fake/.tinker");
-        let goals_dir = tinker_dir.join("goals");
-        let mock_fs = MockFs::new();
-        mock_fs.add_file(
-            &goals_dir.join("alpha.toml"),
-            "id = \"alpha\"\ndescription = \"alpha goal\"\nparent_id = \"\"\nchildren = []\n",
-        );
-
-        let mut app = App::new();
-        app.tinker_dirs = vec![tinker_dir];
-        // Another session is already running.
-        app.phase = Phase::RunningGoal("beta".into());
-        app.active_goal_id = Some("beta".into());
-        app.current_assistant_text = "/run alpha across-turn reason\n".into();
-
-        let (rummage_tx, _rummage_rx) = mpsc::channel::<String>(4);
-        let (jog_tx, _jog_rx) = mpsc::channel::<String>(4);
-        handle_orch_event(
-            &mut app,
-            TendEvent::Done,
-            &msg_tx,
-            &run_tx,
-            &rummage_tx,
-            &jog_tx,
-            &mock_fs,
-            &logger::noop_sender(),
-        );
-
-        // Nothing dispatched to the runner — the new invocation must be in the queue.
-        assert!(
-            run_rx.try_recv().is_err(),
-            "across-turn /run must not be dispatched to run_tx while a session is running",
-        );
-        assert_eq!(app.goal_queue.len(), 1, "new invocation must be in app.goal_queue");
-        assert_eq!(app.goal_queue[0].0.id, "alpha");
-        assert_eq!(
-            app.goal_queue[0].1.as_deref(),
-            Some("across-turn reason"),
-            "queued entry must carry its own reason",
-        );
-        // Phase must still show the original running goal, not overwritten.
-        assert!(
-            matches!(&app.phase, Phase::RunningGoal(id) if id == "beta"),
-            "phase must still be RunningGoal(beta), not overwritten to alpha",
-        );
-    }
-
-    // spec (rummage): on a confirmed case-2 bug, rummage emits `/run <goal-id> <reason>`
-    // in its output. handle_rummage_event must parse those lines and dispatch the goal
-    // to run_tx, the same as tend's /run dispatch does.
-    #[test]
-    fn test_spec_rummage_run_command_dispatched() {
-        use crate::test_utils::MockFs;
-        use std::path::PathBuf;
-
-        let (run_tx, mut run_rx) = mpsc::channel::<(goal::Goal, Option<String>)>(8);
-
-        let tinker_dir = PathBuf::from("/fake/.tinker");
-        let goals_dir = tinker_dir.join("goals");
-        let mock_fs = MockFs::new();
-        mock_fs.add_file(
-            &goals_dir.join("goal-sessions.toml"),
-            "id = \"goal-sessions\"\ndescription = \"runs goal sessions\"\nparent_id = \"\"\nchildren = []\n",
-        );
-
-        let mut app = App::new();
-        app.tinker_dirs = vec![tinker_dir];
-        app.rummage_current_text =
-            "Current best understanding: the bug is X.\n/run goal-sessions failing test test_spec_foo pins correct behavior\n"
-                .into();
-
-        let (msg_tx2, _msg_rx2) = mpsc::channel::<String>(4);
-        let (jog_tx2, _jog_rx2) = mpsc::channel::<String>(4);
-        let (rummage_tx2, _rummage_rx2) = mpsc::channel::<String>(4);
-        handle_rummage_event(
-            &mut app,
-            TendEvent::Done,
-            &run_tx,
-            &msg_tx2,
-            &jog_tx2,
-            &rummage_tx2,
-            &mock_fs,
-            &logger::noop_sender(),
-        );
-
-        let dispatched = run_rx.try_recv().expect("rummage /run must dispatch to run_tx");
-        assert_eq!(dispatched.0.id, "goal-sessions");
-        assert_eq!(
-            dispatched.1.as_deref(),
-            Some("failing test test_spec_foo pins correct behavior"),
-        );
-    }
+    // REMOVED: test_spec_run_command_parsing (parse_run_commands deleted — /run retired)
+    // REMOVED: test_spec_repl_manual_run_with_reason_dispatches_correctly (/run removed)
+    // REMOVED: test_spec_repl_run_without_reason_yields_none (/run removed)
+    // REMOVED: test_spec_one_goal_session_at_a_time_queue_drains_serially (queue removed)
+    // REMOVED: test_spec_queue_preserves_same_goal_id_no_dedup_fifo (queue removed)
+    // REMOVED: test_spec_queue_in_memory_only_starts_empty (queue removed)
+    // REMOVED: test_spec_queue_same_goal_drains_fifo_with_separate_reasons (queue removed)
+    // REMOVED: test_spec_tinker_run_while_running_goes_to_queue_not_run_tx (queue removed)
+    // REMOVED: test_spec_rummage_run_command_dispatched (parse_run_commands removed)
 
     // spec (tui): "When the user manually triggers a goal via Enter in the
-    // goal tree (or `/run` without arguments), a modal text input dialog pops
-    // up to collect the trigger reason."
+    // goal tree, a modal text input dialog pops up to collect the trigger reason."
     // Pressing Enter while Focus::Tree must set app.modal to Some(...) with
     // the selected goal's id; focus must remain on Tree (not switch to Repl).
     #[test]
@@ -2191,6 +1553,7 @@ mod tests {
             parent_id: String::new(),
             children: vec![],
             related: vec![],
+            tier: None,
             source_path: None,
         }];
         app.focus = Focus::Tree;
@@ -2422,7 +1785,7 @@ mod tests {
         // Both backends bind the tinker-tier model to `tinker_m` with the built-in
         // constant as fallback, then use it for rummage and jog as well.
         assert!(
-            main_rs.contains("tinker_m, rummage::rummage_system_prompt()"),
+            main_rs.contains("description_from_toml_str(include_str!(\"../.tinker/goals/rummage.toml\"))"),
             "rummage claude runner must use tinker_m (strongest tier)",
         );
         assert!(
@@ -2447,7 +1810,7 @@ mod tests {
     fn test_spec_jog_wired_to_strongest_model_tier() {
         let main_rs = include_str!("main.rs");
         assert!(
-            main_rs.contains("tinker_m, jog::jog_system_prompt()"),
+            main_rs.contains("description_from_toml_str(include_str!(\"../.tinker/goals/jog.toml\"))"),
             "jog claude runner must use tinker_m (strongest tier)",
         );
         assert!(
@@ -2533,7 +1896,7 @@ mod tests {
     }
 
     // spec (jog / triggers): multiple /jog-edit lines in one jog reply must each
-    // fire a separate commission to tinker, one per line. tinker_tasks must
+    // fire a separate commission to tinker, one per line. tend_tasks must
     // increment once per commission.
     #[test]
     fn test_spec_jog_edit_multiple_lines_each_dispatch_to_tinker() {
@@ -2541,6 +1904,7 @@ mod tests {
         use std::path::PathBuf;
 
         let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
 
         let tinker_dir = PathBuf::from("/fake/.tinker");
         let goals_dir = tinker_dir.join("goals");
@@ -2556,18 +1920,17 @@ mod tests {
 
         let mut app = App::new();
         app.tinker_dirs = vec![tinker_dir];
-        app.jog_current_text =
-            "Two findings here.\n/jog-edit rummage Clarify the case-2 durable test path.\n/jog-edit tui Document the active-agent prompt tag.\n"
-                .into();
+        let jog_text = "Two findings here.\n/jog-edit rummage Clarify the case-2 durable test path.\n/jog-edit tui Document the active-agent prompt tag.\n";
+        app.current_session_text.insert("jog".to_string(), jog_text.to_string());
+        app.jog_tasks = 1;
 
-        let (rummage_tx, _rummage_rx) = mpsc::channel::<String>(4);
-        let (jog_tx, _jog_rx) = mpsc::channel::<String>(4);
-        handle_jog_event(
+        let (senders, _, _) = make_test_session_senders(&msg_tx);
+        handle_session_event(
             &mut app,
-            TendEvent::Done,
+            SessionEvent::Done { goal_id: "jog".into() },
             &msg_tx,
-            &rummage_tx,
-            &jog_tx,
+            &spawn_tx,
+            &senders,
             &mock_fs,
             &logger::noop_sender(),
         );
@@ -2588,6 +1951,7 @@ mod tests {
         use std::path::PathBuf;
 
         let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
 
         let tinker_dir = PathBuf::from("/fake/.tinker");
         let mock_fs = MockFs::new();
@@ -2595,16 +1959,16 @@ mod tests {
 
         let mut app = App::new();
         app.tinker_dirs = vec![tinker_dir];
-        app.jog_current_text = "/jog-edit nonexistent This goal does not exist.\n".into();
+        app.current_session_text.insert("jog".to_string(), "/jog-edit nonexistent This goal does not exist.\n".to_string());
+        app.jog_tasks = 1;
 
-        let (rummage_tx, _rummage_rx) = mpsc::channel::<String>(4);
-        let (jog_tx, _jog_rx) = mpsc::channel::<String>(4);
-        handle_jog_event(
+        let (senders, _, _) = make_test_session_senders(&msg_tx);
+        handle_session_event(
             &mut app,
-            TendEvent::Done,
+            SessionEvent::Done { goal_id: "jog".into() },
             &msg_tx,
-            &rummage_tx,
-            &jog_tx,
+            &spawn_tx,
+            &senders,
             &mock_fs,
             &logger::noop_sender(),
         );
@@ -2617,14 +1981,14 @@ mod tests {
     }
 
     // spec (jog / triggers): the jog→tinker commission message must instruct
-    // tinker to apply the edit directly (v1: no playback interview) and to show
-    // what changed. This is the "non-blocking diff" requirement from the jog goal.
+    // tinker to apply the edit directly and to show what changed.
     #[test]
     fn test_spec_jog_edit_commission_instructs_direct_apply_and_show_diff() {
         use crate::test_utils::MockFs;
         use std::path::PathBuf;
 
         let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
 
         let tinker_dir = PathBuf::from("/fake/.tinker");
         let goals_dir = tinker_dir.join("goals");
@@ -2636,17 +2000,17 @@ mod tests {
 
         let mut app = App::new();
         app.tinker_dirs = vec![tinker_dir];
-        app.jog_current_text =
-            "/jog-edit rummage The SCOPE section omits the jog→tinker channel.\n".into();
+        app.current_session_text.insert("jog".to_string(),
+            "/jog-edit rummage The SCOPE section omits the jog→tinker channel.\n".to_string());
+        app.jog_tasks = 1;
 
-        let (rummage_tx, _rummage_rx) = mpsc::channel::<String>(4);
-        let (jog_tx, _jog_rx) = mpsc::channel::<String>(4);
-        handle_jog_event(
+        let (senders, _, _) = make_test_session_senders(&msg_tx);
+        handle_session_event(
             &mut app,
-            TendEvent::Done,
+            SessionEvent::Done { goal_id: "jog".into() },
             &msg_tx,
-            &rummage_tx,
-            &jog_tx,
+            &spawn_tx,
+            &senders,
             &mock_fs,
             &logger::noop_sender(),
         );
@@ -2654,7 +2018,7 @@ mod tests {
         let commission = msg_rx.try_recv().expect("commission must be sent");
         assert!(
             commission.to_lowercase().contains("directly"),
-            "commission must instruct tinker to apply the edit directly (no interview): {commission}",
+            "commission must instruct tinker to apply the edit directly: {commission}",
         );
         assert!(
             commission.to_lowercase().contains("what changed") || commission.to_lowercase().contains("changed"),
@@ -2662,15 +2026,16 @@ mod tests {
         );
     }
 
-    // spec (jog): on an "I know better" finding, jog emits `/jog-edit <goal-id>
-    // <instruction>` in its output. handle_jog_event must parse those lines and
-    // forward a prescriptive commission to tinker via msg_tx.
+    // spec (jog): jog emits `/jog-edit <goal-id> <instruction>` in its output.
+    // handle_session_event (jog Done) must parse those lines and forward a
+    // prescriptive commission to tinker via msg_tx.
     #[test]
     fn test_spec_jog_edit_command_dispatched_to_tinker() {
         use crate::test_utils::MockFs;
         use std::path::PathBuf;
 
         let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
 
         let tinker_dir = PathBuf::from("/fake/.tinker");
         let goals_dir = tinker_dir.join("goals");
@@ -2682,18 +2047,17 @@ mod tests {
 
         let mut app = App::new();
         app.tinker_dirs = vec![tinker_dir];
-        app.jog_current_text =
-            "I know better — the scope section omits the jog→tinker channel.\n/jog-edit rummage Add jog→tinker channel description to the SCOPE section.\n"
-                .into();
+        app.current_session_text.insert("jog".to_string(),
+            "I know better.\n/jog-edit rummage Add jog→tinker channel description to the SCOPE section.\n".to_string());
+        app.jog_tasks = 1;
 
-        let (rummage_tx, _rummage_rx) = mpsc::channel::<String>(4);
-        let (jog_tx, _jog_rx) = mpsc::channel::<String>(4);
-        handle_jog_event(
+        let (senders, _, _) = make_test_session_senders(&msg_tx);
+        handle_session_event(
             &mut app,
-            TendEvent::Done,
+            SessionEvent::Done { goal_id: "jog".into() },
             &msg_tx,
-            &rummage_tx,
-            &jog_tx,
+            &spawn_tx,
+            &senders,
             &mock_fs,
             &logger::noop_sender(),
         );
@@ -2707,9 +2071,13 @@ mod tests {
 
     // spec (peer-consult): parse_at_commands extracts @tend, @rummage, @jog
     // lines from agent output. Non-matching lines are silently skipped.
+    // The function now takes a `known_ids` slice so routing works for any
+    // registered session ID, not just the three built-in agents.
+    const BUILTIN_IDS: &[&str] = &["tend", "rummage", "jog"];
+
     #[test]
     fn test_spec_peer_consult_parse_at_tinker() {
-        let r = parse_at_commands("@tend what does this module do?");
+        let r = parse_at_commands("@tend what does this module do?", BUILTIN_IDS);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].0, "tend");
         assert_eq!(r[0].1, "what does this module do?");
@@ -2717,7 +2085,7 @@ mod tests {
 
     #[test]
     fn test_spec_peer_consult_parse_at_rummage() {
-        let r = parse_at_commands("@rummage can you trace the call?");
+        let r = parse_at_commands("@rummage can you trace the call?", BUILTIN_IDS);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].0, "rummage");
         assert_eq!(r[0].1, "can you trace the call?");
@@ -2725,7 +2093,7 @@ mod tests {
 
     #[test]
     fn test_spec_peer_consult_parse_at_jog() {
-        let r = parse_at_commands("@jog do you still mean X by this?");
+        let r = parse_at_commands("@jog do you still mean X by this?", BUILTIN_IDS);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].0, "jog");
         assert_eq!(r[0].1, "do you still mean X by this?");
@@ -2733,9 +2101,7 @@ mod tests {
 
     #[test]
     fn test_spec_peer_consult_parse_prose_before_block_excluded() {
-        // Prose before the first @-line is not part of any block and must not appear
-        // in any delivered message.
-        let r = parse_at_commands("some prose\n@tend hello\n@rummage check this");
+        let r = parse_at_commands("some prose\n@tend hello\n@rummage check this", BUILTIN_IDS);
         assert_eq!(r.len(), 2);
         assert_eq!(r[0], ("tend".to_string(), "hello".to_string()));
         assert_eq!(r[1], ("rummage".to_string(), "check this".to_string()));
@@ -2743,9 +2109,7 @@ mod tests {
 
     #[test]
     fn test_spec_peer_consult_parse_block_body_included() {
-        // Lines following the @-line and before the next @-line are body lines and
-        // must be included in the block delivered to the recipient.
-        let r = parse_at_commands("@tend hello\nbody line one\nbody line two\n@rummage check");
+        let r = parse_at_commands("@tend hello\nbody line one\nbody line two\n@rummage check", BUILTIN_IDS);
         assert_eq!(r.len(), 2);
         assert!(
             r[0].1.contains("hello") && r[0].1.contains("body line one"),
@@ -2756,18 +2120,13 @@ mod tests {
 
     #[test]
     fn test_spec_peer_consult_parse_at_without_message_ignored() {
-        // Standalone @tend with no body lines produces an empty block that is
-        // not delivered. Both the block detection (standalone form is valid) and
-        // the empty-block drop are exercised here.
-        let r = parse_at_commands("@tend");
+        let r = parse_at_commands("@tend", BUILTIN_IDS);
         assert_eq!(r.len(), 0, "empty @tend block must not be delivered");
     }
 
     #[test]
     fn test_spec_peer_consult_parse_multiline_body() {
-        // Standalone @agent form: the @-line carries no inline content; the block
-        // body is everything on the lines that follow until the next @-line.
-        let r = parse_at_commands("@rummage\nfirst line\nsecond line");
+        let r = parse_at_commands("@rummage\nfirst line\nsecond line", BUILTIN_IDS);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].0, "rummage");
         assert!(
@@ -2778,11 +2137,78 @@ mod tests {
 
     #[test]
     fn test_spec_peer_consult_parse_multiple_at_lines() {
-        let r = parse_at_commands("@tend q1\n@rummage q2\n@jog q3");
+        let r = parse_at_commands("@tend q1\n@rummage q2\n@jog q3", BUILTIN_IDS);
         assert_eq!(r.len(), 3);
         assert_eq!(r[0], ("tend".to_string(), "q1".to_string()));
         assert_eq!(r[1], ("rummage".to_string(), "q2".to_string()));
         assert_eq!(r[2], ("jog".to_string(), "q3".to_string()));
+    }
+
+    // spec (goal-agents): dispatch_peer_consultations requests lazy spawn when
+    // the recipient is a known goal ID not yet in the session registry.
+    #[test]
+    fn test_spec_goal_agent_dispatch_triggers_lazy_spawn() {
+        let (msg_tx, _msg_rx) = mpsc::channel::<String>(8);
+        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (senders, _, _) = make_test_session_senders(&msg_tx);
+
+        let mut app = App::new();
+        app.goals.push(goal::Goal {
+            id: "goal-agents".into(),
+            summary: String::new(),
+            description: "build the registry".into(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            source_path: None,
+        });
+
+        let consultations = vec![("goal-agents".to_string(), "time to build".to_string())];
+        dispatch_peer_consultations(
+            &mut app,
+            "tend",
+            &consultations,
+            &senders,
+            &spawn_tx,
+            &logger::noop_sender(),
+        );
+
+        let req = spawn_rx.try_recv().expect("dispatch to unknown goal must enqueue spawn request");
+        assert_eq!(req.goal_id, "goal-agents");
+        assert!(req.message.contains("time to build"));
+        assert!(req.message.contains("[from tend]"), "message must carry sender attribution");
+    }
+
+    // spec (goal-agents): known_agent_ids includes both registry entries and
+    // all goal IDs from app.goals (so agents can address unspawned goals).
+    #[test]
+    fn test_spec_known_agent_ids_includes_goals_and_registry() {
+        let (msg_tx, _) = mpsc::channel::<String>(8);
+        let (senders, _, _) = make_test_session_senders(&msg_tx);
+        let goals = vec![
+            goal::Goal { id: "tui".into(), summary: String::new(), description: String::new(),
+                parent_id: String::new(), children: vec![], related: vec![], tier: None, source_path: None },
+            goal::Goal { id: "rummage".into(), summary: String::new(), description: String::new(),
+                parent_id: String::new(), children: vec![], related: vec![], tier: None, source_path: None },
+        ];
+        let ids = known_agent_ids(&senders, &goals);
+        assert!(ids.contains(&"tend"), "registry agent must be included");
+        assert!(ids.contains(&"tui"), "goal not in registry must be included");
+        // rummage is in both registry and goals — must appear exactly once in practice
+        // (the dedup ensures it's not duplicated)
+        assert!(ids.iter().filter(|&&id| id == "rummage").count() <= 1, "no duplicates");
+    }
+
+    // spec (peer-consult): parse_at_commands accepts arbitrary goal IDs,
+    // not just the three built-in agents.
+    #[test]
+    fn test_spec_peer_consult_parse_accepts_goal_id() {
+        let ids = &["tend", "rummage", "goal-agents"];
+        let r = parse_at_commands("@goal-agents start working on the registry", ids);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "goal-agents");
+        assert_eq!(r[0].1, "start working on the registry");
     }
 
     // spec (peer-consult): dispatch_peer_consultations routes each consultation
@@ -2792,6 +2218,12 @@ mod tests {
         let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
         let (rummage_tx, mut rummage_rx) = mpsc::channel::<String>(8);
         let (jog_tx, mut jog_rx) = mpsc::channel::<String>(8);
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+
+        let mut senders = HashMap::new();
+        senders.insert("tend".to_string(), msg_tx.clone());
+        senders.insert("rummage".to_string(), rummage_tx);
+        senders.insert("jog".to_string(), jog_tx);
 
         let mut app = App::new();
         let consultations = vec![
@@ -2803,9 +2235,8 @@ mod tests {
             &mut app,
             "rummage",
             &consultations,
-            &msg_tx,
-            &rummage_tx,
-            &jog_tx,
+            &senders,
+            &spawn_tx,
             &logger::noop_sender(),
         );
 
@@ -2828,8 +2259,14 @@ mod tests {
     #[test]
     fn test_spec_peer_consult_pushes_system_message_for_visibility() {
         let (msg_tx, _) = mpsc::channel::<String>(8);
-        let (rummage_tx, _) = mpsc::channel::<String>(8);
+        let (rummage_tx, mut rummage_rx) = mpsc::channel::<String>(8);
         let (jog_tx, _) = mpsc::channel::<String>(8);
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+
+        let mut senders = HashMap::new();
+        senders.insert("tend".to_string(), msg_tx.clone());
+        senders.insert("rummage".to_string(), rummage_tx);
+        senders.insert("jog".to_string(), jog_tx);
 
         let mut app = App::new();
         let consultations = vec![("rummage".to_string(), "trace the init flow".to_string())];
@@ -2837,9 +2274,8 @@ mod tests {
             &mut app,
             "tend",
             &consultations,
-            &msg_tx,
-            &rummage_tx,
-            &jog_tx,
+            &senders,
+            &spawn_tx,
             &logger::noop_sender(),
         );
 
@@ -2849,6 +2285,7 @@ mod tests {
         assert!(text.contains("@tend"), "system message must name the sender");
         assert!(text.contains("@rummage"), "system message must name the recipient");
         assert!(text.contains("trace the init flow"), "system message must include the message content");
+        let _ = rummage_rx.try_recv();
     }
 
     // spec (backends): "--help/-h prints all startup flags with a brief description and exits

@@ -1,5 +1,5 @@
 use crate::goal::Goal;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -41,11 +41,6 @@ pub struct ModalState {
     pub input: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum LoopMode {
-    Auto,
-    Manual,
-}
 
 /// Per-pane scroll state. `y = None` follows the tail (snaps to bottom).
 /// `y = Some(n)` is an absolute line offset from the top of the wrapped
@@ -112,14 +107,8 @@ impl ScrollState {
 pub enum Phase {
     /// Sending the init prompt to tend.
     Initializing,
-    /// Nothing running; waiting for user input or new goals.
+    /// Ready; sessions may be running but there is no serial queue.
     Idle,
-    /// A goal session is actively running.
-    RunningGoal(String),
-    /// Manual mode: next goal chosen, waiting for user to approve.
-    AwaitingConfirm(String),
-    /// Batch finished — asking tend to summarize what was done.
-    SummarizingBatch,
 }
 
 pub struct App {
@@ -145,22 +134,12 @@ pub struct App {
     /// Once true, the cold-start scheduling filter is disabled.
     pub user_has_interacted: bool,
     pub phase: Phase,
-    pub loop_mode: LoopMode,
-    /// Goals queued to run after the current one finishes (from a multi-goal
-    /// scheduling response). Drained before triggering a new schedule.
-    /// Each entry is `(Goal, optional reason)` — the reason is the per-trigger
-    /// "what to do right now" hint emitted by tend's `/run` line
-    /// or by the scheduler's `yes|<reason>` reply.
-    pub goal_queue: VecDeque<(Goal, Option<String>)>,
-    /// True if any goal session has fired since the last batch summary.
-    /// Used to decide whether to ask for a batch summary when scheduling returns `none`.
-    pub batch_had_goals: bool,
-    /// (goal_id, summary) entries accumulated for the current batch.
-    /// Forwarded to tend in the batch summary request, then cleared.
-    pub batch_summaries: Vec<(String, String)>,
     /// How many times we've asked tend to fix a parse error in this
     /// edit cycle. Reset on a fresh user message or a clean Done.
     pub correction_attempts: u8,
+    /// Per-session accumulated text since the last Done event. Used to
+    /// detect `@`-blocks for peer consultation routing. Cleared on Done.
+    pub current_session_text: HashMap<String, String>,
     pub focus: Focus,
     pub should_quit: bool,
     pub repl_scroll: ScrollState,
@@ -203,11 +182,8 @@ impl App {
             tend_tasks: 0,
             user_has_interacted: false,
             phase: Phase::Initializing,
-            loop_mode: LoopMode::Auto,
-            goal_queue: VecDeque::new(),
-            batch_had_goals: false,
-            batch_summaries: vec![],
             correction_attempts: 0,
+            current_session_text: HashMap::new(),
             focus: Focus::Repl,
             should_quit: false,
             repl_scroll: ScrollState::new(),

@@ -85,7 +85,18 @@ condition wherever intent is in play.
   `agent-complementarity`).
 """
 parent_id = ""
-children = ["forward-generation", "divergence-investigation", "agent-complementarity"]
+
+[[children]]
+id = "forward-generation"
+reason = "producer branch — tend and goal sessions moving forward through the intent→spec→code stack, treating the goal as authoritative"
+
+[[children]]
+id = "divergence-investigation"
+reason = "skeptic branch — rummage and jog investigating gaps between adjacent layers, treating the goal as signal-with-noise"
+
+[[children]]
+id = "agent-complementarity"
+reason = "design principle governing how agent profiles are assigned and kept complementary across the producer/skeptic cycle"
 
 [[related]]
 id = "user-system-interaction"

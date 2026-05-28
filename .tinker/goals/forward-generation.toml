@@ -37,7 +37,14 @@ splits the skeptics into dialectical and autonomous.
   its axes (`the-cycles`).
 """
 parent_id = "the-cycles"
-children = ["tend", "goal-sessions"]
+
+[[children]]
+id = "tend"
+reason = "intent↔spec producer — surfaces user intent through dialectical interview and crystallizes it into goal specs"
+
+[[children]]
+id = "goal-sessions"
+reason = "spec↔code producer — generates code autonomously from the written spec"
 
 [[related]]
 id = "divergence-investigation"

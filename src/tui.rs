@@ -1,4 +1,4 @@
-use crate::app::{ActiveAgent, App, Focus, LoopMode, Phase, Role};
+use crate::app::{ActiveAgent, App, Focus, Phase, Role};
 use crate::claude::USAGE_LINE_MARKER;
 use crate::goal_session::TRIGGER_REASON_MARKER;
 use crate::goal::{build_tree, GoalNode};
@@ -120,11 +120,7 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
         Style::default().fg(Color::DarkGray)
     };
 
-    let mode_indicator = match app.loop_mode {
-        LoopMode::Auto => "",
-        LoopMode::Manual => " [manual]",
-    };
-    let title = format!(" REPL{} ", mode_indicator);
+    let title = " REPL ".to_string();
 
     let block = Block::default()
         .title(title)
@@ -135,12 +131,13 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(block, area);
 
     let (prompt, prompt_style): (&str, Style) = match app.active_agent {
-        ActiveAgent::Tend => match &app.phase {
-            Phase::Initializing => ("… ", Style::default().fg(Color::DarkGray)),
-            Phase::AwaitingConfirm(_) => ("▶ ", Style::default().fg(Color::Yellow)),
-            _ if app.tend_tasks > 0 => ("… ", Style::default().fg(Color::DarkGray)),
-            _ => ("tend> ", Style::default().fg(Color::Yellow)),
-        },
+        ActiveAgent::Tend => {
+            if app.phase == Phase::Initializing || app.tend_tasks > 0 {
+                ("… ", Style::default().fg(Color::DarkGray))
+            } else {
+                ("tend> ", Style::default().fg(Color::Yellow))
+            }
+        }
         ActiveAgent::Rummage => {
             if app.rummage_tasks > 0 {
                 ("… ", Style::default().fg(Color::DarkGray))
@@ -372,59 +369,6 @@ fn push_assistant_text_segment(
     }
 }
 
-/// Returns the queue-marker string for a goal, if any.
-/// Running goal → `"▶"`, first queued entry → `"[N]"` (1-based global position).
-/// Returns `None` when the goal has no pending invocations.
-fn goal_queue_marker(
-    goal_id: &str,
-    active_goal_id: Option<&str>,
-    queue: &std::collections::VecDeque<(crate::goal::Goal, Option<String>)>,
-) -> Option<String> {
-    if active_goal_id == Some(goal_id) {
-        return Some("▶".to_string());
-    }
-    for (i, (goal, _)) in queue.iter().enumerate() {
-        if goal.id == goal_id {
-            return Some(format!("[{}]", i + 1));
-        }
-    }
-    None
-}
-
-struct PendingEntry {
-    is_running: bool,
-    /// 1-based global queue position (irrelevant when `is_running` is true).
-    queue_pos: usize,
-    reason: Option<String>,
-}
-
-/// Returns every pending invocation for a goal in display order:
-/// the running entry first (if any), then queued entries in queue order.
-fn goal_pending_entries(
-    goal_id: &str,
-    active_goal_id: Option<&str>,
-    active_goal_reason: Option<&str>,
-    queue: &std::collections::VecDeque<(crate::goal::Goal, Option<String>)>,
-) -> Vec<PendingEntry> {
-    let mut entries = vec![];
-    if active_goal_id == Some(goal_id) {
-        entries.push(PendingEntry {
-            is_running: true,
-            queue_pos: 0,
-            reason: active_goal_reason.map(String::from),
-        });
-    }
-    for (i, (goal, reason)) in queue.iter().enumerate() {
-        if goal.id == goal_id {
-            entries.push(PendingEntry {
-                is_running: false,
-                queue_pos: i + 1,
-                reason: reason.clone(),
-            });
-        }
-    }
-    entries
-}
 
 fn draw_goal_tree(
     frame: &mut Frame,
@@ -441,12 +385,12 @@ fn draw_goal_tree(
         Style::default().fg(Color::DarkGray)
     };
 
-    let phase_label = match &app.phase {
-        Phase::RunningGoal(id) => format!(" ▶ {} ", id),
-        Phase::AwaitingConfirm(id) => format!(" ? confirm: {} ", id),
-        Phase::SummarizingBatch => " ✎ summarizing… ".to_string(),
-        Phase::Initializing => " starting… ".to_string(),
-        Phase::Idle => String::new(),
+    let phase_label = if app.phase == Phase::Initializing {
+        " starting… ".to_string()
+    } else if let Some(id) = &app.active_goal_id {
+        format!(" ▶ {} ", id)
+    } else {
+        String::new()
     };
     let title = format!(" Goals{} ", phase_label);
 
@@ -495,18 +439,11 @@ fn draw_goal_tree(
             let marker = if is_active { "▶" } else { "◉" };
             let id_label = format!("`{}`", node.goal.id);
             let preview = truncate_with_ellipsis(&first_meaningful_line(&node.goal.description), 60);
-            let qm = goal_queue_marker(&node.goal.id, app.active_goal_id.as_deref(), &app.goal_queue);
 
             let mut spans = vec![
                 Span::styled(format!("{}{} ", indent, marker), style),
                 Span::styled(id_label, id_style),
             ];
-            if let Some(m) = qm {
-                spans.push(Span::styled(
-                    format!(" {}", m),
-                    Style::default().fg(Color::DarkGray),
-                ));
-            }
             if !preview.is_empty() {
                 spans.push(Span::styled(format!(" — {}", preview), style));
             }
@@ -537,31 +474,13 @@ fn draw_goal_tree(
                 .lines()
                 .map(|l| Line::from(l.to_string()))
                 .collect();
-            let pending = goal_pending_entries(
-                &g.id,
-                app.active_goal_id.as_deref(),
-                app.active_goal_reason.as_deref(),
-                &app.goal_queue,
-            );
-            if !pending.is_empty() {
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    "── Pending invocations ──",
-                    Style::default().fg(Color::DarkGray),
-                )));
-                for entry in &pending {
-                    let glyph = if entry.is_running {
-                        "▶".to_string()
-                    } else {
-                        format!("[{}]", entry.queue_pos)
-                    };
-                    let reason_str = entry.reason.as_deref().unwrap_or("(no reason)");
+            // Show active reason when this goal is running
+            if app.active_goal_id.as_deref() == Some(&g.id) {
+                if let Some(reason) = &app.active_goal_reason {
+                    lines.push(Line::from(""));
                     lines.push(Line::from(vec![
-                        Span::styled(
-                            format!("  {} ", glyph),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                        Span::raw(reason_str.to_string()),
+                        Span::styled("▶ ", Style::default().fg(Color::Yellow)),
+                        Span::raw(reason.clone()),
                     ]));
                 }
             }
@@ -725,6 +644,7 @@ mod tests {
             parent_id: String::new(),
             children: vec![],
             related: vec![],
+            tier: None,
             source_path: None,
         }
     }
@@ -1003,188 +923,7 @@ mod tests {
         );
     }
 
-    /// Spec (tui): "The currently-running goal gets a distinct glyph (e.g. `▶`)".
-    /// `goal_queue_marker` returns `"▶"` when the goal is the active one.
-    #[test]
-    fn test_spec_queue_marker_running_goal_gets_glyph() {
-        let queue = std::collections::VecDeque::new();
-        let m = goal_queue_marker("tui", Some("tui"), &queue);
-        assert_eq!(m.as_deref(), Some("▶"), "running goal must get ▶ marker");
-    }
-
-    /// Spec (tui): "each goal with queued entries gets a bracketed integer
-    /// showing its next upcoming queue position (e.g. `[1]`, `[2]`)".
-    #[test]
-    fn test_spec_queue_marker_queued_goal_gets_index() {
-        let mut queue = std::collections::VecDeque::new();
-        let g_a = crate::goal::Goal {
-            id: "alpha".into(), summary: "".into(), description: "".into(), parent_id: "".into(),
-            children: vec![], related: vec![], source_path: None,
-        };
-        let g_b = crate::goal::Goal {
-            id: "beta".into(), summary: "".into(), description: "".into(), parent_id: "".into(),
-            children: vec![], related: vec![], source_path: None,
-        };
-        // alpha is at global position 1, beta at 2.
-        queue.push_back((g_a, Some("reason-a".into())));
-        queue.push_back((g_b, Some("reason-b".into())));
-
-        assert_eq!(goal_queue_marker("alpha", None, &queue).as_deref(), Some("[1]"));
-        assert_eq!(goal_queue_marker("beta", None, &queue).as_deref(), Some("[2]"));
-    }
-
-    /// Spec (tui): "Goals with nothing pending carry no marker."
-    #[test]
-    fn test_spec_queue_marker_idle_goal_has_no_marker() {
-        let queue = std::collections::VecDeque::new();
-        let m = goal_queue_marker("tui", None, &queue);
-        assert!(m.is_none(), "idle goal must have no queue marker");
-    }
-
-    /// Spec (tui): "Markers in the goal-list region are rendered in a
-    /// dim/grey style so they don't visually dominate the goal name."
-    /// The marker span uses DarkGray foreground.
-    #[test]
-    fn test_spec_queue_markers_are_dim_grey() {
-        // Build a minimal App with one running goal and one queued goal.
-        let mut app = App::new();
-        let running = mk_goal("running-goal");
-        let queued = mk_goal("queued-goal");
-        app.goals.push(running.clone());
-        app.goals.push(queued.clone());
-        app.active_goal_id = Some("running-goal".into());
-        app.active_goal_reason = Some("fix the bug".into());
-        app.goal_queue.push_back((queued, Some("index the project".into())));
-
-        // Build the list lines the same way draw_goal_tree does.
-        let tree = crate::goal::build_tree(&app.goals);
-        let flat = super::flatten_tree(&tree);
-
-        for (_, node) in &flat {
-            let qm = goal_queue_marker(
-                &node.goal.id,
-                app.active_goal_id.as_deref(),
-                &app.goal_queue,
-            );
-            if let Some(m) = qm {
-                // Simulate appending the marker span.
-                let span = Span::styled(
-                    format!(" {}", m),
-                    Style::default().fg(Color::DarkGray),
-                );
-                assert_eq!(
-                    span.style.fg,
-                    Some(Color::DarkGray),
-                    "queue marker span for `{}` must be DarkGray, got {:?}",
-                    node.goal.id,
-                    span.style.fg,
-                );
-            }
-        }
-    }
-
-    /// Spec (tui): "When a goal with a marker is selected, the goal-text
-    /// region shows an extra section beneath the description listing every
-    /// pending invocation … in queue order, with each line carrying the
-    /// running glyph or queue index and the trigger reason."
-    #[test]
-    fn test_spec_pending_invocations_section_appears_in_goal_text() {
-        let running = mk_goal("running-goal");
-        let g = mk_goal("multi-goal");
-        let mut app = App::new();
-        app.goals.push(running);
-        app.goals.push(g.clone());
-        app.active_goal_id = Some("multi-goal".into());
-        app.active_goal_reason = Some("fix the critical bug".into());
-        // Same goal also appears twice in the queue.
-        app.goal_queue.push_back((g.clone(), Some("add the feature".into())));
-        app.goal_queue.push_back((g.clone(), None));
-
-        let pending = goal_pending_entries(
-            "multi-goal",
-            app.active_goal_id.as_deref(),
-            app.active_goal_reason.as_deref(),
-            &app.goal_queue,
-        );
-
-        // Running entry + 2 queued entries = 3 total.
-        assert_eq!(pending.len(), 3, "must capture running + both queued entries");
-
-        // First entry: running.
-        assert!(pending[0].is_running);
-        assert_eq!(pending[0].reason.as_deref(), Some("fix the critical bug"));
-
-        // Second entry: first queued, global pos 1.
-        assert!(!pending[1].is_running);
-        assert_eq!(pending[1].queue_pos, 1);
-        assert_eq!(pending[1].reason.as_deref(), Some("add the feature"));
-
-        // Third entry: second queued, global pos 2. No reason.
-        assert!(!pending[2].is_running);
-        assert_eq!(pending[2].queue_pos, 2);
-        assert!(pending[2].reason.is_none());
-    }
-
-    /// Spec (tui): "When the queue is empty and no session is running, no
-    /// markers appear in the goal-list region, and the goal-text region
-    /// shows only the description. The queue surface is not visible at all
-    /// in the idle state."
-    #[test]
-    fn test_spec_no_pending_entries_when_idle() {
-        let g = mk_goal("idle-goal");
-        let app = App::new();
-        let pending = goal_pending_entries(
-            "idle-goal",
-            app.active_goal_id.as_deref(),
-            app.active_goal_reason.as_deref(),
-            &app.goal_queue,
-        );
-        assert!(pending.is_empty(), "idle goal must have no pending entries");
-        assert!(
-            goal_queue_marker("idle-goal", app.active_goal_id.as_deref(), &app.goal_queue).is_none(),
-            "idle goal must have no queue marker",
-        );
-        // Goal text produces only description lines (no section header).
-        let lines: Vec<Line> = g
-            .description
-            .lines()
-            .map(|l| Line::from(l.to_string()))
-            .collect();
-        assert!(
-            !lines.iter().any(|l| l.spans.iter().any(|s| s.content.contains("Pending"))),
-            "idle goal text must not contain a 'Pending invocations' section",
-        );
-    }
-
-    /// Spec (tui): the list marker shows only the *next* (lowest) queue
-    /// position for a goal, even when that goal appears multiple times in
-    /// the queue.
-    #[test]
-    fn test_spec_queue_marker_shows_next_position_only() {
-        let mut queue = std::collections::VecDeque::new();
-        let g_other = crate::goal::Goal {
-            id: "other".into(), summary: "".into(), description: "".into(), parent_id: "".into(),
-            children: vec![], related: vec![], source_path: None,
-        };
-        let g_target = crate::goal::Goal {
-            id: "target".into(), summary: "".into(), description: "".into(), parent_id: "".into(),
-            children: vec![], related: vec![], source_path: None,
-        };
-        // target appears at global positions 2 and 4 (other is at 1 and 3).
-        queue.push_back((g_other.clone(), None));  // pos 1
-        queue.push_back((g_target.clone(), None)); // pos 2
-        queue.push_back((g_other.clone(), None));  // pos 3
-        queue.push_back((g_target.clone(), None)); // pos 4
-
-        let m = goal_queue_marker("target", None, &queue);
-        assert_eq!(
-            m.as_deref(),
-            Some("[2]"),
-            "list marker must show the next (lowest) position only",
-        );
-    }
-
-    /// Spec (rummage / tui): rummage messages (Role::RummageAssistant) must be
+/// Spec (rummage / tui): rummage messages (Role::RummageAssistant) must be
     /// rendered with a `rummage` speaker label in magenta+bold, not the tinker
     /// green label, so the user always knows which agent is speaking.
     #[test]

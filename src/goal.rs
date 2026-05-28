@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 /// tinker prompt (so it follows the schema) and by the
 /// parse-error correction message (so tinker is told the
 /// schema when fixing). Single source of truth.
-pub const GOAL_SCHEMA_KEYS_ORDER: &str = "id, summary (optional), description, parent_id, children, related (optional)";
+pub const GOAL_SCHEMA_KEYS_ORDER: &str = "id, summary (optional), description, parent_id, children, related (optional), tier (optional)";
 
 /// A cross-cutting relationship between two goals. Both ends of the link
 /// must list each other (symmetric), but the reason text may differ because
@@ -17,6 +17,43 @@ pub const GOAL_SCHEMA_KEYS_ORDER: &str = "id, summary (optional), description, p
 pub struct RelatedLink {
     pub id: String,
     pub reason: String,
+}
+
+/// A child goal link. Serializes as `[[children]]` array-of-tables.
+/// Backward-compat: old `children = ["id"]` plain-string arrays are accepted
+/// during deserialization and loaded as `ChildLink { id, reason: "" }`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChildLink {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub reason: String,
+}
+
+/// Accepts both old `children = ["id"]` (string) and new
+/// `[[children]] { id, reason }` (table) TOML formats.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum ChildLinkRaw {
+    String(String),
+    Table(ChildLink),
+}
+
+fn deserialize_children<'de, D>(deserializer: D) -> Result<Vec<ChildLink>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let raw: Vec<ChildLinkRaw> = Vec::deserialize(deserializer)?;
+    Ok(raw
+        .into_iter()
+        .map(|r| match r {
+            ChildLinkRaw::String(id) => ChildLink {
+                id,
+                reason: String::new(),
+            },
+            ChildLinkRaw::Table(link) => link,
+        })
+        .collect())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,11 +66,16 @@ pub struct Goal {
     pub description: String,
     #[serde(default)]
     pub parent_id: String,
-    #[serde(default)]
-    pub children: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty", deserialize_with = "deserialize_children")]
+    pub children: Vec<ChildLink>,
     /// Cross-cutting related goals. Empty when the field is absent in TOML.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub related: Vec<RelatedLink>,
+    /// Model tier for sessions running this goal: "high", "mid", or absent (defaults to "mid").
+    /// Resolved at session start via model-config for the current backend.
+    /// Tend, rummage, and jog declare `tier = "high"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
     /// Absolute path of the TOML file this goal was loaded from.
     /// Used so updates write back to the same file (which may live in an ancestor .tinker dir).
     /// Not serialized — runtime metadata only.
@@ -197,6 +239,9 @@ pub fn build_compact_index(goals: &[Goal]) -> String {
     #[derive(Serialize)]
     struct Entry {
         id: String,
+        parent_id: String,
+        #[serde(skip_serializing_if = "String::is_empty")]
+        reason: String,
         summary: String,
         path: String,
         #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -210,15 +255,23 @@ pub fn build_compact_index(goals: &[Goal]) -> String {
         reason: String,
     }
 
-    fn node_to_entry(node: &GoalNode) -> Entry {
+    fn node_to_entry(node: &GoalNode, parent_reason: &str) -> Entry {
         Entry {
             id: node.goal.id.clone(),
+            parent_id: node.goal.parent_id.clone(),
+            reason: parent_reason.to_string(),
             summary: node.goal.summary.clone(),
             path: node.goal.source_path
                 .as_ref()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| format!(".tinker/goals/{}.toml", node.goal.id)),
-            children: node.children.iter().map(node_to_entry).collect(),
+            children: node.children.iter().map(|child_node| {
+                let reason = node.goal.children.iter()
+                    .find(|cl| cl.id == child_node.goal.id)
+                    .map(|cl| cl.reason.as_str())
+                    .unwrap_or("");
+                node_to_entry(child_node, reason)
+            }).collect(),
             related: node.goal.related.iter().map(|r| Related {
                 id: r.id.clone(),
                 reason: r.reason.clone(),
@@ -227,7 +280,7 @@ pub fn build_compact_index(goals: &[Goal]) -> String {
     }
 
     let tree = build_tree(goals);
-    let entries: Vec<Entry> = tree.iter().map(node_to_entry).collect();
+    let entries: Vec<Entry> = tree.iter().map(|node| node_to_entry(node, "")).collect();
     serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
 }
 
@@ -265,6 +318,7 @@ mod tests {
             parent_id: "".into(),
             children: vec![],
             related: vec![],
+            tier: None,
             source_path: None,
         };
         save_goal(&fs, tinker, &goal).unwrap();
@@ -403,8 +457,8 @@ mod tests {
     #[test]
     fn test_spec_build_tree_flat_goals_all_depth_zero() {
         let goals = vec![
-            Goal { id: "a".into(), summary: "".into(), description: "".into(), parent_id: "".into(), children: vec![], related: vec![], source_path: None },
-            Goal { id: "b".into(), summary: "".into(), description: "".into(), parent_id: "".into(), children: vec![], related: vec![], source_path: None },
+            Goal { id: "a".into(), summary: "".into(), description: "".into(), parent_id: "".into(), children: vec![], related: vec![], tier: None, source_path: None },
+            Goal { id: "b".into(), summary: "".into(), description: "".into(), parent_id: "".into(), children: vec![], related: vec![], tier: None, source_path: None },
         ];
         let tree = build_tree(&goals);
         assert_eq!(tree.len(), 2);
@@ -415,8 +469,8 @@ mod tests {
     #[test]
     fn test_spec_build_tree_parent_one_child() {
         let goals = vec![
-            Goal { id: "parent".into(), summary: "".into(), description: "".into(), parent_id: "".into(), children: vec![], related: vec![], source_path: None },
-            Goal { id: "child".into(), summary: "".into(), description: "".into(), parent_id: "parent".into(), children: vec![], related: vec![], source_path: None },
+            Goal { id: "parent".into(), summary: "".into(), description: "".into(), parent_id: "".into(), children: vec![], related: vec![], tier: None, source_path: None },
+            Goal { id: "child".into(), summary: "".into(), description: "".into(), parent_id: "parent".into(), children: vec![], related: vec![], tier: None, source_path: None },
         ];
         let tree = build_tree(&goals);
         assert_eq!(tree.len(), 1);
@@ -430,9 +484,9 @@ mod tests {
     #[test]
     fn test_spec_build_tree_deep_hierarchy() {
         let goals = vec![
-            Goal { id: "g".into(), summary: "".into(), description: "".into(), parent_id: "".into(), children: vec![], related: vec![], source_path: None },
-            Goal { id: "p".into(), summary: "".into(), description: "".into(), parent_id: "g".into(), children: vec![], related: vec![], source_path: None },
-            Goal { id: "c".into(), summary: "".into(), description: "".into(), parent_id: "p".into(), children: vec![], related: vec![], source_path: None },
+            Goal { id: "g".into(), summary: "".into(), description: "".into(), parent_id: "".into(), children: vec![], related: vec![], tier: None, source_path: None },
+            Goal { id: "p".into(), summary: "".into(), description: "".into(), parent_id: "g".into(), children: vec![], related: vec![], tier: None, source_path: None },
+            Goal { id: "c".into(), summary: "".into(), description: "".into(), parent_id: "p".into(), children: vec![], related: vec![], tier: None, source_path: None },
         ];
         let tree = build_tree(&goals);
         assert_eq!(tree.len(), 1);
@@ -486,6 +540,7 @@ mod tests {
             parent_id: "".into(),
             children: vec![],
             related: vec![],
+            tier: None,
             source_path: None,
         };
         let serialized = toml::to_string_pretty(&g).unwrap();
@@ -510,8 +565,8 @@ mod tests {
     #[test]
     fn test_spec_build_tree_uses_parent_id_not_children_field() {
         let goals = vec![
-            Goal { id: "p".into(), summary: "".into(), description: "".into(), parent_id: "".into(), children: vec!["wrong".into()], related: vec![], source_path: None },
-            Goal { id: "c".into(), summary: "".into(), description: "".into(), parent_id: "p".into(), children: vec![], related: vec![], source_path: None },
+            Goal { id: "p".into(), summary: "".into(), description: "".into(), parent_id: "".into(), children: vec![ChildLink { id: "wrong".into(), reason: "".into() }], related: vec![], tier: None, source_path: None },
+            Goal { id: "c".into(), summary: "".into(), description: "".into(), parent_id: "p".into(), children: vec![], related: vec![], tier: None, source_path: None },
         ];
         let tree = build_tree(&goals);
         assert_eq!(tree.len(), 1);
@@ -628,6 +683,7 @@ reason = "depends on c"
                 parent_id: "".into(),
                 children: vec![],
                 related: vec![],
+                tier: None,
                 source_path: Some(PathBuf::from("/proj/.tinker/goals/root.toml")),
             },
             Goal {
@@ -637,6 +693,7 @@ reason = "depends on c"
                 parent_id: "root".into(),
                 children: vec![],
                 related: vec![],
+                tier: None,
                 source_path: Some(PathBuf::from("/proj/.tinker/goals/child.toml")),
             },
         ];
@@ -665,6 +722,7 @@ reason = "depends on c"
                 parent_id: "".into(),
                 children: vec![],
                 related: vec![RelatedLink { id: "other".into(), reason: "cross-cuts".into() }],
+                tier: None,
                 source_path: Some(PathBuf::from("/proj/.tinker/goals/root.toml")),
             },
             Goal {
@@ -674,6 +732,7 @@ reason = "depends on c"
                 parent_id: "root".into(),
                 children: vec![],
                 related: vec![],
+                tier: None,
                 source_path: Some(PathBuf::from("/proj/.tinker/goals/child.toml")),
             },
         ];
@@ -689,5 +748,202 @@ reason = "depends on c"
         // Related links are present
         assert!(index.contains("\"related\""), "related must appear in index");
         assert!(index.contains("cross-cuts"), "related reason must appear in index");
+    }
+
+    // spec: compact-goal-context — each index entry must include `parent_id`
+    // so an agent can navigate upward without loading the parent's full file.
+    // Root goals have an empty parent_id; children carry their parent's id.
+    #[test]
+    fn test_spec_compact_index_includes_parent_id() {
+        let goals = vec![
+            Goal {
+                id: "root".into(),
+                summary: "governs: root".into(),
+                description: "".into(),
+                parent_id: "".into(),
+                children: vec![],
+                related: vec![],
+                tier: None,
+                source_path: Some(PathBuf::from("/proj/.tinker/goals/root.toml")),
+            },
+            Goal {
+                id: "child".into(),
+                summary: "governs: child".into(),
+                description: "".into(),
+                parent_id: "root".into(),
+                children: vec![],
+                related: vec![],
+                tier: None,
+                source_path: Some(PathBuf::from("/proj/.tinker/goals/child.toml")),
+            },
+        ];
+        let index = build_compact_index(&goals);
+        let parsed: serde_json::Value = serde_json::from_str(&index).unwrap();
+        // Root entry has empty parent_id
+        assert_eq!(parsed[0]["parent_id"], "", "root entry must have empty parent_id");
+        // Child entry carries parent id
+        let child = &parsed[0]["children"][0];
+        assert_eq!(child["parent_id"], "root", "child entry must carry its parent's id");
+    }
+
+    // spec: goal-storage transition note — old `children = ["id"]` plain-string
+    // arrays must load without error as ChildLink { id, reason: "" }.
+    #[test]
+    fn test_spec_children_old_string_format_loads_as_child_link() {
+        let fs = MockFs::new();
+        let tinker = PathBuf::from("/proj/.tinker");
+        let toml_content = r#"id = "g"
+description = "desc"
+parent_id = ""
+children = ["sub-a", "sub-b"]
+"#;
+        fs.add_file(&tinker.join("goals/g.toml"), toml_content);
+
+        let result = load_all_goals(&fs, &[tinker]).unwrap();
+        assert_eq!(result.errors.len(), 0, "old children format must not cause a parse error");
+        let g = result.goals.iter().find(|g| g.id == "g").unwrap();
+        assert_eq!(g.children.len(), 2);
+        assert_eq!(g.children[0].id, "sub-a");
+        assert_eq!(g.children[0].reason, "", "string-format entry must have empty reason");
+        assert_eq!(g.children[1].id, "sub-b");
+        assert_eq!(g.children[1].reason, "");
+    }
+
+    // spec: goal-storage — new `[[children]] { id, reason }` array-of-tables
+    // format loads with id and reason preserved.
+    #[test]
+    fn test_spec_children_new_table_format_loads_correctly() {
+        let fs = MockFs::new();
+        let tinker = PathBuf::from("/proj/.tinker");
+        let toml_content = r#"id = "g"
+description = "desc"
+parent_id = ""
+
+[[children]]
+id = "sub-a"
+reason = "handles the alpha subproblem"
+
+[[children]]
+id = "sub-b"
+reason = "handles the beta subproblem"
+"#;
+        fs.add_file(&tinker.join("goals/g.toml"), toml_content);
+
+        let result = load_all_goals(&fs, &[tinker]).unwrap();
+        assert_eq!(result.errors.len(), 0);
+        let g = result.goals.iter().find(|g| g.id == "g").unwrap();
+        assert_eq!(g.children.len(), 2);
+        assert_eq!(g.children[0].id, "sub-a");
+        assert_eq!(g.children[0].reason, "handles the alpha subproblem");
+        assert_eq!(g.children[1].id, "sub-b");
+        assert_eq!(g.children[1].reason, "handles the beta subproblem");
+    }
+
+    // spec: compact-goal-context — each nested child entry in the compact index
+    // must carry the `reason` from the parent's [[children]] link for that child id.
+    // This makes the navigation decision local to the index: the agent sees both
+    // what the child governs (its summary) and why the parent has it (the reason).
+    #[test]
+    fn test_spec_compact_index_child_entries_carry_reason() {
+        let goals = vec![
+            Goal {
+                id: "parent".into(),
+                summary: "governs: parent domain".into(),
+                description: "".into(),
+                parent_id: "".into(),
+                children: vec![ChildLink { id: "child".into(), reason: "handles the subproblem".into() }],
+                related: vec![],
+                tier: None,
+                source_path: Some(PathBuf::from("/proj/.tinker/goals/parent.toml")),
+            },
+            Goal {
+                id: "child".into(),
+                summary: "governs: child domain".into(),
+                description: "".into(),
+                parent_id: "parent".into(),
+                children: vec![],
+                related: vec![],
+                tier: None,
+                source_path: Some(PathBuf::from("/proj/.tinker/goals/child.toml")),
+            },
+        ];
+        let index = build_compact_index(&goals);
+        let parsed: serde_json::Value = serde_json::from_str(&index).unwrap();
+        let child_entry = &parsed[0]["children"][0];
+        assert_eq!(child_entry["id"], "child", "child entry id must be correct");
+        assert_eq!(
+            child_entry["reason"], "handles the subproblem",
+            "child entry must carry the reason from the parent's [[children]] link"
+        );
+        // Root entry must not have a reason field (empty string is skipped)
+        assert!(
+            parsed[0].get("reason").is_none() || parsed[0]["reason"] == "",
+            "root entry must not carry a reason"
+        );
+    }
+
+    // spec: goal-storage — a goal TOML without a `children` field loads with
+    // an empty children vec (field is optional, same as `related`).
+    #[test]
+    fn test_spec_children_field_absent_loads_as_empty() {
+        let fs = MockFs::new();
+        let tinker = PathBuf::from("/proj/.tinker");
+        let toml_content = "id = \"g\"\ndescription = \"desc\"\nparent_id = \"\"\n";
+        fs.add_file(&tinker.join("goals/g.toml"), toml_content);
+
+        let result = load_all_goals(&fs, &[tinker]).unwrap();
+        assert_eq!(result.errors.len(), 0);
+        let g = result.goals.iter().find(|g| g.id == "g").unwrap();
+        assert!(g.children.is_empty(), "missing children field must load as empty vec");
+    }
+
+    // spec: goal-agents — a goal TOML without a `tier` field loads with tier = None
+    // (optional field, defaults to mid-tier at session start).
+    #[test]
+    fn test_spec_tier_field_absent_loads_as_none() {
+        let fs = MockFs::new();
+        let tinker = PathBuf::from("/proj/.tinker");
+        fs.add_file(&tinker.join("goals/g.toml"), &goal_toml("g", "desc"));
+
+        let result = load_all_goals(&fs, &[tinker]).unwrap();
+        assert_eq!(result.errors.len(), 0);
+        let g = result.goals.iter().find(|g| g.id == "g").unwrap();
+        assert!(g.tier.is_none(), "missing tier field must load as None");
+    }
+
+    // spec: goal-agents — a goal TOML with `tier = "high"` round-trips through load.
+    // Tier field is omitted from serialization when None.
+    #[test]
+    fn test_spec_tier_field_roundtrip() {
+        let fs = MockFs::new();
+        let tinker = PathBuf::from("/proj/.tinker");
+        let toml_content = "id = \"g\"\ndescription = \"desc\"\nparent_id = \"\"\ntier = \"high\"\n";
+        fs.add_file(&tinker.join("goals/g.toml"), toml_content);
+
+        let result = load_all_goals(&fs, &[tinker]).unwrap();
+        assert_eq!(result.errors.len(), 0);
+        let g = result.goals.iter().find(|g| g.id == "g").unwrap();
+        assert_eq!(g.tier.as_deref(), Some("high"), "tier = \"high\" must load correctly");
+    }
+
+    // spec: goal-agents — serialized Goal omits the tier field when None.
+    #[test]
+    fn test_spec_tier_field_omitted_when_none() {
+        let g = Goal {
+            id: "x".into(),
+            summary: "".into(),
+            description: "d".into(),
+            parent_id: "".into(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            source_path: None,
+        };
+        let serialized = toml::to_string_pretty(&g).unwrap();
+        assert!(
+            !serialized.contains("tier"),
+            "Goal must not write a tier field when None; got:\n{}",
+            serialized,
+        );
     }
 }
