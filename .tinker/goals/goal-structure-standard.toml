@@ -115,8 +115,8 @@ id = "coding-standards"
 reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
 
 [[related]]
-id = "goal-sessions"
-reason = "Goal sessions consume this goal's link graph as their context model: a session is handed its own goal plus a neighborhood table (parents/children/related, each with its reason) and pulls full text on demand, traversing the graph instead of receiving every goal. The reason-per-link is the session's navigation index."
+id = "goal-agents"
+reason = "Every agent session navigates the goal graph using the compact index (summaries, parent/child relationships, related-link reasons) injected by the framework preamble. The reason-per-link is what makes that navigation local to the index — agents pull full text only when the reason warrants it."
 
 [[related]]
 id = "compact-goal-context"

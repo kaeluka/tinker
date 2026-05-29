@@ -43,5 +43,5 @@ parent_id = "user-system-interaction"
 children = []
 
 [[related]]
-id = "goal-sessions"
-reason = "Goal sessions are the target of this mandate. The ownership override must be injected into their system prompt."
+id = "goal-agents"
+reason = "Goal agents are the target of this mandate. The ownership override must be injected into every agent session prompt."

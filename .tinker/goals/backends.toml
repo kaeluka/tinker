@@ -15,8 +15,8 @@ Each backend maps tinker's roles to its own models and delivers the
 tend persona its own way:
 
 - **opencode** (default): runs its own configured model defaults, and
-  installs the tend and rummage personas as `opencode` agent files
-  (see `tend-agent`), whose YAML frontmatter also carries the
+  installs the tend, rummage, and jog personas as `opencode` agent
+  files (see `tend-agent`), whose YAML frontmatter also carries the
   `task`/`todowrite` tool denials.
 - **claude** (`--claude`): maps roles to Opus (tend) and Sonnet
   (goal sessions); passes the persona via `--system-prompt` instead

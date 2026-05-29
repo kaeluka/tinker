@@ -1,36 +1,30 @@
 id = "goal-agents"
-summary = "governs: unified session registry where every goal is a process-scoped addressable agent; @goal-id universal dispatch replacing /run; lazy session start (tend eager); framework preamble (identity + navigation + message-passing); tier field in goal TOML; tend/rummage/jog prompts moved to TOML WHAT/WHY/SCOPE; batch-summary machinery removed | triggers: session registry; @-dispatch routing; agent init; tier field; Rust prompt source deletion; batch flow removal; TUI queue rewrite"
+summary = "governs: uniform session registry — every goal is a structurally identical process-scoped addressable agent; @goal-id universal dispatch; two tend-only exceptions (eager start, parse-correction loop); framework preamble; tier field in goal TOML; structured summary requirement; .tinker/ write prohibition | triggers: session registry; @-dispatch routing; agent init; tier field; tend exception boundaries; session output requirements"
 description = """
 ## WHAT
-A unified session registry where every goal is a process-scoped,
-addressable agent. The registry is a `HashMap<GoalId, SessionEntry>`,
-where each entry holds a message channel, the captured LLM session ID
-(for resumption), and the associated goal. Sessions start lazily on
-first `@goal-id` message and stay alive for the process lifetime. The
-one exception is tend: it starts eagerly on process init (it must be
-ready before the user types anything).
+Tinker's agent architecture follows one rule: **every goal is a
+structurally identical, process-scoped, addressable agent.** The
+session registry maps each goal-id to a `SessionEntry` holding a
+message channel, the captured LLM session ID, and the associated
+goal. The `@goal-id` syntax is the single universal dispatch
+mechanism — any agent activates any other by emitting an `@`-block;
+the runtime routes it to the named entry.
 
-`@goal-id message` is the universal dispatch — the mechanism through
-which any agent in the system activates any other. `/run` is retired
-entirely: `parse_run_commands` is deleted and all goals updated to
-drop `/run` references. The `/jog-edit` channel is unaffected.
+Tend has exactly **two structural exceptions**, and no others are
+justified:
+1. **Starts eagerly** on process init — it must be ready before the
+   user types anything. All other sessions start lazily on first
+   `@goal-id` message.
+2. **Handles goal-file parse corrections** — when a goal write
+   produces a malformed file, tend is re-queued with correction
+   instructions (up to two attempts). No other agent triggers this
+   loop because no other agent writes goal files.
 
-When an agent's reply contains `@`-blocks, the runtime extracts them
-via `parse_at_commands` (updated to accept any registry-known session
-ID rather than the hardcoded `["tend", "rummage", "jog"]` constant)
-and routes each block to the named recipient's channel via
-`dispatch_peer_consultations` (updated to look up the registry rather
-than matching three named channels). Non-`@`-block output from any
-agent renders in its session's log pane as before.
+Everything else is identical across all agents: the same event types,
+the same routing, the same lifecycle, the same `@`-dispatch protocol.
 
-Every goal TOML may carry an optional `tier` field: `"high"`, `"mid"`,
-or absent (defaults to `"mid"`). Resolved at session start via
-`model-config` for the current backend. Tend, rummage, and jog declare
-`tier = "high"`.
-
-Every agent session receives a standard runtime-injected **framework
-preamble** before its goal description. The preamble is short and
-behavioral — not an orientation document. The exact text to inject:
+**Framework preamble.** Before its goal description, every session
+receives a standard runtime-injected preamble:
 
 ---
 You are the agent for goal `<id>`. Your goal description follows.
@@ -58,42 +52,28 @@ Your message here.
 
 **Two shared resources available to all agents.**
 - `@tend` — for intent and *should*: what the user wants, what a
-  goal means, whether a behavior is intentional. Tend holds the
-  goal tree and conversation history.
+  goal means, whether a behavior is intentional.
 - `@rummage` — for code reality and *is*: what the code actually
   does, how a flow works, whether an implementation matches a spec.
 
 ---
 
-The compact goal index follows the preamble separator, then the
-agent's own goal description. The agent's role in the
-intent↔spec↔code cycle — if it has one — is part of its
+The agent's role in the intent↔spec↔code cycle is part of its
 `description`, not injected by the runtime.
 
-The agent's own goal description follows the preamble. For tend,
-rummage, and jog, that description is their full operational protocol,
-restructured as WHAT/WHY/SCOPE prose. For any other goal, it is the
-existing WHAT/WHY/SCOPE prose. The framework preamble + description
-together constitute the complete agent prompt.
+**Structured summary.** When a session completes significant work it
+reports back via `@tend` with a structured summary: what it did,
+what it decided beyond what the goal stated, and how to try the
+result. The summary MUST explicitly list every `test_spec_` function
+created or modified — this is the mechanism that enforces the
+`coding-standards` tests-as-guardrails requirement.
 
-There is a single init-message construction path: `session_init_message
-(goal, reason, compact_index)` used for all sessions. Rust source
-functions `tend_agent_content_impl`, `rummage_system_prompt`, and
-`jog_system_prompt` are deleted; their content migrates to the `description`
-fields of `tend.toml`, `rummage.toml`, and `jog.toml` respectively,
-rewritten as WHAT/WHY/SCOPE.
+**Tier.** Every goal TOML may carry an optional `tier` field:
+`"high"`, `"mid"`, or absent (defaults to `"mid"`). Resolved at
+session start via `model-config`. Tend, rummage, and jog declare
+`tier = "high"`.
 
-The batch-summary machinery is removed: `Phase::RunningGoal`,
-`SummarizingBatch`, `batch_had_goals`, `batch_summaries`, and
-`build_batch_summary_request` are all deleted. Goal agents `@tend`
-when they complete significant work; tend synthesises and responds to
-the user through normal conversation. The `Phase` enum and
-`goal_queue: VecDeque` are removed from `App`. The TUI queue markers
-(`▶`, `[N]`) and pending-entries display that were driven by
-`goal_queue` are replaced or removed in the same session — `tui.rs`
-is a required change surface.
-
-The unified event enum:
+**Unified event enum:**
 ```
 enum SessionEvent {
     LlmSessionId { goal_id: String, session_id: String },
@@ -102,56 +82,51 @@ enum SessionEvent {
     CleanupBlocked { goal_id: String, dirty_files: Vec<PathBuf>, error: Option<String> },
 }
 ```
-A single `mpsc::Receiver<SessionEvent>` in the run loop replaces the
-three separate named-agent handler channels. The three handler
-functions (`handle_orch_event`, `handle_rummage_event`,
-`handle_jog_event`) collapse into one generic handler dispatching on
-`goal_id`.
-
-Cleanup hook scope: fires before the first message to a new session
-(session not yet in registry). Does not fire on subsequent messages to
-an already-live session.
+A single `mpsc::Receiver<SessionEvent>` in the run loop handles
+events from all sessions, dispatching on `goal_id`.
 
 ## WHY
-The two-tier architecture (persistent named agents vs ephemeral goal
-sessions) prevented any goal session from joining an ongoing exchange
-with tend, rummage, or jog. Agents could not think together —
-everything was routed through tend as a hub. The session registry
-eliminates the distinction: every goal is a peer, reachable by the
-same protocol. The collaboration that became possible among the three
-named agents is now available to any goal in the tree.
+A uniform registry eliminates the distinction between "named agents"
+(tend, rummage, jog) and "goal sessions." Every goal is a peer:
+reachable by the same syntax, governed by the same lifecycle,
+producing output in the same event stream.
 
-Moving tend, rummage, and jog's operational content into TOML
-descriptions makes agent behavior modifiable without a recompile, and
-keeps a single schema across all goals. Retiring the batch-summary
-machinery removes a flow that was only necessary because goal sessions
-had no way to reach tend directly; `@tend` from a goal agent is both
-simpler and more expressive.
+The two tend exceptions are real: the user must have something to
+talk to on startup, and goal-file integrity requires a corrective loop
+after writes. No other exceptions are justified and none should be
+added without explicit user confirmation that they belong in the
+architecture.
+
+The structured summary and `test_spec_` listing exist because a
+session is an unreliable narrator about its own work — the summary
+is the one surface a reviewer actually reads to confirm spec
+compliance. Requiring the session to account for every
+`test_spec_` function systemically enforces the tests-as-guardrails
+standard without relying on the session's general good behavior.
 
 ## SCOPE
-- In scope: session registry and `SessionEntry` type; unified
-  `SessionEvent` enum; single `session_init_message` construction
-  path; framework preamble (identity, navigation, message-passing
-  semantics — cycle role stays in the agent's description, not
-  injected by the runtime); lazy start for all sessions except tend
-  (eager on process init); `parse_at_commands` accepting any
-  registry-known session ID; `dispatch_peer_consultations` routing to
-  registry; `tier` field in goal TOML; rewriting tend, rummage, and
-  jog `description` fields as WHAT/WHY/SCOPE and deleting the
-  corresponding Rust source functions; retiring `/run` and
-  `parse_run_commands`; removing `Phase`, `goal_queue`,
-  `batch_had_goals`, `batch_summaries`, `SummarizingBatch`,
-  `build_batch_summary_request`; updating `tui.rs` to remove
-  queue-marker and pending-entries rendering that depended on
-  `goal_queue`; updating `goal-storage` schema for `tier` field;
-  updating `triggers`, `peer-consult`, `goal-sessions` goals to
-  reflect the new model.
+- In scope: the session registry and `SessionEntry` type; `@goal-id`
+  as the universal dispatch; the exactly-two tend exceptions (eager
+  start, parse-correction loop) and their boundaries; framework
+  preamble injected before every session's goal description; `tier`
+  field in goal TOML; the unified `SessionEvent` enum and single
+  run-loop receiver dispatching on `goal_id`; the structured summary
+  requirement and `test_spec_` listing mandate; pre-session cleanup
+  via `cleanup-hook`.
 - Out of scope: cross-process session persistence; concurrent sessions
-  for the same goal-id; multi-session conversation view in the TUI;
-  retiring `/jog-edit`.
+  for the same goal-id; per-agent tool distinctions beyond what
+  applies uniformly to all agents.
+- Sessions must not write to `.tinker/goals/`, `.tinker/notes/`, or
+  `.tinker/state/` — these directories are tend-owned. Reading goal
+  files is allowed and expected; writing would let a session silently
+  mutate the spec it executes under or bypass tend's ownership of
+  notes and state.
 """
-parent_id = ""
-children = []
+parent_id = "the-cycles"
+
+[[children]]
+id = "cleanup-hook"
+reason = "pre-session cleanup — removes tinker-test-case: investigation markers before each goal session runs"
 
 [[related]]
 id = "the-cycles"
@@ -159,23 +134,15 @@ reason = "goal-agents is the implementation of the-cycles' conceptual model: eve
 
 [[related]]
 id = "peer-consult"
-reason = "peer-consult currently scopes @-messaging to tend/rummage/jog. This goal expands it to all goal agents. peer-consult's WHAT and the parse_at_commands description need updating to reflect the registry-based universal routing."
-
-[[related]]
-id = "triggers"
-reason = "/run is retired by this goal. triggers currently defines /run as the primary dispatch protocol; its WHAT must be substantially rewritten to reflect @goal-id as universal dispatch and /run's retirement."
-
-[[related]]
-id = "goal-sessions"
-reason = "goal-sessions describes the ephemeral fire-and-forget session model that this goal replaces. Its WHAT needs rewriting to reflect the registry-based persistent session model."
+reason = "peer-consult governs the @-block protocol and delivery rules; goal-agents implements the session registry that makes @-dispatch universal across the whole agent population."
 
 [[related]]
 id = "goal-storage"
-reason = "the tier field added by this goal extends the goal TOML schema that goal-storage governs. goal-storage's WHAT and the schema description need updating."
+reason = "the tier field added by this goal extends the goal TOML schema that goal-storage governs."
 
 [[related]]
 id = "tui"
-reason = "tui.rs is a required change surface: goal_queue_marker and goal_pending_entries take &app.goal_queue directly. When goal_queue is removed from App, these must be rewritten or the build breaks."
+reason = "the session registry and unified event stream change what the TUI renders; /<goal-id> switching and session log rendering are governed by tui."
 
 [[related]]
 id = "backends"
@@ -183,11 +150,11 @@ reason = "the session registry and unified runner task change the session manage
 
 [[related]]
 id = "tend"
-reason = "tend's WHAT/SCOPE references /run discipline, batch-summary mechanics, and reactive scheduling — all of which change under this goal. tend.toml description migrates from the Rust source; /run references and batch-review scheduling sections go stale."
+reason = "tend is the only agent with structural exceptions in the registry (eager start, parse-correction loop). Those two exceptions and nothing more are what make tend different from any other session entry."
 
 [[related]]
-id = "forward-generation"
-reason = "forward-generation describes goal sessions as fresh-per-trigger (no resumption). Under the registry, goal agents are persistent. forward-generation's child description of goal-sessions needs updating."
+id = "compact-goal-context"
+reason = "compact-goal-context defines the index format that the framework preamble injects into every session, giving all agents the same navigable goal tree without loading full text."
 
 [[related]]
 id = "coding-standards"

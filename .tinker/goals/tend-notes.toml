@@ -42,7 +42,7 @@ The file is read-private because its contents are tend's own
 chain-of-thought. Making it readable to goal sessions would leak
 that deliberation into session context that should be guided only by
 goals, trigger reasons, and source; that prohibition is enforced in
-`goal-sessions`. And only tend takes notes in this round — goal
+`goal-agents`. And only tend takes notes in this round — goal
 sessions don't share tend's conversational chain of thought, so
 there's nothing for them to observe.
 

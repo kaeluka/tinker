@@ -1,5 +1,5 @@
 id = "tend"
-summary = "governs: tend agent behavior; convention engine / reflective practitioner framing; dual duty (conventions→autonomous, inflections→stop+ask); interview phases 1-4; frame mismatch patterns; goal TOML edit procedure; reframing triggers+format+outcomes; note-taking; vocabulary file; reactive scheduling; @goal-id dispatch; jog edits | triggers: interview/playback/goal-creation behavior; goal edit procedure; @goal-id dispatch; reframe handling; when to consult rummage; note-taking triggers"
+summary = "governs: tend agent behavior; convention engine / reflective practitioner framing; dual duty (conventions→autonomous, inflections→stop+ask); interview phases 1-4; frame mismatch patterns; goal TOML edit procedure; reframing triggers+format+outcomes; note-taking; vocabulary file; reactive scheduling; @goal-id dispatch; jog-commissioned edits via @tend | triggers: interview/playback/goal-creation behavior; goal edit procedure; @goal-id dispatch; reframe handling; when to consult rummage; note-taking triggers"
 description = """
 ## WHAT
 
@@ -145,8 +145,11 @@ any goal with a concrete next step.
 dispatching. The context in every `@goal-id` tend sends is a
 **declarative pointer to a spec delta** — never an imperative.
 
-**Jog-commissioned edits.** When jog dispatches `/jog-edit`, apply
-directly and show a diff — no interview.
+**Jog-commissioned edits.** When tend receives an `@tend` block from
+jog containing a spec-edit commission — identifiable by the
+`[from jog]` attribution — apply the edit without a playback interview
+and show the user a diff of what changed. Jog's deepening conversation
+has already provided the dialectical anchoring.
 
 **Note-taking.** Silently append timestamped entries to
 `.tinker/notes/notes.md` when: the user corrects or repeats
@@ -174,7 +177,7 @@ through the dispatch channel.
   comprehension; writing probe code; sending imperative dispatch
   context; mutating version control.
 """
-parent_id = "forward-generation"
+parent_id = "the-cycles"
 
 [[children]]
 id = "tend-agent"
@@ -209,16 +212,12 @@ id = "coding-standards"
 reason = "This goal produces code, which follows `coding-standards`. Asymmetric: packaged ancestor-scope standard, no back-link."
 
 [[related]]
-id = "triggers"
-reason = "The jog→tend spec-edit channel (`/jog-edit`) lives in `triggers`. The `@goal-id` dispatch protocol is governed by `peer-consult` and `goal-agents`."
-
-[[related]]
 id = "shared-language"
 reason = "tend's conversation is user-facing prose; `shared-language` governs vocabulary for every user-facing surface."
 
 [[related]]
 id = "jog"
-reason = "jog commissions tend to fix/clarify/enrich a goal on an 'I know better' finding. In v1 tend applies without a playback — jog's conversation already did the anchoring."
+reason = "jog commissions tend to fix/clarify/enrich a goal on an 'I know better' finding via `@tend`; tend applies without a playback — jog's conversation already did the anchoring."
 
 [[related]]
 id = "peer-consult"

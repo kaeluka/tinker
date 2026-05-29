@@ -73,14 +73,19 @@ mod tests {
         );
     }
 
-    // spec (jog): on an "I know better" finding, jog emits /jog-edit <goal-id>
-    // <instruction> to commission a spec change from tinker.
+    // spec (jog): on an "I know better" finding, jog commissions the fix via an
+    // @tend block. The system prompt must name this commission format.
     #[test]
-    fn test_spec_jog_system_prompt_emits_jog_edit_on_know_better() {
+    fn test_spec_jog_commission_uses_at_tend() {
         let prompt = jog_description();
         assert!(
-            prompt.contains("/jog-edit"),
-            "jog system prompt must describe emitting /jog-edit to commission a spec change",
+            prompt.contains("@tend"),
+            "jog system prompt must describe commissioning tend via an @tend block",
+        );
+        // The block must be self-contained — the prompt teaches what to include.
+        assert!(
+            prompt.contains("goal-id") || prompt.contains("goal `X`") || prompt.contains("self-contained"),
+            "jog system prompt must say the @tend block must carry goal-id and change description",
         );
     }
 
@@ -123,10 +128,9 @@ mod tests {
         );
     }
 
-    // spec (jog): a commission is terminal for a thread — /jog-edit is only
-    // emitted in a turn with no open question to the user. The system prompt
-    // must state this constraint so jog cannot question and commission in the
-    // same reply.
+    // spec (jog): a commission is terminal for a thread — an @tend block fires
+    // the moment the reply finalises, so jog must never pose a question in the
+    // same turn as a commission. The system prompt must state this constraint.
     #[test]
     fn test_spec_jog_commission_is_terminal_for_thread() {
         let prompt = jog_description();
@@ -135,9 +139,9 @@ mod tests {
             "jog system prompt must state that a commission is terminal for a thread",
         );
         assert!(
-            prompt.contains("Never pose a question") || prompt.contains("never pose a question")
-                || prompt.contains("no open question left") || prompt.contains("open question"),
-            "jog system prompt must prohibit posing a question and emitting /jog-edit in the same reply",
+            prompt.contains("Never emit") || prompt.contains("never emit")
+                || prompt.contains("open question") || prompt.contains("no open question"),
+            "jog system prompt must prohibit posing a question and emitting an @tend commission in the same reply",
         );
     }
 

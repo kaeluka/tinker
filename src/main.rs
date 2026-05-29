@@ -16,7 +16,7 @@ mod tui;
 mod test_utils;
 
 use anyhow::Result;
-use app::{ActiveAgent, App, Focus, Phase};
+use app::{App, Focus, Phase};
 use cap::{Chunk, Filesystem, OpenCodeRunner};
 use realfs::RealFilesystem;
 use crossterm::{
@@ -187,13 +187,6 @@ async fn goal_agent_loop(
                     backend: backend_name.clone(),
                 });
                 let _ = session_tx.send(SessionEvent::Done { goal_id: goal_id.clone() }).await;
-                // Structured summary continues the same LLM conversation.
-                let summary = goal_session::run_silent(oc.as_ref(), goal_session::SUMMARY_REQUEST, Some(&new_sid), &work_dir)
-                    .await.unwrap_or_default();
-                let _ = session_tx.send(SessionEvent::SummaryReady {
-                    goal_id: goal_id.clone(),
-                    summary,
-                }).await;
             }
             Err(e) => {
                 log.emit("goal_session", logger::LogEvent::GoalSessionFinished {
@@ -727,9 +720,11 @@ async fn run_loop(
                     (a.repl_scroll.y.unwrap_or(0), a.log_scroll.y.unwrap_or(0), a.goal_list_scroll.y.unwrap_or(0), a.goal_text_scroll.y.unwrap_or(0)),
                 )
             };
+            let known_ids: Vec<String> = session_senders.keys().cloned().collect();
+            let known_ids_refs: Vec<&str> = known_ids.iter().map(|s| s.as_str()).collect();
             let action = {
                 let mut a = app.lock().unwrap();
-                handle_key(&mut a, key, &log)
+                handle_key(&mut a, key, &log, &known_ids_refs)
             };
             // Emit TUI state-change events
             {
@@ -760,14 +755,10 @@ async fn run_loop(
             }
             match action {
                 KeyAction::Quit => break,
-                KeyAction::SendToTend(msg) => {
-                    let _ = msg_tx.send(msg).await;
-                }
-                KeyAction::SendToRummage(msg) => {
-                    let _ = rummage_msg_tx.send(msg).await;
-                }
-                KeyAction::SendToJog(msg) => {
-                    let _ = jog_msg_tx.send(msg).await;
+                KeyAction::SendToSession(session_id, msg) => {
+                    if let Some(tx) = session_senders.get(&session_id) {
+                        let _ = tx.send(msg).await;
+                    }
                 }
                 KeyAction::RunGoal(id, reason) => {
                     let goal_exists = {
@@ -921,22 +912,6 @@ fn known_agent_ids<'a>(
 }
 
 
-// The instruction field is prescriptive (user-sourced intent from jog's deepening),
-// unlike /run reasons which are declarative spec-delta pointers.
-fn parse_jog_edit_commands(text: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("/jog-edit ") {
-            let rest = rest.trim();
-            if let Some((gid, instruction)) = rest.split_once(char::is_whitespace) {
-                out.push((gid.to_string(), instruction.trim().to_string()));
-            }
-        }
-    }
-    out
-}
-
 
 /// Unified session event handler. Routes events from any agent session to the
 /// appropriate App state updates and peer consultations.
@@ -1049,23 +1024,10 @@ fn handle_session_event(
                     app.jog_tasks = app.jog_tasks.saturating_sub(1);
                     let known_ids = known_agent_ids(session_senders, &app.goals);
                     let consultations = parse_at_commands(&session_text, &known_ids);
-                    let edits = parse_jog_edit_commands(&session_text);
                     app.finalize_jog_message();
                     dispatch_peer_consultations(app, "jog", &consultations, session_senders, goal_spawn_tx, log);
                     if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
                         app.goals = load.goals;
-                    }
-                    for (gid, instruction) in edits {
-                        let goal_exists = app.goals.iter().any(|g| g.id == gid);
-                        if goal_exists {
-                            let tend_msg = format!(
-                                "Jog audit — `{}`: {}. Apply this edit to the goal directly; jog's conversation has already provided the dialectical anchoring. After the edit, show what changed.",
-                                gid, instruction
-                            );
-                            app.tend_tasks += 1;
-                            let _ = msg_tx.try_send(tend_msg.clone());
-                            log.emit("jog", logger::LogEvent::TinkerSystemMessageReceived { content: tend_msg });
-                        }
                     }
                 }
                 _ => {
@@ -1101,14 +1063,6 @@ fn handle_session_event(
                 app.active_goal_reason = None;
             }
         }
-        SessionEvent::SummaryReady { goal_id, summary } => {
-            // Route summary directly to tend as a peer consultation.
-            // This replaces the batch-summary machinery: tend synthesizes each
-            // goal session's result individually as it arrives.
-            let tend_msg = format!("[from {}] Session summary:\n{}", goal_id, summary);
-            app.tend_tasks += 1;
-            let _ = msg_tx.try_send(tend_msg);
-        }
     }
 }
 
@@ -1116,9 +1070,8 @@ fn handle_session_event(
 enum KeyAction {
     None,
     Quit,
-    SendToTend(String),
-    SendToRummage(String),
-    SendToJog(String),
+    /// Send a message to the named session (session_id, message).
+    SendToSession(String, String),
     /// Dispatch a goal agent session with an optional trigger reason.
     RunGoal(String, Option<String>),
 }
@@ -1198,7 +1151,7 @@ fn handle_modal_key(app: &mut App, key: crossterm::event::KeyEvent) -> KeyAction
     }
 }
 
-fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogSender) -> KeyAction {
+fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogSender, known_session_ids: &[&str]) -> KeyAction {
     // Modal owns keyboard focus while open — all keys route to it. Pane
     // focus (`app.focus`) is unchanged, so submit/cancel returns input to
     // wherever the user was before.
@@ -1223,50 +1176,38 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                     return KeyAction::None;
                 }
 
-                // Slash commands
+                // Special slash commands (not session switches).
                 if input == "/quit" {
                     app.should_quit = true;
                     return KeyAction::Quit;
                 }
                 if input == "/help" {
-                    let help_msg = "Commands: @<goal-id> [msg], /quit, /help, /tend, /rummage, /jog. Tab = goal tree.";
+                    let help_msg = "Commands: @<goal-id> [msg], /quit, /help, /<goal-id> to switch session. Tab = goal tree.";
                     app.push_system_message(help_msg);
                     log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: help_msg.to_string() });
                     app.input.clear();
                     return KeyAction::None;
                 }
 
-                // Agent-switching slash commands (rummage / jog goals).
-                if input == "/rummage" {
-                    app.active_agent = ActiveAgent::Rummage;
-                    let msg = "switched to rummage — type to chat, /tend or /jog to switch";
-                    app.push_system_message(msg);
-                    log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: msg.to_string() });
-                    app.input.clear();
-                    return KeyAction::None;
-                }
-                if input == "/tend" {
-                    app.active_agent = ActiveAgent::Tend;
-                    let msg = "switched to tend — type to chat, /rummage or /jog to switch";
-                    app.push_system_message(msg);
-                    log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: msg.to_string() });
-                    app.input.clear();
-                    return KeyAction::None;
-                }
-                if input == "/jog" {
-                    app.active_agent = ActiveAgent::Jog;
-                    let msg = "switched to jog — name a topic to audit, /tend or /rummage to switch";
-                    app.push_system_message(msg);
-                    log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: msg.to_string() });
-                    app.input.clear();
-                    return KeyAction::None;
+                // Generic session-switching: /<known-goal-id>
+                if let Some(id) = input.strip_prefix('/') {
+                    if known_session_ids.iter().any(|&s| s == id) {
+                        app.active_session = id.to_string();
+                        let msg = format!("switched to {} — type to chat, /<goal-id> to switch", id);
+                        app.push_system_message(&msg);
+                        log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: msg });
+                        app.input.clear();
+                        return KeyAction::None;
+                    }
+                    // Unknown slash command: fall through as ordinary input.
                 }
 
-                // Lock input while the active agent is busy.
-                let active_busy = match app.active_agent {
-                    ActiveAgent::Tend => app.tend_tasks > 0,
-                    ActiveAgent::Rummage => app.rummage_tasks > 0,
-                    ActiveAgent::Jog => app.jog_tasks > 0,
+                // Lock input while the active session is busy.
+                let active_busy = match app.active_session.as_str() {
+                    "tend" => app.tend_tasks > 0,
+                    "rummage" => app.rummage_tasks > 0,
+                    "jog" => app.jog_tasks > 0,
+                    _ => false,
                 };
                 if active_busy {
                     return KeyAction::None;
@@ -1276,21 +1217,21 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                 app.input.clear();
                 app.user_has_interacted = true;
 
-                match app.active_agent {
-                    ActiveAgent::Tend => {
+                let session_id = app.active_session.clone();
+                match session_id.as_str() {
+                    "tend" => {
                         app.tend_tasks += 1;
                         app.correction_attempts = 0;
-                        KeyAction::SendToTend(input)
                     }
-                    ActiveAgent::Rummage => {
+                    "rummage" => {
                         app.rummage_tasks += 1;
-                        KeyAction::SendToRummage(input)
                     }
-                    ActiveAgent::Jog => {
+                    "jog" => {
                         app.jog_tasks += 1;
-                        KeyAction::SendToJog(input)
                     }
+                    _ => {}
                 }
+                KeyAction::SendToSession(session_id, input)
             }
             (_, KeyCode::Backspace) => {
                 app.input.pop();
@@ -1359,28 +1300,22 @@ mod tests {
     // REMOVED: test_spec_batch_summary_request_instructs_reactive_run_lines
     // (same reason)
 
-    // spec: goal-agents — SummaryReady events route directly to tend without
-    // batch collection. This replaces the old batch-summary machinery.
+    // REMOVED: test_spec_summary_routes_directly_to_tend_not_batched
+    // (SummaryReady variant retired — goal agents @tend directly on completion)
+
+    // spec: goal-agents — SummaryReady was a transitional SessionEvent variant
+    // that routed goal-session summaries to tend via the event channel. Goal agents
+    // now @tend directly, so the variant has been removed. This exhaustive-match
+    // test compiles only when SummaryReady is absent from SessionEvent.
     #[test]
-    fn test_spec_summary_routes_directly_to_tend_not_batched() {
-        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
-        let (senders, _, _) = make_test_session_senders(&msg_tx);
-        let mock_fs = crate::test_utils::MockFs::new();
-        let mut app = App::new();
-        handle_session_event(
-            &mut app,
-            SessionEvent::SummaryReady { goal_id: "calc".into(), summary: "did things".into() },
-            &msg_tx,
-            &spawn_tx,
-            &senders,
-            &mock_fs,
-            &logger::noop_sender(),
-        );
-        let msg = msg_rx.try_recv().expect("SummaryReady must dispatch to tend");
-        assert!(msg.contains("calc"), "summary message must name the goal");
-        assert!(msg.contains("did things"), "summary message must carry the summary");
-        assert_eq!(app.tend_tasks, 1, "tend_tasks must increment for the summary");
+    fn test_spec_summary_ready_variant_removed() {
+        let evt = SessionEvent::Done { goal_id: "x".into() };
+        match evt {
+            SessionEvent::LlmSessionId { .. } => {}
+            SessionEvent::Chunk { .. } => {}
+            SessionEvent::Done { .. } => {}
+            SessionEvent::CleanupBlocked { .. } => {}
+        }
     }
 
     // RealFilesystem (std::fs underneath) must follow symlinks transparently.
@@ -1557,7 +1492,7 @@ mod tests {
             source_path: None,
         }];
         app.focus = Focus::Tree;
-        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender());
+        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
         assert!(
             matches!(action, KeyAction::None),
             "Enter in tree must return KeyAction::None (modal handles dispatch)",
@@ -1668,27 +1603,23 @@ mod tests {
         );
     }
 
-    // spec (rummage): "Agent switching is via explicit slash commands only —
-    // `/rummage` to switch to rummage, `/tend` to switch back."
-    // `/rummage` must set active_agent to Rummage and emit a system message;
-    // the input buffer must be cleared so the command doesn't appear as chat.
+    const BUILTIN_SESSION_IDS: &[&str] = &["tend", "rummage", "jog"];
+
+    // spec (rummage): `/rummage` switches the active session to rummage and
+    // emits a system message; the input buffer must be cleared.
     #[test]
     fn test_spec_slash_rummage_switches_active_agent() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         use crate::app::Role;
         let mut app = App::new();
-        assert_eq!(app.active_agent, ActiveAgent::Tend, "starts as Tend");
+        assert_eq!(app.active_session, "tend", "starts as tend");
         app.input = "/rummage".into();
-        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender());
+        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
         assert!(
             matches!(action, KeyAction::None),
             "/rummage must not dispatch a chat message; returns None",
         );
-        assert_eq!(
-            app.active_agent,
-            ActiveAgent::Rummage,
-            "/rummage must switch active_agent to Rummage",
-        );
+        assert_eq!(app.active_session, "rummage", "/rummage must switch active_session to rummage");
         assert!(app.input.is_empty(), "input must be cleared after /rummage");
         assert!(
             app.messages.iter().any(|m| m.role == Role::System && m.text.contains("rummage")),
@@ -1702,18 +1633,14 @@ mod tests {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         use crate::app::Role;
         let mut app = App::new();
-        app.active_agent = ActiveAgent::Rummage;
+        app.active_session = "rummage".to_string();
         app.input = "/tend".into();
-        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender());
+        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
         assert!(
             matches!(action, KeyAction::None),
             "/tend must not dispatch a chat message; returns None",
         );
-        assert_eq!(
-            app.active_agent,
-            ActiveAgent::Tend,
-            "/tend must switch active_agent back to Tend",
-        );
+        assert_eq!(app.active_session, "tend", "/tend must switch active_session back to tend");
         assert!(app.input.is_empty(), "input must be cleared after /tend");
         assert!(
             app.messages.iter().any(|m| m.role == Role::System && m.text.contains("tend")),
@@ -1722,34 +1649,33 @@ mod tests {
     }
 
     // spec (rummage / tui): "One agent is active at a time. User messages go to
-    // whoever is active." When active_agent is Rummage, Enter on a non-slash
-    // message must return SendToRummage (not SendToTend). When Tend, must
-    // return SendToTend.
+    // whoever is active." When active_session is rummage, Enter on a non-slash
+    // message must return SendToSession("rummage", …). When tend, SendToSession("tend", …).
     #[test]
     fn test_spec_message_routes_to_active_agent() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-        // Route to Tend when active.
+        // Route to tend when active.
         let mut app = App::new();
         app.phase = Phase::Idle;
-        app.active_agent = ActiveAgent::Tend;
+        app.active_session = "tend".to_string();
         app.input = "hello tend".into();
-        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender());
+        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
         assert!(
-            matches!(action, KeyAction::SendToTend(_)),
-            "message must route to Tend when active_agent is Tend; got {:?}",
+            matches!(&action, KeyAction::SendToSession(id, _) if id == "tend"),
+            "message must route to tend when active_session is tend; got {:?}",
             std::mem::discriminant(&action),
         );
 
-        // Route to Rummage when active.
+        // Route to rummage when active.
         let mut app2 = App::new();
         app2.phase = Phase::Idle;
-        app2.active_agent = ActiveAgent::Rummage;
+        app2.active_session = "rummage".to_string();
         app2.input = "hello rummage".into();
-        let action2 = handle_key(&mut app2, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender());
+        let action2 = handle_key(&mut app2, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
         assert!(
-            matches!(action2, KeyAction::SendToRummage(_)),
-            "message must route to Rummage when active_agent is Rummage; got {:?}",
+            matches!(&action2, KeyAction::SendToSession(id, _) if id == "rummage"),
+            "message must route to rummage when active_session is rummage; got {:?}",
             std::mem::discriminant(&action2),
         );
     }
@@ -1819,25 +1745,21 @@ mod tests {
         );
     }
 
-    // spec (jog / tui): `/jog` slash command must switch active_agent to Jog and
+    // spec (jog / tui): `/jog` slash command must switch active_session to jog and
     // emit a system message naming jog.
     #[test]
     fn test_spec_slash_jog_switches_active_agent() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         use crate::app::Role;
         let mut app = App::new();
-        assert_eq!(app.active_agent, ActiveAgent::Tend, "starts as Tinker");
+        assert_eq!(app.active_session, "tend", "starts as tend");
         app.input = "/jog".into();
-        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender());
+        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
         assert!(
             matches!(action, KeyAction::None),
             "/jog must not dispatch a chat message; returns None",
         );
-        assert_eq!(
-            app.active_agent,
-            ActiveAgent::Jog,
-            "/jog must switch active_agent to Jog",
-        );
+        assert_eq!(app.active_session, "jog", "/jog must switch active_session to jog");
         assert!(app.input.is_empty(), "input must be cleared after /jog");
         assert!(
             app.messages.iter().any(|m| m.role == Role::System && m.text.contains("jog")),
@@ -1845,228 +1767,60 @@ mod tests {
         );
     }
 
-    // spec (jog / tui): messages route to Jog when active_agent is Jog.
+    // spec (jog / tui): messages route to jog when active_session is jog.
     #[test]
     fn test_spec_message_routes_to_jog_when_active() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = App::new();
         app.phase = Phase::Idle;
-        app.active_agent = ActiveAgent::Jog;
+        app.active_session = "jog".to_string();
         app.input = "jog me on logging".into();
-        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender());
+        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
         assert!(
-            matches!(action, KeyAction::SendToJog(_)),
-            "message must route to Jog when active_agent is Jog; got {:?}",
+            matches!(&action, KeyAction::SendToSession(id, _) if id == "jog"),
+            "message must route to jog when active_session is jog; got {:?}",
             std::mem::discriminant(&action),
         );
     }
 
-    // spec (triggers): parse_jog_edit_commands extracts goal-id and instruction from
-    // /jog-edit lines. Incomplete lines (no instruction) and lines where /jog-edit
-    // does not appear at the start are silently skipped.
+    // spec (tui, goal-agents): /<goal-id> switches active_session to any
+    // registry-known id, not just the three built-in agents.
     #[test]
-    fn test_spec_parse_jog_edit_commands_syntax() {
-        let text = "/jog-edit rummage Clarify the case-2 durable test path.\nsome prose\n/jog-edit tui Document the active-agent prompt tag.\n";
-        let edits = parse_jog_edit_commands(text);
-        assert_eq!(edits.len(), 2, "two /jog-edit lines must each produce one edit");
-        assert_eq!(edits[0].0, "rummage");
-        assert_eq!(edits[0].1, "Clarify the case-2 durable test path.");
-        assert_eq!(edits[1].0, "tui");
-        assert_eq!(edits[1].1, "Document the active-agent prompt tag.");
-
-        // Incomplete line (goal-id only, no instruction) must be silently skipped.
-        let incomplete = "/jog-edit rummage\nsome prose\n";
+    fn test_spec_slash_goal_id_switches_active_session() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use crate::app::Role;
+        let ids = &["tend", "rummage", "jog", "tui"];
+        let mut app = App::new();
+        app.input = "/tui".into();
+        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), ids);
         assert!(
-            parse_jog_edit_commands(incomplete).is_empty(),
-            "incomplete /jog-edit (no instruction) must be skipped",
+            matches!(action, KeyAction::None),
+            "/<goal-id> must not dispatch a chat message; returns None",
         );
-
-        // /jog-edit not at line start must not parse.
-        let mid_line = "here is advice /jog-edit rummage not leading\n";
+        assert_eq!(app.active_session, "tui", "/<goal-id> must switch active_session to that id");
+        assert!(app.input.is_empty(), "input must be cleared after session switch");
         assert!(
-            parse_jog_edit_commands(mid_line).is_empty(),
-            "/jog-edit not at line start must not parse",
-        );
-
-        // Prose-only text must produce no edits.
-        assert!(
-            parse_jog_edit_commands("no commands here\n").is_empty(),
-            "prose-only must produce no edits",
+            app.messages.iter().any(|m| m.role == Role::System && m.text.contains("tui")),
+            "/<goal-id> must emit a system message naming the new session",
         );
     }
 
-    // spec (jog / triggers): multiple /jog-edit lines in one jog reply must each
-    // fire a separate commission to tinker, one per line. tend_tasks must
-    // increment once per commission.
+    // spec (tui, goal-agents): an unrecognised /<word> is not a session switch —
+    // it falls through and is sent to the active session as ordinary text.
     #[test]
-    fn test_spec_jog_edit_multiple_lines_each_dispatch_to_tinker() {
-        use crate::test_utils::MockFs;
-        use std::path::PathBuf;
-
-        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
-
-        let tinker_dir = PathBuf::from("/fake/.tinker");
-        let goals_dir = tinker_dir.join("goals");
-        let mock_fs = MockFs::new();
-        mock_fs.add_file(
-            &goals_dir.join("rummage.toml"),
-            "id = \"rummage\"\ndescription = \"investigates\"\nparent_id = \"\"\nchildren = []\n",
-        );
-        mock_fs.add_file(
-            &goals_dir.join("tui.toml"),
-            "id = \"tui\"\ndescription = \"terminal ui\"\nparent_id = \"\"\nchildren = []\n",
-        );
-
+    fn test_spec_slash_unknown_id_ignored() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = App::new();
-        app.tinker_dirs = vec![tinker_dir];
-        let jog_text = "Two findings here.\n/jog-edit rummage Clarify the case-2 durable test path.\n/jog-edit tui Document the active-agent prompt tag.\n";
-        app.current_session_text.insert("jog".to_string(), jog_text.to_string());
-        app.jog_tasks = 1;
-
-        let (senders, _, _) = make_test_session_senders(&msg_tx);
-        handle_session_event(
-            &mut app,
-            SessionEvent::Done { goal_id: "jog".into() },
-            &msg_tx,
-            &spawn_tx,
-            &senders,
-            &mock_fs,
-            &logger::noop_sender(),
-        );
-
-        let first = msg_rx.try_recv().expect("first /jog-edit must dispatch to tinker");
-        assert!(first.contains("rummage"), "first commission must name rummage");
-        let second = msg_rx.try_recv().expect("second /jog-edit must dispatch to tinker");
-        assert!(second.contains("tui"), "second commission must name tui");
-        assert!(msg_rx.try_recv().is_err(), "no extra commissions beyond two /jog-edit lines");
-        assert_eq!(app.tend_tasks, 2, "tend_tasks must increment once per /jog-edit line");
-    }
-
-    // spec (triggers): if a /jog-edit line names a goal-id that does not exist in
-    // the loaded goal list, it is silently dropped — no commission sent to tinker.
-    #[test]
-    fn test_spec_jog_edit_unknown_goal_id_silently_skipped() {
-        use crate::test_utils::MockFs;
-        use std::path::PathBuf;
-
-        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
-
-        let tinker_dir = PathBuf::from("/fake/.tinker");
-        let mock_fs = MockFs::new();
-        mock_fs.add_dir(&tinker_dir.join("goals"));
-
-        let mut app = App::new();
-        app.tinker_dirs = vec![tinker_dir];
-        app.current_session_text.insert("jog".to_string(), "/jog-edit nonexistent This goal does not exist.\n".to_string());
-        app.jog_tasks = 1;
-
-        let (senders, _, _) = make_test_session_senders(&msg_tx);
-        handle_session_event(
-            &mut app,
-            SessionEvent::Done { goal_id: "jog".into() },
-            &msg_tx,
-            &spawn_tx,
-            &senders,
-            &mock_fs,
-            &logger::noop_sender(),
-        );
-
+        app.phase = Phase::Idle;
+        app.input = "/no-such-session".into();
+        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        // Must be sent as text to the currently-active session.
         assert!(
-            msg_rx.try_recv().is_err(),
-            "unknown goal-id in /jog-edit must not dispatch any commission to tend",
+            matches!(&action, KeyAction::SendToSession(id, msg) if id == "tend" && msg == "/no-such-session"),
+            "unrecognised /<word> must fall through as ordinary input to the active session; got {:?}",
+            std::mem::discriminant(&action),
         );
-        assert_eq!(app.tend_tasks, 0, "tend_tasks must not increment for unknown goal-id");
-    }
-
-    // spec (jog / triggers): the jog→tinker commission message must instruct
-    // tinker to apply the edit directly and to show what changed.
-    #[test]
-    fn test_spec_jog_edit_commission_instructs_direct_apply_and_show_diff() {
-        use crate::test_utils::MockFs;
-        use std::path::PathBuf;
-
-        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
-
-        let tinker_dir = PathBuf::from("/fake/.tinker");
-        let goals_dir = tinker_dir.join("goals");
-        let mock_fs = MockFs::new();
-        mock_fs.add_file(
-            &goals_dir.join("rummage.toml"),
-            "id = \"rummage\"\ndescription = \"investigates\"\nparent_id = \"\"\nchildren = []\n",
-        );
-
-        let mut app = App::new();
-        app.tinker_dirs = vec![tinker_dir];
-        app.current_session_text.insert("jog".to_string(),
-            "/jog-edit rummage The SCOPE section omits the jog→tinker channel.\n".to_string());
-        app.jog_tasks = 1;
-
-        let (senders, _, _) = make_test_session_senders(&msg_tx);
-        handle_session_event(
-            &mut app,
-            SessionEvent::Done { goal_id: "jog".into() },
-            &msg_tx,
-            &spawn_tx,
-            &senders,
-            &mock_fs,
-            &logger::noop_sender(),
-        );
-
-        let commission = msg_rx.try_recv().expect("commission must be sent");
-        assert!(
-            commission.to_lowercase().contains("directly"),
-            "commission must instruct tinker to apply the edit directly: {commission}",
-        );
-        assert!(
-            commission.to_lowercase().contains("what changed") || commission.to_lowercase().contains("changed"),
-            "commission must instruct tinker to show what changed: {commission}",
-        );
-    }
-
-    // spec (jog): jog emits `/jog-edit <goal-id> <instruction>` in its output.
-    // handle_session_event (jog Done) must parse those lines and forward a
-    // prescriptive commission to tinker via msg_tx.
-    #[test]
-    fn test_spec_jog_edit_command_dispatched_to_tinker() {
-        use crate::test_utils::MockFs;
-        use std::path::PathBuf;
-
-        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
-
-        let tinker_dir = PathBuf::from("/fake/.tinker");
-        let goals_dir = tinker_dir.join("goals");
-        let mock_fs = MockFs::new();
-        mock_fs.add_file(
-            &goals_dir.join("rummage.toml"),
-            "id = \"rummage\"\ndescription = \"investigates program behavior\"\nparent_id = \"\"\nchildren = []\n",
-        );
-
-        let mut app = App::new();
-        app.tinker_dirs = vec![tinker_dir];
-        app.current_session_text.insert("jog".to_string(),
-            "I know better.\n/jog-edit rummage Add jog→tinker channel description to the SCOPE section.\n".to_string());
-        app.jog_tasks = 1;
-
-        let (senders, _, _) = make_test_session_senders(&msg_tx);
-        handle_session_event(
-            &mut app,
-            SessionEvent::Done { goal_id: "jog".into() },
-            &msg_tx,
-            &spawn_tx,
-            &senders,
-            &mock_fs,
-            &logger::noop_sender(),
-        );
-
-        let dispatched = msg_rx.try_recv().expect("jog /jog-edit must dispatch to msg_tx (tend)");
-        assert!(dispatched.contains("rummage"), "tend commission must name the goal id");
-        assert!(dispatched.contains("Add jog"), "tend commission must carry the instruction");
-        assert_eq!(app.jog_tasks, 0, "jog_tasks must decrement on Done");
-        assert_eq!(app.tend_tasks, 1, "tend_tasks must increment for the commission");
+        assert_eq!(app.active_session, "tend", "active_session must be unchanged after unknown slash");
     }
 
     // spec (peer-consult): parse_at_commands extracts @tend, @rummage, @jog

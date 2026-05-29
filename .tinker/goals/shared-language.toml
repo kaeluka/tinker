@@ -1,9 +1,9 @@
 id = "shared-language"
-summary = "governs: vocabulary standard for all user-facing surfaces (tend chat, batch messages, READMEs, human-targeted comments); vocabulary.txt (tend owns/writes silently, sessions read); form norm (minimum viable shape, no unrequested tables/lists); LLM-targeted artifacts exempt | triggers: any user-facing output; deciding whether/how to use technical term; form of replies"
+summary = "governs: vocabulary standard for all user-facing surfaces (tend chat, session messages, READMEs, human-targeted comments); vocabulary.txt (tend owns/writes silently, sessions read); form norm (minimum viable shape, no unrequested tables/lists); LLM-targeted artifacts exempt | triggers: any user-facing output; deciding whether/how to use technical term; form of replies"
 description = """
 ## WHAT
 Tend uses shared vocabulary in every user-facing surface it
-produces — its own conversation, the batch messages it composes
+produces — its own conversation, the session messages it composes
 from goal-session summaries, and any human-readable documentation
 goal sessions write into the tree (READMEs, in-tree guides,
 human-targeted code comments). All of these default to conceptual
@@ -71,7 +71,7 @@ binds both tend (chat) and goal sessions (documentation), and the
 principle that justifies it lives in the parent.
 
 ## SCOPE
-- In scope: tend chat; user-facing batch messages; READMEs,
+- In scope: tend chat; user-facing session messages; READMEs,
   guides, and other human-readable documentation goal sessions
   write into the tree; human-targeted code comments; the persistent
   `.tinker/state/vocabulary.txt` file and its startup-created
@@ -83,8 +83,7 @@ principle that justifies it lives in the parent.
   `AGENTS.md`); implementation comments aimed at future LLM agents;
   goal file contents themselves (LLM-consumed by goal sessions);
   automated hooks to manage the vocabulary file (tend manages it
-  by hand); per-session internal summaries before tend composes
-  them into a user-facing batch message.
+  by hand).
 """
 parent_id = "user-system-interaction"
 children = []
@@ -99,7 +98,7 @@ reason = "This goal produces code, which follows `coding-standards` (capability-
 
 [[related]]
 id = "tend"
-reason = "tend chat and the batch messages it composes are the primary user-facing surfaces this standard governs."
+reason = "tend chat and the session messages it composes are the primary user-facing surfaces this standard governs."
 
 [[related]]
 id = "rummage"

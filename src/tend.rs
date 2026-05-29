@@ -41,7 +41,7 @@ pub async fn send_message(
     res.map(|_| reply)
 }
 
-const TEND_FRONTMATTER: &str = "---\ndescription: >-\n  Tend — manages goals, interviews the user, and watches for\n  reframes when the current goal stops being the right question. Never writes\n  production code directly.\nmode: primary\npermission:\n  webfetch: deny\n  task: deny\n  todowrite: deny\n  websearch: allow\n  lsp: deny\n  skill: deny\n---\n";
+const TEND_FRONTMATTER: &str = "---\ndescription: >-\n  Tend — manages goals, interviews the user, and watches for\n  reframes when the current goal stops being the right question. Never writes\n  production code directly.\nmode: primary\npermission:\n  task: deny\n  todowrite: deny\n  skill: deny\n---\n";
 
 fn description_from_toml_str(s: &str) -> String {
     let marker = "description = \"\"\"\n";
@@ -164,27 +164,46 @@ mod tests {
         }
     }
 
-    // spec (tinker-agent): tinker is granted websearch so it can surface
-    // external context (library naming, design pattern lookups, terms the user
-    // mentions) during interviews without the user having to context-switch to
-    // a browser. webfetch stays denied. The frontmatter must allow websearch
-    // and deny webfetch.
+    // spec (tend-agent): LSP tools are not denied. The denied set is limited to
+    // autonomous multi-step tools (task, todowrite) and webfetch. Denying LSP
+    // has no goal anchor — restricting it is unjustified and would degrade any
+    // future use that legitimately needs it.
     #[test]
-    fn test_spec_tinker_agent_allows_websearch_denies_webfetch() {
+    fn test_spec_tinker_agent_does_not_deny_lsp() {
         let content = tend_agent_content();
         let after = content
             .strip_prefix("---\n")
             .expect("agent file starts with frontmatter");
         let end = after.find("\n---").expect("frontmatter has closing delimiter");
         let frontmatter = &after[..end];
-        assert!(
-            !frontmatter.contains("websearch: deny"),
-            "frontmatter must not deny websearch — tinker uses it to surface external context during interviews",
-        );
-        assert!(
-            frontmatter.contains("webfetch: deny"),
-            "frontmatter must deny webfetch — websearch precedes it; revisit only if a concrete URL-first use surfaces",
-        );
+        let denied_line = "  lsp: deny";
+        for line in frontmatter.lines() {
+            assert_ne!(
+                line.trim_end(),
+                denied_line,
+                "frontmatter must not deny `lsp` — LSP restriction has no goal anchor",
+            );
+        }
+    }
+
+    // spec (tend-agent): webfetch is no longer denied. The denied set is now
+    // task and todowrite only — uniform across tend, rummage, and jog.
+    #[test]
+    fn test_spec_tinker_agent_does_not_deny_webfetch() {
+        let content = tend_agent_content();
+        let after = content
+            .strip_prefix("---\n")
+            .expect("agent file starts with frontmatter");
+        let end = after.find("\n---").expect("frontmatter has closing delimiter");
+        let frontmatter = &after[..end];
+        let denied_line = "  webfetch: deny";
+        for line in frontmatter.lines() {
+            assert_ne!(
+                line.trim_end(),
+                denied_line,
+                "frontmatter must not deny `webfetch` — denied set is task and todowrite only",
+            );
+        }
     }
 
     // spec (tinker-agent): static rules (persona, procedures) live in the
@@ -591,6 +610,27 @@ mod tests {
         assert!(
             content.contains("compliance review") || content.contains("Compliance review"),
             "tend prompt must describe the optional compliance review step",
+        );
+    }
+
+    // spec (tend): Jog-commissioned edits arrive as @tend blocks identified by
+    // [from jog] attribution. Tend applies without a playback interview (jog's
+    // deepening conversation already provided the anchoring) and shows the user
+    // a diff of what changed.
+    #[test]
+    fn test_spec_jog_commissioned_edits_apply_without_playback() {
+        let content = tend_agent_content();
+        assert!(
+            content.contains("[from jog]"),
+            "tend prompt must describe jog-commissioned edits as @tend blocks identified by [from jog] attribution",
+        );
+        assert!(
+            content.contains("without a playback"),
+            "tend prompt must state that jog-commissioned edits are applied without a playback interview",
+        );
+        assert!(
+            content.contains("diff"),
+            "tend prompt must instruct tend to show the user a diff of what changed",
         );
     }
 

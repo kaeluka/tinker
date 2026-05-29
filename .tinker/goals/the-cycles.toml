@@ -1,5 +1,5 @@
 id = "the-cycles"
-summary = "governs: intent↔spec↔code cycle (forward: generation; backward: verification/compliance); producer/skeptic axis (forward-generation vs divergence-investigation); adjacency ownership (intent↔spec: tend+jog; spec↔code: sessions+rummage); human-coupling axis; agent-complementarity as design principle | triggers: understanding where agents fit in cycle; commissioning across adjacencies; framing new agents; auditing profile complementarity"
+summary = "governs: intent↔spec↔code cycle (forward: generation; backward: verification); producer/skeptic axis (tend+goal-agents vs rummage+jog); adjacency ownership (intent↔spec: tend+jog; spec↔code: goal-agents+rummage); input-observability axis; agent-complementarity as design principle | triggers: understanding where agents fit in cycle; commissioning across adjacencies; framing new agents; auditing profile complementarity"
 description = """
 ## WHAT
 The map of tinker's agents onto the intent↔spec↔code cycle. The
@@ -8,10 +8,10 @@ intent**, layer 2 the **written goal/spec**, layer 3 the **running
 code**. The cycle runs in both directions.
 
 **Forward (generation):** intent→spec→code. Tend builds the spec from
-the user's intent; goal sessions build code from the spec. The
-produced artifact at each step must be explainable in terms of the
-step before it: code is justified by its spec, the spec is justified
-by the user's intent.
+the user's intent; goal agents (governed by `goal-agents`) build code
+from the spec. The produced artifact at each step must be explainable
+in terms of the step before it: code is justified by its spec, the
+spec is justified by the user's intent.
 
 **Backward (verification):** code→spec→intent. Rummage audits whether
 the code satisfies the spec; jog audits whether the spec still
@@ -19,63 +19,51 @@ reflects the user's intent. The cycle is closed: every artifact
 produced in the forward direction is a candidate for scrutiny in the
 backward direction.
 
-One axis of this cycle **is encoded in this tree**: forward generation
-versus divergence investigation. `forward-generation` holds the
-**producers**, which move forward and treat the goal as
-*authoritative* (tend builds the spec from intent; goal sessions build
-code from the spec). `divergence-investigation` holds the
-**skeptics**, which move backward across an adjacency looking for a
-gap and treat the goal as *signal-with-noise* (jog audits intent↔spec;
-rummage audits spec↔code).
+Two axes cross-cut all agents:
 
-Two further axes **cross-cut but are not encoded in the tree**,
-because a node has only one parent:
-- **Adjacency ownership.** Each adjacency is owned by one producer and
-  one skeptic — intent↔spec by tend + jog, spec↔code by the goal
-  sessions + rummage. This pairing is where commissioning happens: a
-  skeptic that finds the produced artifact wanting commissions its
-  paired producer to fix it (jog→tend, rummage→goal session).
-- **Human coupling.** The agents that touch layer 1 (tacit intent) —
-  tend and jog — are dialectical and human-coupled; those that live in
-  layers 2–3 — the goal sessions and rummage — run autonomously. The
-  dividing line is exactly whether the agent touches intent.
+- **Producer/skeptic.** Producers (tend, goal agents) move forward
+  and treat the goal as *authoritative*. Skeptics (rummage, jog) move
+  backward and treat the goal as *signal-with-noise* — the gap under
+  investigation may be in the goal itself. Commissioning bridges the
+  axis: a skeptic that finds a produced artifact wanting commissions
+  its paired producer to fix it (jog→tend, rummage→a goal agent).
 
-The design principle governing how these profiles are assigned and
-kept complementary lives in the child goal `agent-complementarity`.
+- **Input observability.** Tend and jog work with inputs that cannot
+  be read or executed — tacit intent can only be drawn out through
+  dialogue, so these agents must work with the user to do their job.
+  Goal agents and rummage work with directly observable inputs — the
+  written spec and running code respectively — and don't require user
+  input to operate. The dividing line is whether the agent's input
+  layer requires drawing out human intent.
+
+The design principle governing how profiles are assigned and kept
+complementary lives in `agent-complementarity`. The session registry
+making every agent uniformly addressable lives in `goal-agents`.
 
 ## WHY
 This model was the framing every agent was designed against, yet it
-lived in no goal — it was folklore. Naming it gives the producer and
-skeptic branches a parent they summarize up into, and turns the two
-orthogonal slices (adjacency ownership, human coupling) into explicit
-prose rather than tacit knowledge.
+lived in no goal — it was folklore. Naming it turns the two
+orthogonal axes (producer/skeptic, input-observability) into explicit
+prose, makes commissioning legible, and gives each agent a clear
+position in the cycle.
 
 The bidirectional cycle framing makes the skeptic agents first-class:
 they are not error-correction bolted onto a pipeline but the return
 path of the same motion. Code that cannot be explained in terms of its
-spec, or a spec that cannot be explained in terms of the user's intent,
-is a failure of the cycle — and the backward pass is what catches it.
+spec, or a spec that cannot be explained in terms of the user's
+intent, is a failure of the cycle — and the backward pass is what
+catches it.
 
-The name "the-cycles" pairs with `the-false-promise`: the false promise
-is the diagnosis; the cycles are the structural answer — a closed loop
-where every artifact produced can be verified, explained, and traced
-back to the intent that justified it.
-
-The tree encodes the producer/skeptic axis specifically because that is
-the axis along which agents share **methodology**: producers move
-forward and trust the goal, skeptics look for gaps and doubt it. The
-adjacency and coupling slices are equally real but cannot also be
-hierarchy, since each agent gets one parent — so they stay as
-cross-cutting description here. The human-coupling line is the same one
-`creative-process` draws when it makes the human the termination
-condition wherever intent is in play.
+The name "the-cycles" pairs with `the-false-promise`: the false
+promise is the diagnosis; the cycles are the structural answer — a
+closed loop where every artifact produced can be verified, explained,
+and traced back to the intent that justified it.
 
 ## SCOPE
 - In scope: the three-layer intent↔spec↔code cycle and both
-  directions; the producer/skeptic axis as the tree grouping
-  (`forward-generation`, `divergence-investigation`); the
-  adjacency-ownership and human-coupling axes as orthogonal,
-  prose-only slices; the rationale for which axis the tree encodes.
+  directions; the producer/skeptic and input-observability axes as
+  cross-cutting prose; adjacency ownership (which agent pair owns
+  each adjacency); the rationale for the flat agent tree.
 - Out of scope: each agent's internal behaviour (lives in its own
   goal); the should/is principle itself, of which this stack is the
   layered form (that is `user-system-interaction`); reshaping the
@@ -87,12 +75,20 @@ condition wherever intent is in play.
 parent_id = ""
 
 [[children]]
-id = "forward-generation"
-reason = "producer branch — tend and goal sessions moving forward through the intent→spec→code stack, treating the goal as authoritative"
+id = "tend"
+reason = "intent↔spec producer — surfaces user intent through dialogue and crystallizes it into goal specs"
 
 [[children]]
-id = "divergence-investigation"
-reason = "skeptic branch — rummage and jog investigating gaps between adjacent layers, treating the goal as signal-with-noise"
+id = "rummage"
+reason = "spec↔code skeptic — investigates whether code satisfies the goal spec; treats goal as signal-with-noise"
+
+[[children]]
+id = "jog"
+reason = "intent↔spec skeptic — audits whether the spec still reflects user intent; dialectical because intent is tacit"
+
+[[children]]
+id = "goal-agents"
+reason = "spec↔code producer and runtime substrate — every goal is a process-scoped agent generating code from its spec; the session registry makes the cycle executable"
 
 [[children]]
 id = "agent-complementarity"
@@ -100,4 +96,4 @@ reason = "design principle governing how agent profiles are assigned and kept co
 
 [[related]]
 id = "user-system-interaction"
-reason = "This stack is the layered form of `user-system-interaction`'s should/is split: layer 1 (intent) is the user's *should*; layers 2–3 (spec, code) are the *is* tinker holds. The human-coupling axis — which agents may touch layer 1 — is the agent-architecture consequence of that boundary."
+reason = "This stack is the layered form of `user-system-interaction`'s should/is split: layer 1 (intent) is the user's *should*; layers 2–3 (spec, code) are the *is* tinker holds. The input-observability axis — which agents must work with the user because their inputs require drawing out human intent — is the agent-architecture consequence of that boundary."

@@ -1,15 +1,16 @@
 id = "peer-consult"
-summary = "governs: @<agent> one-way inter-agent messaging (tend/rummage/jog); multi-line body (next @-line or end of reply terminates); only the @-block is delivered (not surrounding prose); actor model (no call stack, no blocking, no return value); advisory; nesting allowed; goal sessions excluded | triggers: implementing @-message routing; agent-to-agent messaging; peer consultation in spec creation; deciding when to consult; @-block scope and delivery rules"
+summary = "governs: @<agent-or-goal-id> one-way messaging between any session-registry agents; multi-line body (next @-line or end of reply terminates); only the @-block is delivered (not surrounding prose); actor model (no call stack, no blocking, no return value); nesting allowed | triggers: implementing @-message routing; agent-to-agent messaging; deciding when to consult; @-block scope and delivery rules"
 description = """
 ## WHAT
-Any of the three interactive agents (tend, rummage, jog) can send a
-one-way message to another using `@<agent-name>` in its output. The
-message body spans from that line through the end of the reply — or
-up to the next `@`-line if the reply contains several. **Only the
-`@`-block itself is delivered to the named agent**; any prose the
-sending agent wrote before or after it is not included. This means
-a sending agent must make each `@`-block self-contained: everything
-the receiving agent needs to act on must be inside the block.
+Any agent in the session registry can send a one-way message to any
+other using `@<agent-or-goal-id>` in its output. This includes tend,
+rummage, jog, and any goal agent. The message body spans from that
+line through the end of the reply — or up to the next `@`-line if
+the reply contains several. **Only the `@`-block itself is delivered
+to the named agent**; any prose the sending agent wrote before or
+after it is not included. This means a sending agent must make each
+`@`-block self-contained: everything the receiving agent needs to act
+on must be inside the block.
 
 The `@`-line may carry an inline opening (`@tend Here's the finding:`)
 or stand alone (`@tend`) with all content on subsequent lines; both
@@ -25,26 +26,16 @@ follow-up, or discard it. Either side can continue the exchange as long
 as it is useful. Consultations can nest freely: an agent mid-reply can
 `@`-address a third agent.
 
-Initiation is symmetric. Tend can consult rummage, rummage can
-consult tend, either can consult jog. The user can ask any agent to
-consult another — which causes that agent to judge whether and how to
-do so — but the user is not required to broker the exchange.
-
-Goal sessions (the autonomous code-writing sessions) are not part of
-this protocol. It covers only the three interactive chat agents.
+The user can ask any agent to consult another; they are not required
+to broker the exchange themselves.
 
 ## WHY
-Tend currently must read code to write grounded specs. That
-duplicates rummage's concern and divides tend's focus between intent
-management and code comprehension, making it worse at both. The `@`
-protocol cleanly separates the concerns: tend stays focused on intent
-and consults rummage when code-reality grounding is needed; rummage
-stays focused on code and consults tend when intent context is needed.
-Neither must be competent at the other's job.
-
-The alternative was `/tmp` files and manual agent switching — the user
-acting as message router. That is coordination overhead the system
-should absorb.
+When an agent's reasoning depends on what another agent knows — code
+reality, goal intent, investigation findings — the `@` channel lets
+them exchange directly without the user acting as message router.
+The protocol is uniform across the whole agent population: the same
+syntax that lets tend consult rummage also lets a goal agent report
+back to tend or ask jog a question. No agent is structurally excluded.
 
 Multi-line delivery is load-bearing: a finding that can only be
 expressed in a single line is rarely a finding. Restricting to one
@@ -57,24 +48,18 @@ Without the rule agents would silently rely on context they never
 actually delivered, producing incomplete or misleading consultations.
 
 ## SCOPE
-- In scope: `@<agent-name>` blocks with multi-line bodies; block
+- In scope: `@<agent-or-goal-id>` blocks with multi-line bodies; block
   termination at the next `@`-line or end of reply; delivery of only
-  the block to the named agent; any-to-any messaging among tend,
-  rummage, and jog; freely nesting consultations; agent-initiated and
+  the block to the named agent; messaging among any agents in the
+  session registry; freely nesting consultations; agent-initiated and
   user-triggered initiation; the user observing the exchange in real
   time.
-- Out of scope: goal sessions sending or receiving `@` messages;
-  formal return values or blocking semantics; call stack tracking;
-  blank-line termination; changes to the `/run` or `/jog-edit`
-  channels (governed by `triggers`); TUI rendering details (left to
+- Out of scope: formal return values or blocking semantics; call stack
+  tracking; blank-line termination; TUI rendering details (left to
   `tui`).
 """
 parent_id = ""
 children = []
-
-[[related]]
-id = "triggers"
-reason = "`triggers` governs the directive dispatch channels (`/run` and `/jog-edit`). `peer-consult` is a sibling channel, different in character: advisory rather than directive, bidirectional by convention, no formal return. Both goals govern inter-agent communication at the system level."
 
 [[related]]
 id = "tend"
@@ -91,10 +76,6 @@ reason = "jog participates as both sender and receiver of `@` messages alongside
 [[related]]
 id = "tui"
 reason = "The `@` message stream between agents appears in the conversation pane; TUI owns the rendering details."
-
-[[related]]
-id = "batch-review"
-reason = "`batch-review` relies on the `@`-consultation channel as its delivery mechanism for both tend's invocation and rummage's findings. Multi-line @-block delivery is a prerequisite."
 
 [[related]]
 id = "agent-complementarity"
