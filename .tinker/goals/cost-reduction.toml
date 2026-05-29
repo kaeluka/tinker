@@ -13,11 +13,11 @@ Tinker folds significant observations into
 `.tinker/notes/cost-observations.md` so subsequent runs have
 continuity. Those entries are observation-shaped (what was seen),
 not TODO-shaped (what to do) — avoiding the drift that retired the
-`change_log` (see `triggers`).
+`change_log`.
 
 Findings never become new goal files on their own. They surface only
-through the session's summary, which tinker folds into the
-user-facing batch message; acting on any finding requires a fresh
+through the session's summary, which tend synthesises into the
+user-facing message; acting on any finding requires a fresh
 interview, same as any goal creation. (This is partly enforced
 mechanically — goal sessions cannot write to `.tinker/goals/`.)
 
@@ -54,7 +54,7 @@ Without continuity each investigation starts from zero. The
 observation log is owned and written by tinker; the goal session
 reads it at the start of each run for continuity but never writes to
 it (consistent with the `.tinker/` write prohibition in
-`goal-sessions`).
+`goal-agents`).
 
 A Sonnet-tier goal session does the recon rather than tinker itself
 because tinker runs on Opus and arbitrates between many overlapping

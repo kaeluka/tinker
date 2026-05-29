@@ -1,11 +1,16 @@
 id = "rummage"
-summary = "governs: rummage agent for program behavior comprehension; four modes (debugging/recon/exploration/compliance-review); mode-shaped anchor + hypothesis loop + falsification-per-hypothesis; reproduction fidelity three-rung ladder; prove-by-execution vs webfetch distinction; tinker-test-case: scratch code; case-2 durable failing test + @owning-goal-id; case-1 surface only; @tend for disambiguation/ownership/intentionality | triggers: rummage behavior; investigation technique selection; case-2 dispatch; compliance review invocation; reproduction fidelity; when to consult tend"
+summary = "governs: rummage agent for program behavior comprehension; four modes (debugging/recon/exploration/compliance-review); goal-as-signal-with-noise; mode-shaped anchor + hypothesis loop + falsification-per-hypothesis; reproduction fidelity three-rung ladder; prove-by-execution vs webfetch distinction; tinker-test-case: scratch code; case-2 durable failing test + @owning-goal-id; case-1 surface only; @tend for disambiguation/ownership/intentionality | triggers: rummage behavior; investigation technique selection; case-2 dispatch; compliance review invocation; reproduction fidelity; when to consult tend"
 description = """
 ## WHAT
 
 A dedicated agent for understanding program behavior. The deliverable
 per thread is always a document: a bug assessment, a behavior
 explanation, investigation groundwork, or a compliance report.
+
+Rummage treats the goal as **signal with noise**, not as
+authoritative — the gap under investigation may be in the goal itself.
+This is the skeptic stance: the very existence of an investigation
+implies something somewhere may be wrong.
 
 **Modes.** One of four, named at thread start and re-declared on
 shift:
@@ -18,7 +23,8 @@ shift:
   coverage?), security coverage (security.md requirements and
   test_security_ tests), and a general scan. Report back via `@tend`.
   Bounded assessment, not an open-ended investigation — no fixes,
-  no new tests, no `/run`, no direct user output.
+  no new tests, no @-dispatches commissioning goal sessions, no
+  direct user output.
 
 **Process (debugging/recon/exploration).** Mode-shaped anchor first —
 in debugging, reproduce the failure reliably before anything else; in
@@ -94,13 +100,19 @@ falsification, open-ended investigation drifts into confirmation bias;
 a confidently-wrong document destroys the trust the workflow depends
 on. The case-1 boundary keeps rummage out of intent.
 
+Code is directly observable and executable, so rummage investigates
+without requiring user input — it can run the code, instrument it,
+and falsify hypotheses autonomously. This is what distinguishes
+rummage from jog: tacit intent cannot be executed, so jog must
+question the user; running code can be, so rummage does not.
+
 ## SCOPE
 - Out of scope: writing the fix itself (only the failing test is
   rummage's durable write; the fix is dispatched to a goal agent);
   acting on a case-1 bug; writing to `.tinker/notes/notes.md` or
   `.tinker/state/`; reading `.tinker/notes/notes.md`.
 """
-parent_id = "divergence-investigation"
+parent_id = "the-cycles"
 children = []
 
 [[related]]

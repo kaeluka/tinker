@@ -84,9 +84,9 @@ are written well by them, five things follow:
    targets, not literal specs.
 3. The iteration loop stays fast and the user stays rested. Less time
    spec'ing means more time tinkering with results.
-4. Pushback from goal sessions stays exceptional, per `goal-sessions`
-   — a sparse goal gives the session a tractable optimization target
-   it rarely needs to question.
+4. Pushback from a goal agent stays exceptional — a sparse goal
+   gives the agent a tractable optimization target it rarely needs
+   to question.
 5. New orthogonal goals slot in cleanly — "UI needs to breathe" added
    later doesn't collide with over-specified incidentals — and the
    session reading the union of goals keeps maximum collective leeway.
@@ -119,8 +119,8 @@ id = "goal-structure-standard"
 reason = "Structural twin at write-time. `goal-structure-standard` governs tree organization (Merge, Nest Down, Nest Up, New Root, Retire; parent-summary; related-link symmetry) and owns the goal schema; `goal-craft` governs content quality within each goal, including the synthesis-over-enumeration tactic. Both apply on every edit."
 
 [[related]]
-id = "goal-sessions"
-reason = "`goal-sessions`' 'Pushback is exceptional' decision names goal sparseness as the mechanism that makes pushback rare. Sparseness is operationalized in `goal-craft` via the anchor test."
+id = "goal-agents"
+reason = "Goal agents are the consumers of goals these tactics produce. A sparse, well-formed goal gives an agent a tractable optimization target it rarely needs to question — sparseness is operationalized via the anchor test."
 
 [[related]]
 id = "tend"

@@ -68,12 +68,6 @@ pub enum SessionEvent {
         dirty_files: Vec<std::path::PathBuf>,
         error: Option<String>,
     },
-    /// The goal session finished and produced a structured summary.
-    /// Routed directly to tend as a peer consultation so tend can synthesize
-    /// and respond to the user without batch machinery.
-    /// Transitional: will be replaced by `@tend` blocks from the LLM once
-    /// tend.toml carries the summary instruction.
-    SummaryReady { goal_id: String, summary: String },
 }
 
 /// Builds a Markdown table of the goal's neighboring goals in the graph —
@@ -281,13 +275,6 @@ pub async fn run_goal(
     let summary = run_silent(oc.as_ref(), SUMMARY_REQUEST, Some(&session_id), &work_dir)
         .await
         .unwrap_or_default();
-
-    let _ = tx
-        .send(SessionEvent::SummaryReady {
-            goal_id,
-            summary: summary.clone(),
-        })
-        .await;
 
     let output = full_output.lock().unwrap().clone();
     Ok((output, summary))

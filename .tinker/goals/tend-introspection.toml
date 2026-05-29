@@ -20,9 +20,9 @@ The **event log** captures: tend turn boundaries with token
 usage; message-level events in three categories — user input (full
 text), assistant reply (full text, tool calls and results inline),
 and tend-injected system messages (full content plus a `source`
-field naming the emitting component — dispatcher, batch-summary
-composer, harness); goal-session lifecycle (dispatched, started,
-finished) with observable facts; `/run` emissions; cleanup-hook
+field naming the emitting component — dispatcher, harness);
+goal-session lifecycle (dispatched, started, finished) with
+observable facts; `@`-dispatch emissions; cleanup-hook
 results; goal-file changes; and TUI structural state changes
 (selection, focus, scroll, queue). The session-start event captures
 the system-prompt text plus a goal-list hash so persona/goal drift

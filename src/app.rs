@@ -3,13 +3,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ActiveAgent {
-    Tend,
-    Rummage,
-    Jog,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub enum Role {
     User,
     Assistant,
@@ -149,8 +142,8 @@ pub struct App {
     /// When `Some`, the reason-prompt modal is open; all keys route to it
     /// until submit/cancel. The previous `focus` is preserved unchanged.
     pub modal: Option<ModalState>,
-    /// Which agent currently receives the user's REPL input.
-    pub active_agent: ActiveAgent,
+    /// Which session currently receives the user's REPL input (goal-id string).
+    pub active_session: String,
     /// Streaming text buffer for the rummage agent (analogous to `current_assistant_text`).
     pub rummage_current_text: String,
     /// Rummage session ID for in-process turn resumption.
@@ -199,7 +192,7 @@ impl App {
                 s
             },
             modal: None,
-            active_agent: ActiveAgent::Tend,
+            active_session: "tend".to_string(),
             rummage_current_text: String::new(),
             rummage_session_id: None,
             rummage_tasks: 0,

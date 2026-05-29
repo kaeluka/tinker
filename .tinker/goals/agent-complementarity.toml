@@ -14,9 +14,9 @@ The current profile assignments follow from cycle position:
 - **Tend** (intent↔spec, forward): optimised for intent synthesis,
   dialectical interviewing, and goal management. Handles workloads
   that require holding user intent and the goal tree in tension.
-- **Goal sessions** (spec↔code, forward): optimised for autonomous
-  code generation against a written spec. Handle workloads that
-  require turning a precise, authoritative goal into working code.
+- **Goal sessions** (spec↔code, forward): optimised for code
+  generation from a written spec. Handle workloads that require
+  turning a precise, authoritative goal into working code.
 - **Rummage** (spec↔code, backward): optimised for grounded code
   investigation — hypothesis loops, falsification, LSP traversal.
   Handles workloads that require making true, verifiable claims about
@@ -34,9 +34,9 @@ tend's. A consultation that crosses to an agent with a weaker profile
 for the workload produces worse output than staying put.
 
 Intentional overlap exists at the spec-satisfaction boundary: tend
-reads goal-session summaries and synthesises the user-facing batch
-message (spec-reading is in scope for tend); rummage may also be
-invoked to check whether the code satisfies the spec (`batch-review`).
+reads session summaries and synthesises the user-facing message
+(spec-reading is in scope for tend); rummage may also be invoked via
+`@rummage` to check whether the code satisfies the spec.
 The boundary is that tend owns the synthesis and the user-facing
 output; rummage owns the code-reality assessment.
 
@@ -73,10 +73,6 @@ children = []
 [[related]]
 id = "peer-consult"
 reason = "Peer consultation is the runtime mechanism through which complementary profiles route workloads. The quality of a consultation is only as good as the profile gap it crosses — `peer-consult` governs the channel; this goal governs whether the routing is worth making."
-
-[[related]]
-id = "batch-review"
-reason = "`batch-review` is a concrete instance of profile complementarity at the spec-satisfaction boundary: tend decides (spec-synthesis profile), rummage reviews (code-reality profile), tend synthesises the output."
 
 [[related]]
 id = "tend"

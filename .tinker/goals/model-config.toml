@@ -4,7 +4,7 @@ description = """
 ## WHAT
 A `.tinker/config.toml` file that overrides which model each tier
 uses, independently per backend. There are six slots: the three model
-tiers — `high` (the smartest tier, used by `tinker`, `rummage`, and
+tiers — `high` (the smartest tier, used by `tend`, `rummage`, and
 `jog`), `mid` (the tier goal sessions run on), and `low` (the cheapest
 tier, used by cleanup) — each settable separately under a `[claude]`
 and an `[opencode]` section. The tiers are named by capability level
@@ -23,7 +23,7 @@ a line out is therefore a clean revert to default behavior.
 When no config file exists, tinker writes a self-documenting starter
 template: both backend sections present, every slot listed but
 commented out. Each slot is annotated inline with which agents consume
-that tier — `high` notes tinker, rummage, and jog; `mid` notes goal
+that tier — `high` notes tend, rummage, and jog; `mid` notes goal
 sessions; `low` notes cleanup — so the user knows what each rename
 affects without reading source, and with the current built-in default
 value shown on the commented line itself. The user uncomments and
@@ -45,7 +45,7 @@ they currently care about.
 
 Capability-level slot names (`high`/`mid`/`low`) rather than
 role-level names keep the config honest: the top tier is shared by
-tinker, rummage, and jog, so a role name on it would mislead. The
+tend, rummage, and jog, so a role name on it would mislead. The
 starter-template annotations carry the role information instead, where
 it documents what a rename affects without pretending the slot belongs
 to a single agent.
@@ -61,7 +61,7 @@ to a single agent.
   stays a startup flag, per `backends`); validating model names
   against a known list (an unrecognized name surfaces as whatever the
   backend CLI does with it); per-agent slots that split the `high`
-  tier shared by tinker, rummage, and jog; overwriting or migrating a
+  tier shared by tend, rummage, and jog; overwriting or migrating a
   config file the user has already edited; backwards-compatible
   aliasing of the former role-based slot names (`tinker`,
   `goal_sessions`, `cleanup`) — the rename is a clean break, as no

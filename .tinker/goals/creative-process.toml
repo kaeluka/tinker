@@ -60,7 +60,8 @@ optimized away.
 
 Tend has a **dual duty** that follows from this asymmetry. First,
 faithfully execute and cross-reference existing conventions — its
-safe, reliable mode, where autonomous operation is appropriate.
+safe, reliable mode, where operating within established conventions
+is appropriate.
 Second, **surface inflection points**: when tend is at the edge of
 convention — a new frame, a reframe candidate, conventions pointing
 several ways, a place it's tempted to extrapolate — it must stop and
@@ -148,5 +149,5 @@ id = "tend"
 reason = "The hardness principle and the dual-duty sharpening (surface inflection AND refuse the easy path) defined in this goal's WHY are operationalized in `tend` as two concrete interview behaviors: menu-avoidance and bare-assertion anchor-probing. Principle lives here; operational form lives there."
 
 [[related]]
-id = "divergence-investigation"
-reason = "The skeptical divergence investigators (`rummage`, `jog`) ground their autonomous-vs-dialectical split in this goal's observability / human-as-termination principle, and instantiate 'the dialectic must continue after a goal is written' on the spec↔code and intent↔spec gaps. Principle lives here; the skeptical role that applies it lives there."
+id = "rummage"
+reason = "Rummage grounds its input-observability split (investigates code directly because code is executable; contrast with jog which must question the user) in this goal's observability / human-as-termination principle. This goal also instantiates 'the dialectic must continue after a goal is written' on the spec↔code gap: rummage is the backward pass that catches drift."

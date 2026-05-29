@@ -1,5 +1,5 @@
 id = "tui"
-summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); queue markers (▶ running, [N] queued); auto-follow scroll; active-agent tag (tend>/rummage>/jog>); each agent's messages labeled with the agent's name; modal trigger-reason dialog; dim tool-call rendering | triggers: TUI layout/rendering changes; queue display; scroll behavior; agent-switch UX; message label rendering"
+summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); queue markers (▶ running, [N] queued); auto-follow scroll; active-agent tag (<goal-id>>); /<goal-id> switches active session; each agent's messages labeled with goal-id; modal trigger-reason dialog; dim tool-call rendering | triggers: TUI layout/rendering changes; queue display; scroll behavior; agent-switch UX; message label rendering"
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left
@@ -8,24 +8,25 @@ three bands at fixed proportions: a selectable **goal list** (25%
 height), the full **goal text** of the currently selected goal
 beneath it (50%), and the **session log** at the bottom (25%).
 
-In the conversation, an input-prompt tag names whichever agent will
-receive the next message (`tend> `, `rummage> `, or `jog> `); input
-routes to that agent, and the `/tend`, `/rummage`, and `/jog` slash
-commands switch it (the switching mechanism and the first two are
-defined in `rummage`, `/jog` in `jog`). Each agent's messages carry
-the agent's name as a label — tend's messages are labeled "tend",
-rummage's "rummage", jog's "jog". Tend's tool calls (bash, read,
+In the conversation, an input-prompt tag names the active session
+(e.g. `tend> `, `goal-id> `); input routes to that session.
+Any session in the registry can be activated with `/<goal-id>` —
+this includes tend, rummage, jog, and any goal agent. The active
+session receives whatever the user types next. Each agent's messages
+carry the goal-id as a label. Tend's tool calls (bash, read,
 edit, etc.) render in dim grey with payloads cropped to their first
-line, so multi-line output doesn't flood the thread. When tend
-emits follow-up `/run` lines, the system message listing those goals
-and their reasons also renders in grey.
+line, so multi-line output doesn't flood the thread. System messages
+from agent-to-agent exchanges also render in grey.
 
 In the goal list, only the list is selectable — the text beneath is
 read-and-scroll only. Keyboard navigation auto-scrolls the list so
 the selected goal stays visible (edge scrolling).
 
 In the session log, the reason a session was triggered renders in
-bold at the top.
+bold at the top. The session log is independent of the active
+conversation: it shows passive output from whichever goal is
+selected in the goal list, even when the left-pane conversation is
+active on a different session.
 
 Any text region scrolls with the mouse wheel — whichever region is
 under the cursor. New content keeps the view pinned to the bottom;
@@ -46,8 +47,8 @@ trigger reason. In the idle state (empty queue, nothing running) no
 markers appear and the goal-text region shows only the description.
 
 **Manual triggers.** When the user triggers a goal by hand — Enter
-in the goal list, or `/run` without arguments — a modal text-input
-dialog collects the trigger reason.
+in the goal list — a modal text-input dialog collects the trigger
+reason.
 
 ## WHY
 Tinker is meant to be watched while it works. A single REPL would
@@ -56,8 +57,14 @@ standing intent, and what the goal sessions are actually doing, all
 at once. The three-region layout keeps all of that visible without
 configuration.
 
+The `/<goal-id>` switching mechanism extends naturally from the
+original three named agents to the whole registry — any goal is
+directly addressable from the keyboard. The session log pane stays
+independent so the user can monitor a goal agent passively while
+conversing with a different session.
+
 The rendering choices serve legibility under live streaming. Tool
-calls and tend-triggered system messages render dim because
+calls and agent-to-agent system messages render dim because
 they're scaffolding, not the conversation the user is following;
 cropping tool payloads to one line keeps multi-line output from
 burying the thread. Trigger reasons render bold in the session log
@@ -69,20 +76,20 @@ with the goal name that carries the actual meaning.
 The queue surface is read-only by deliberate choice: the user
 wanted to see what's queued without being able to cancel, reorder,
 or pause it. Queue control is a separate concern, deferred until
-there's a real need — today not even tend can manipulate the queue.
+there's a real need.
 
 ## SCOPE
 - In scope: the two-column layout at fixed 25%/50%/25% right-side
   proportions; live streaming of conversation and session output;
   mouse-wheel scrolling with auto-follow; keyboard goal-list
   navigation with edge scrolling; dim/cropped tool-call rendering;
-  grey rendering of the triggered-goals system message; the modal
+  grey rendering of agent-to-agent system messages; the modal
   trigger-reason dialog; bold trigger reasons in the session log;
   queue markers in the goal list and pending-invocation listing in
-  the goal-text region; the active-agent input-prompt tag and
-  message routing; each agent's messages labeled with the agent's
-  name; recognizing the `/tend`, `/rummage`, and `/jog`
-  slash commands that switch the active agent.
+  the goal-text region; the active-session input-prompt tag and
+  message routing; each agent's messages labeled with the goal-id;
+  `/<goal-id>` slash commands that switch the active session to any
+  entry in the session registry.
 - Out of scope: themes, syntax highlighting, layout
   configurability, syncing the interface to a remote viewer; any
   interactive manipulation of the queue (cancel, reorder, pause,
@@ -93,12 +100,16 @@ parent_id = ""
 children = []
 
 [[related]]
+id = "goal-agents"
+reason = "goal-agents defines the session registry that makes /<goal-id> switching universal. Every entry in the registry is a valid target for the active-session switch."
+
+[[related]]
 id = "rummage"
-reason = "Rummage's existence drives the multi-agent UX in the conversation pane. The agent-switching slash commands and the active-agent tag are defined in rummage; this goal renders them."
+reason = "Rummage is one of the sessions addressable via /<goal-id>. Its output renders in the conversation pane when active."
 
 [[related]]
 id = "jog"
-reason = "jog is a third sibling chat agent in the conversation pane; this goal renders its `/jog` slash command and active-agent prompt tag alongside `/tend` and `/rummage`."
+reason = "Jog is one of the sessions addressable via /<goal-id>. Its output renders in the conversation pane when active."
 
 [[related]]
 id = "coding-standards"

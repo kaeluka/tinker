@@ -60,7 +60,7 @@ prompt contains it.
   project boundaries; reliance on version control for reverts.
 
 """
-parent_id = "goal-sessions"
+parent_id = "goal-agents"
 children = []
 
 [[related]]

@@ -1,5 +1,5 @@
 id = "jog"
-summary = "governs: jog intent↔spec auditor; pull invocation; topic resolution (read goals/, navigate, announce); five-step Socratic deepening (no-cue, one question/turn); two findings (didn't-know/know-better); /jog-edit commission format; terminal-for-thread rule; @rummage for implementation-drift | triggers: jog behavior; topic resolution; no-cue discipline; deepening loop steps; commission format; commission-is-terminal rule; when to consult rummage"
+summary = "governs: jog intent↔spec auditor; pull invocation; topic resolution (read goals/, navigate, announce); five-step Socratic deepening (no-cue, one question/turn); two findings (didn't-know/know-better); @tend commission format; terminal-for-thread rule; @rummage for implementation-drift | triggers: jog behavior; topic resolution; no-cue discipline; deepening loop steps; commission format; commission-is-terminal rule; when to consult rummage"
 description = """
 ## WHAT
 
@@ -42,16 +42,19 @@ re-aligns the user whether or not a gap exists.
   to the goal.
 
 - **"I know better"**: the goal is thin, wrong, or needs enriching.
-  Commission a fix from tend via `/jog-edit <goal-id> <instruction>`.
-  The instruction tells tend exactly what to fix. Two example forms:
-  "The SCOPE section omits X — add it as an in-scope item." /
-  "The WHAT section says Y but the user's intent is Z — update the
-  claim."
+  Commission a fix from tend via an `@tend` block. The block must be
+  self-contained — include the goal-id and exactly what to fix.
+  Two example forms:
+  "`@tend` — goal `X`: The SCOPE section omits Y — add it as an
+  in-scope item." /
+  "`@tend` — goal `X`: The WHAT section says Y but the user's intent
+  is Z — update the claim."
 
-**Commission is terminal for a thread.** Never emit `/jog-edit` in
-the same turn as an open question to the user. The channel fires the
-moment the reply finalises — a question alongside the commission gets
-no chance to be answered. Finish hearing back, then commit.
+**Commission is terminal for a thread.** Never emit an `@tend`
+commission in the same turn as an open question to the user. The
+`@`-block fires the moment the reply finalises — a question alongside
+the commission gets no chance to be answered. Finish hearing back,
+then commit.
 
 The no-playback assumption (tend applies the edit without an
 interview) holds only when the commission is terminal — the
@@ -71,25 +74,20 @@ statement, nothing more.
 Goals drift as situations move; jog continues the dialectic from the
 intent side. Pull-only means jog never interrupts. No-cue means it
 can't lead the user into agreement. The terminal-commission rule
-exists because the `/jog-edit` channel fires immediately — a question
-alongside it would never be answered before the edit lands.
+exists because the `@`-block fires the moment the reply finalises —
+a question alongside it would never be answered before the edit lands.
 
 ## SCOPE
-- Out of scope: writing goals directly (commission only via
-  `/jog-edit`); probing the running system (route to `@rummage`);
-  push/scheduled invocation; durable jog documents; multi-author
-  goal governance.
+- Out of scope: writing goals directly (commission only via `@tend`);
+  probing the running system (route to `@rummage`); push/scheduled
+  invocation; durable jog documents; multi-author goal governance.
 """
-parent_id = "divergence-investigation"
+parent_id = "the-cycles"
 children = []
 
 [[related]]
-id = "triggers"
-reason = "jog commissions tend over the jog→tend channel (`/jog-edit`) defined in `triggers` — distinct from `@goal-id` dispatch and exempt from the declarative-pointer rule because the instruction is user-sourced."
-
-[[related]]
 id = "tend"
-reason = "On 'I know better' jog commissions tend to fix/clarify/enrich a goal. In v1 tend applies without a playback — jog's own conversation already did the anchoring."
+reason = "On 'I know better' jog commissions tend to fix/clarify/enrich a goal via `@tend`; tend applies without a playback — jog's conversation already did the anchoring."
 
 [[related]]
 id = "tui"

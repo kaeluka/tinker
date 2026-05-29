@@ -1,4 +1,4 @@
-use crate::app::{ActiveAgent, App, Focus, Phase, Role};
+use crate::app::{App, Focus, Phase, Role};
 use crate::claude::USAGE_LINE_MARKER;
 use crate::goal_session::TRIGGER_REASON_MARKER;
 use crate::goal::{build_tree, GoalNode};
@@ -130,33 +130,35 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let (prompt, prompt_style): (&str, Style) = match app.active_agent {
-        ActiveAgent::Tend => {
+    let (prompt, prompt_style): (String, Style) = match app.active_session.as_str() {
+        "tend" => {
             if app.phase == Phase::Initializing || app.tend_tasks > 0 {
-                ("… ", Style::default().fg(Color::DarkGray))
+                ("… ".to_string(), Style::default().fg(Color::DarkGray))
             } else {
-                ("tend> ", Style::default().fg(Color::Yellow))
+                ("tend> ".to_string(), Style::default().fg(Color::Yellow))
             }
         }
-        ActiveAgent::Rummage => {
+        "rummage" => {
             if app.rummage_tasks > 0 {
-                ("… ", Style::default().fg(Color::DarkGray))
+                ("… ".to_string(), Style::default().fg(Color::DarkGray))
             } else {
-                ("rummage> ", Style::default().fg(Color::Magenta))
+                ("rummage> ".to_string(), Style::default().fg(Color::Magenta))
             }
         }
-        ActiveAgent::Jog => {
+        "jog" => {
             if app.jog_tasks > 0 {
-                ("… ", Style::default().fg(Color::DarkGray))
+                ("… ".to_string(), Style::default().fg(Color::DarkGray))
             } else {
-                ("jog> ", Style::default().fg(Color::Blue))
+                ("jog> ".to_string(), Style::default().fg(Color::Blue))
             }
         }
+        id => (format!("{}> ", id), Style::default().fg(Color::Cyan)),
     };
-    let input_locked = match app.active_agent {
-        ActiveAgent::Tend => app.tend_tasks > 0 || app.phase == Phase::Initializing,
-        ActiveAgent::Rummage => app.rummage_tasks > 0,
-        ActiveAgent::Jog => app.jog_tasks > 0,
+    let input_locked = match app.active_session.as_str() {
+        "tend" => app.tend_tasks > 0 || app.phase == Phase::Initializing,
+        "rummage" => app.rummage_tasks > 0,
+        "jog" => app.jog_tasks > 0,
+        _ => false,
     };
     let input_text_style = if input_locked {
         Style::default().fg(Color::DarkGray)
@@ -167,7 +169,7 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let max_input = (inner.height / 2).max(1);
     let (input_height, input_scroll) =
-        input_pane_layout(prompt, &app.input, cursor, inner.width, max_input);
+        input_pane_layout(&prompt, &app.input, cursor, inner.width, max_input);
 
     let msg_area = Rect {
         height: inner.height.saturating_sub(input_height),
@@ -200,7 +202,7 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let input_line = Line::from(vec![
         Span::styled(prompt, prompt_style),
-        Span::styled(&app.input, input_text_style),
+        Span::styled(app.input.clone(), input_text_style),
         Span::styled(cursor, Style::default().fg(Color::Cyan)),
     ]);
     frame.render_widget(
