@@ -37,13 +37,6 @@ use std::{io, path::PathBuf, sync::{Arc, Mutex}, time::Duration};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
-fn description_from_toml_str(s: &str) -> String {
-    let marker = "description = \"\"\"\n";
-    let start = s.find(marker).expect("TOML must have description field") + marker.len();
-    let end = start + s[start..].find("\n\"\"\"").expect("description field must close");
-    s[start..end].to_string()
-}
-
 /// Lazy-spawn request: sent when `@goal-id` arrives and that agent isn't in
 /// the session registry yet, or when the user triggers a goal via the tree UI.
 struct SpawnGoalRequest {
@@ -291,9 +284,9 @@ async fn main() -> Result<()> {
             Arc::new(ClaudeRunner::new(goal_m)),
             Arc::new(ClaudeRunner::new(tinker_m)),
             Arc::new(ClaudeRunner::new(cleanup_m)),
-            Arc::new(ClaudeRunner::with_system_prompt(tinker_m, description_from_toml_str(include_str!("../.tinker/goals/rummage.toml")))
+            Arc::new(ClaudeRunner::with_system_prompt(tinker_m, rummage::packaged_goal().description)
                 .with_denied_tools(["task", "todowrite"])),
-            Arc::new(ClaudeRunner::with_system_prompt(tinker_m, description_from_toml_str(include_str!("../.tinker/goals/jog.toml")))
+            Arc::new(ClaudeRunner::with_system_prompt(tinker_m, jog::packaged_goal().description)
                 .with_denied_tools(["task", "todowrite"])),
         )
     } else if use_default_model {
@@ -1711,7 +1704,7 @@ mod tests {
         // Both backends bind the tinker-tier model to `tinker_m` with the built-in
         // constant as fallback, then use it for rummage and jog as well.
         assert!(
-            main_rs.contains("description_from_toml_str(include_str!(\"../.tinker/goals/rummage.toml\"))"),
+            main_rs.contains("tinker_m, rummage::packaged_goal().description"),
             "rummage claude runner must use tinker_m (strongest tier)",
         );
         assert!(
@@ -1736,7 +1729,7 @@ mod tests {
     fn test_spec_jog_wired_to_strongest_model_tier() {
         let main_rs = include_str!("main.rs");
         assert!(
-            main_rs.contains("description_from_toml_str(include_str!(\"../.tinker/goals/jog.toml\"))"),
+            main_rs.contains("tinker_m, jog::packaged_goal().description"),
             "jog claude runner must use tinker_m (strongest tier)",
         );
         assert!(

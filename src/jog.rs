@@ -1,10 +1,12 @@
+use crate::goal::Goal;
+
 const JOG_FRONTMATTER: &str = "---\ndescription: >-\n  Jog — audits intent\u{2194}spec alignment through Socratic deepening.\nmode: primary\npermission:\n  task: deny\n  todowrite: deny\n  skill: deny\n---\n";
 
-fn description_from_toml_str(s: &str) -> String {
-    let marker = "description = \"\"\"\n";
-    let start = s.find(marker).expect("TOML must have description field") + marker.len();
-    let end = start + s[start..].find("\n\"\"\"").expect("description field must close");
-    s[start..end].to_string()
+/// Parses the bundled `jog.toml` into a `Goal` struct via the standard pipeline.
+/// Uses the same `toml::from_str::<Goal>()` path as every other goal in the system.
+pub fn packaged_goal() -> Goal {
+    const TOML: &str = include_str!("../packaged-goals/jog.toml");
+    toml::from_str(TOML).expect("packaged jog.toml must be valid Goal TOML")
 }
 
 /// Returns the content for the `jog` opencode agent file.
@@ -14,8 +16,7 @@ fn description_from_toml_str(s: &str) -> String {
 /// probe the running system. task/todowrite are denied because jog is a chat
 /// audit session, not a planner.
 pub fn jog_agent_content() -> String {
-    const TOML: &str = include_str!("../.tinker/goals/jog.toml");
-    format!("{}{}", JOG_FRONTMATTER, description_from_toml_str(TOML))
+    format!("{}{}", JOG_FRONTMATTER, packaged_goal().description)
 }
 
 #[cfg(test)]
@@ -23,8 +24,7 @@ mod tests {
     use super::*;
 
     fn jog_description() -> String {
-        const TOML: &str = include_str!("../.tinker/goals/jog.toml");
-        description_from_toml_str(TOML)
+        super::packaged_goal().description
     }
 
     // spec (jog): jog is a chat audit session, not a planner.

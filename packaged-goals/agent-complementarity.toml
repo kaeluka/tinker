@@ -22,9 +22,11 @@ The current profile assignments:
 - **Goal sessions** (spec↔code, forward): optimised for code
   generation from a written spec. Handle workloads that require
   turning a precise, authoritative goal into working code.
-- **Jog** (intent↔spec, backward): optimised for Socratic deepening
-  and no-cue questioning. Handles workloads that require surfacing
-  tacit intent drift without leading the user.
+- **Jog** (layer-agnostic, backward): optimised for bidirectional
+  discrepancy finding across adjacent layers. Orchestrates by
+  delegating layer-reading to peer agents (@tend for spec, @rummage
+  for code, user for intent) and holds the comparison logic. Forward
+  check finds bugs; backward check finds points of interest.
 
 At shared boundaries, profile complementarity is what makes peer
 consultation (`peer-consult`) effective. Routing to an agent with a

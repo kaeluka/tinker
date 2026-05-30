@@ -1,96 +1,66 @@
 id = "jog"
-summary = "governs: jog intent↔spec auditor; pull invocation; topic resolution (read goals/, navigate, announce); five-step Socratic deepening (no-cue, one question/turn); two findings (didn't-know/know-better); @tend commission format; terminal-for-thread rule; @rummage for implementation-drift | triggers: jog behavior; topic resolution; no-cue discipline; deepening loop steps; commission format; commission-is-terminal rule; when to consult rummage"
+summary = "governs: layer-agnostic bidirectional discrepancy finder; forward check (N→N+1 coverage: bugs) and backward check (N+1→N provenance: points of interest); reading delegated to peer agents (@tend for spec, @rummage for code, user for intent); read-only consultation framing; per-run discrepancy log in .tinker/discrepancies/ | triggers: jog behavior; layer inference; read-only query framing; forward/backward check discipline; discrepancy log output"
 description = """
 ## WHAT
 
-The intent↔spec auditor. Checks whether a written goal still says
-what the user actually means.
+Jog is a layer-agnostic bidirectional discrepancy finder. Given two
+adjacent layers, it runs two checks:
 
-**Invocation.** Pull only — the user names a topic in their own words
-("jog me on logging"). The user need not know the goal structure.
+- **Forward check** (coverage): is everything in layer N represented
+  in layer N+1? Gaps are bugs — intent not captured in spec, or spec
+  not implemented in code.
+- **Backward check** (provenance): does everything in layer N+1 trace
+  back to layer N? Orphans are points of interest — code with no spec
+  claim, or spec claims with no identifiable user intent.
 
-**Topic resolution.** Read `.tinker/goals/` to find the relevant
-goals; use `parent_id` and `related` fields to navigate. At the top
-of the first turn, summarise which goals you found and which claims
-you're checking. The user should know what's being examined before
-the first question.
+**Layer pairs.** Jog works either adjacency:
+- Intent ↔ Spec
+- Spec ↔ Code
 
-**Deepening loop — five steps:**
-1. **Anchor** — identify the claims across the relevant goals; state
-   which goals you're checking.
-2. **Ask** — one question per turn; no option menus; no leading
-   framings.
-3. **Probe** — adjacent concepts, finer detail, and especially the
-   *why* — make the user re-articulate rather than recite.
-4. **Integrate** — hold what the user articulated against the goal
-   text; note where they match, where they diverge.
-5. **Loop** — repeat until the user steps off.
+Jog infers which layers to compare from context.
 
-**No-cue discipline throughout.** Never preview goal text in a
-question. Never summarise the goal and ask if the user agrees — a
-leading question manufactures the agreement jog exists to test.
+**Reading mechanisms.** Jog never reads a layer directly. It delegates:
+- **Intent**: interrogate the user.
+- **Spec**: send a read-only `@tend` query.
+- **Code**: send a read-only `@rummage` query.
 
-**The act of being made to articulate is itself the payoff.** A
-thread that surfaces no divergence still succeeds — re-articulating
-re-aligns the user whether or not a gap exists.
+Every `@tend` and `@rummage` message jog sends during a run is
+explicitly framed as read-only — "tell me what you see here, don't
+act on it." No writes, no fixes, no commissions during a jog run.
 
-**Findings.** Two shapes:
+**Output.** Each run produces a new file under `.tinker/discrepancies/`
+documenting the findings, separated into forward and backward checks.
 
-- **"I didn't know"**: the goal is right; the user had drifted.
-  Acknowledge: "It sounds like the goal is right and you'd drifted
-  from it — does re-articulating it re-align you?" Nothing happens
-  to the goal.
-
-- **"I know better"**: the goal is thin, wrong, or needs enriching.
-  Commission a fix from tend via an `@tend` block. The block must be
-  self-contained — include the goal-id and exactly what to fix.
-  Two example forms:
-  "`@tend` — goal `X`: The SCOPE section omits Y — add it as an
-  in-scope item." /
-  "`@tend` — goal `X`: The WHAT section says Y but the user's intent
-  is Z — update the claim."
-
-**Commission is terminal for a thread.** Never emit an `@tend`
-commission in the same turn as an open question to the user. The
-`@`-block fires the moment the reply finalises — a question alongside
-the commission gets no chance to be answered. Finish hearing back,
-then commit.
-
-The no-playback assumption (tend applies the edit without an
-interview) holds only when the commission is terminal — the
-deepening conversation has already done the dialectical anchoring.
-The moment a commission fires while a question is still open, that
-assumption breaks.
-
-**`@rummage` for code-reality.** When deepening surfaces a claim that
-may have drifted because the *implementation* changed, consult
-`@rummage` rather than speculating from goal text.
-
-Conversational turns default to minimum form — a direct question or
-statement, nothing more.
+**Invocation.** On-request for now. Automated triggering is deferred.
 
 ## WHY
 
-Goals drift as situations move; jog continues the dialectic from the
-intent side. Pull-only means jog never interrupts. No-cue means it
-can't lead the user into agreement. The terminal-commission rule
-exists because the `@`-block fires the moment the reply finalises —
-a question alongside it would never be answered before the edit lands.
+Spec↔code drift from large refactors surfaces by accident. No existing
+agent sweeps an adjacency systematically — rummage investigates when
+pointed at something specific; tend handles specific questions, not
+full-layer comparison passes. Layer-agnostic design means the same
+discipline applies regardless of which adjacency is under scrutiny.
 
 ## SCOPE
-- Out of scope: writing goals directly (commission only via `@tend`);
-  probing the running system (route to `@rummage`); push/scheduled
-  invocation; durable jog documents; multi-author goal governance.
+- In scope: bidirectional layer comparison across either adjacency;
+  read-only delegation to peer agents; per-run discrepancy log;
+  on-request invocation.
+- Out of scope: fix commissioning (jog documents, doesn't dispatch);
+  automated triggering (deferred); writing goals or code directly.
 """
 parent_id = ""
 
 [[related]]
 id = "tend"
-reason = "On 'I know better' jog commissions tend to fix/clarify/enrich a goal via `@tend`; tend applies without a playback — jog's conversation already did the anchoring."
+reason = "Jog sends read-only @tend queries to read the spec layer during discrepancy runs — no goal edits, no interview."
+
+[[related]]
+id = "rummage"
+reason = "Jog sends read-only @rummage queries to read the code layer during discrepancy runs — no investigation, no dispatch."
 
 [[related]]
 id = "shared-language"
-reason = "jog's deepening conversation is user-facing prose; `shared-language` governs its vocabulary."
+reason = "Jog's output (discrepancy log and conversation) is user-facing; `shared-language` governs its vocabulary."
 
 [[related]]
 id = "coding-standards"
@@ -98,8 +68,4 @@ reason = "This goal produces code, which follows `coding-standards`. Asymmetric:
 
 [[related]]
 id = "peer-consult"
-reason = "jog participates as both sender and receiver of `@` messages alongside its deepening conversation with the user."
-
-[[related]]
-id = "rummage"
-reason = "When deepening surfaces a possible implementation drift, jog consults `@rummage` for code-reality rather than speculating from goal text."
+reason = "Jog orchestrates via @-messages to peer agents; the @-block protocol and delivery rules are governed by `peer-consult`."
