@@ -92,9 +92,5 @@ id = "rummage"
 reason = "Rummage's opencode agent file carries `task`/`todowrite` denials in frontmatter that the claude backend bypasses; this goal owns re-imposing them via `--disallowedTools` on the claude path."
 
 [[related]]
-id = "cost-reduction"
-reason = "`cost-reduction`'s measurement substrate extends the claude backend's output parser (`src/claude.rs`) to capture the per-message `usage` field the Claude CLI emits. Cost work is scoped to the claude backend until it's confirmed that's where the user spends."
-
-[[related]]
 id = "coding-standards"
 reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."

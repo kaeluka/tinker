@@ -27,7 +27,6 @@ struct RawEvent {
     session_id: Option<String>,
     part: Option<RawPart>,
     error: Option<RawError>,
-    message: Option<RawMessage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -54,45 +53,6 @@ struct RawError {
 #[derive(Debug, Deserialize)]
 struct RawErrorData {
     message: Option<String>,
-}
-
-// Cost extraction investigation (2026-05-20):
-//
-// Three paths probed for per-call token counts from opencode/OpenRouter:
-//
-// 1. Response headers (X-OpenRouter-Remaining-Credits, etc.): inaccessible —
-//    the opencode CLI handles HTTP internally and does not forward headers into
-//    its stdout JSON stream.
-//
-// 2. Response metadata in the JSON stream: the opencode CLI emits a "message"
-//    event at the end of each turn. We capture it below and extract token counts
-//    from two known field paths (message.tokens.* and message.usage.*). When
-//    present, usage is emitted as a USAGE_LINE_MARKER chunk so that
-//    parse_usage_from_text picks it up transparently — no trait change needed.
-//
-// 3. OpenRouter generation-query API (GET /api/v1/generation?id=<id>): requires
-//    a per-request generation ID. The CLI does not expose this ID in its stdout
-//    stream (it lives in HTTP response headers which we cannot access). Dead end
-//    without forking the CLI.
-//
-// Result: usage is non-null only when opencode emits a "message" event with
-// token count fields. If the running CLI version omits those fields, usage
-// remains null — recorded here as a known gap, not silently accepted.
-
-#[derive(Debug, Deserialize)]
-struct RawMessage {
-    // opencode: message.tokens.{input,output,cache_read,cache_write}
-    tokens: Option<RawTokenCounts>,
-    // Alternative path seen in some build variants
-    usage: Option<RawTokenCounts>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawTokenCounts {
-    input: Option<u64>,
-    output: Option<u64>,
-    cache_read: Option<u64>,
-    cache_write: Option<u64>,
 }
 
 /// Real `OpenCodeRunner` impl bound to a specific opencode model id.
@@ -197,27 +157,6 @@ impl OpenCodeRunner for RealOpenCodeRunner {
                         .or_else(|| ev.error.as_ref().and_then(|e| e.name.clone()))
                         .unwrap_or_else(|| "unknown error".to_string());
                     on_chunk(format!("\n\u{2030} error: {}\n", msg));
-                }
-                "message" => {
-                    // Emit token usage if the message event includes it.
-                    // Formatted as a USAGE_LINE_MARKER line so parse_usage_from_text
-                    // picks it up without any trait changes.
-                    if let Some(msg) = &ev.message {
-                        let counts = msg.tokens.as_ref().or(msg.usage.as_ref());
-                        if let Some(t) = counts {
-                            let input = t.input.unwrap_or(0);
-                            let output = t.output.unwrap_or(0);
-                            let cache_read = t.cache_read.unwrap_or(0);
-                            let cache_write = t.cache_write.unwrap_or(0);
-                            if input > 0 || output > 0 {
-                                use crate::claude::USAGE_LINE_MARKER;
-                                on_chunk(format!(
-                                    "{}\u{21B3} {} in / {} out / {} cache_read / {} cache_write\n",
-                                    USAGE_LINE_MARKER, input, output, cache_read, cache_write,
-                                ));
-                            }
-                        }
-                    }
                 }
                 _ => {}
             }
@@ -393,96 +332,6 @@ mod tests {
         assert!(!args.iter().any(|a| a == "-m"), "must not pass -m when model is None");
         assert!(args.iter().any(|a| a == "-s"));
         assert!(args.iter().any(|a| a == "ses_x"));
-    }
-
-    // spec (cost-reduction / orchestrator-introspection): a representative opencode
-    // "message" event with token counts in the `tokens` field must deserialize
-    // into RawMessage, produce a USAGE_LINE_MARKER-prefixed line in the correct
-    // format, and round-trip back through parse_usage_from_text to a populated
-    // UsageInfo with all four fields correct.
-    #[test]
-    fn test_spec_opencode_message_event_tokens_path_round_trips_to_usage_info() {
-        use crate::claude::USAGE_LINE_MARKER;
-        use crate::logger::parse_usage_from_text;
-
-        // Simulate the JSON the opencode CLI emits at the end of a turn.
-        let json = r#"{
-            "type": "message",
-            "tokens": {
-                "input": 5000,
-                "output": 300,
-                "cache_read": 12000,
-                "cache_write": 800
-            }
-        }"#;
-        let msg: RawMessage = serde_json::from_str(json).unwrap();
-        let counts = msg.tokens.as_ref().or(msg.usage.as_ref()).expect("tokens must be present");
-
-        let input = counts.input.unwrap_or(0);
-        let output = counts.output.unwrap_or(0);
-        let cache_read = counts.cache_read.unwrap_or(0);
-        let cache_write = counts.cache_write.unwrap_or(0);
-        assert!(input > 0 || output > 0, "guard must pass for non-zero counts");
-
-        // Construct the line exactly as production code does.
-        let line = format!(
-            "{}\u{21B3} {} in / {} out / {} cache_read / {} cache_write\n",
-            USAGE_LINE_MARKER, input, output, cache_read, cache_write,
-        );
-
-        // Round-trip: parse_usage_from_text must recover all four counts.
-        let usage = parse_usage_from_text(&line).expect("must parse the emitted usage line");
-        assert_eq!(usage.input_tokens, 5000);
-        assert_eq!(usage.output_tokens, 300);
-        assert_eq!(usage.cache_read_input_tokens, 12000);
-        assert_eq!(usage.cache_creation_input_tokens, 800);
-    }
-
-    // spec (cost-reduction): the `usage` field is a fallback when `tokens` is
-    // absent — some opencode CLI build variants use this alternative path.
-    // Verify that msg.tokens.as_ref().or(msg.usage.as_ref()) selects it.
-    #[test]
-    fn test_spec_opencode_message_event_usage_fallback_path_produces_usage_line() {
-        use crate::claude::USAGE_LINE_MARKER;
-        use crate::logger::parse_usage_from_text;
-
-        let json = r#"{
-            "usage": {
-                "input": 1000,
-                "output": 100,
-                "cache_read": 0,
-                "cache_write": 0
-            }
-        }"#;
-        let msg: RawMessage = serde_json::from_str(json).unwrap();
-        assert!(msg.tokens.is_none(), "tokens must be absent to exercise fallback");
-        let counts = msg.tokens.as_ref().or(msg.usage.as_ref()).expect("usage fallback must be present");
-
-        let input = counts.input.unwrap_or(0);
-        let output = counts.output.unwrap_or(0);
-        let line = format!(
-            "{}\u{21B3} {} in / {} out / {} cache_read / {} cache_write\n",
-            USAGE_LINE_MARKER, input, output, 0u64, 0u64,
-        );
-        let usage = parse_usage_from_text(&line).expect("usage fallback must round-trip");
-        assert_eq!(usage.input_tokens, 1000);
-        assert_eq!(usage.output_tokens, 100);
-    }
-
-    // spec (cost-reduction): when both input and output are zero the production
-    // code does NOT emit a USAGE_LINE_MARKER chunk (the `if input > 0 || output > 0`
-    // guard). Verified via deserialization + guard logic applied directly.
-    #[test]
-    fn test_spec_opencode_message_event_zero_counts_suppressed() {
-        let json = r#"{"tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}}"#;
-        let msg: RawMessage = serde_json::from_str(json).unwrap();
-        let counts = msg.tokens.as_ref().or(msg.usage.as_ref()).unwrap();
-        let input = counts.input.unwrap_or(0);
-        let output = counts.output.unwrap_or(0);
-        assert!(
-            !(input > 0 || output > 0),
-            "zero-count guard must suppress emission when both input and output are 0"
-        );
     }
 
     // security: \u{2192} security.md T5 — opencode subprocesses must drop stderr

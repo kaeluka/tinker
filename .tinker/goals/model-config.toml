@@ -71,9 +71,5 @@ parent_id = "backends"
 children = []
 
 [[related]]
-id = "cost-reduction"
-reason = "`cost-reduction` names model tiering as a cost lever but defers acting on it (each cut is a separately-interviewed goal). This goal is the knob that makes a model-tiering cut trivially actionable — the user can swap any tier to a cheaper model without code changes. Symmetric link."
-
-[[related]]
 id = "coding-standards"
 reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."

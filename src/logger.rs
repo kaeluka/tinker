@@ -16,23 +16,6 @@ use tokio::sync::mpsc;
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct UsageInfo {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cache_creation_input_tokens: u64,
-    pub cache_read_input_tokens: u64,
-}
-
-impl UsageInfo {
-    pub fn accumulate(&mut self, other: &UsageInfo) {
-        self.input_tokens += other.input_tokens;
-        self.output_tokens += other.output_tokens;
-        self.cache_creation_input_tokens += other.cache_creation_input_tokens;
-        self.cache_read_input_tokens += other.cache_read_input_tokens;
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueEntry {
     pub goal_id: String,
@@ -55,7 +38,6 @@ pub struct StateSnapshot {
     pub focus: String,
     pub scroll_offsets: ScrollOffsets,
     pub queue: Vec<QueueEntry>,
-    pub session_usage_totals: UsageInfo,
 }
 
 impl Default for StateSnapshot {
@@ -65,7 +47,6 @@ impl Default for StateSnapshot {
             focus: "repl".to_string(),
             scroll_offsets: ScrollOffsets::default(),
             queue: Vec::new(),
-            session_usage_totals: UsageInfo::default(),
         }
     }
 }
@@ -77,15 +58,12 @@ impl Default for StateSnapshot {
 pub enum LogEvent {
     TinkerSessionStarted {
         system_prompt_chars: usize,
-        goal_list_chars: usize,
         goal_list_hash: String,
         backend: String,
     },
     TinkerTurnStart,
     TinkerTurnEnd {
         duration_ms: u64,
-        message_chars: usize,
-        usage: Option<UsageInfo>,
         backend: String,
     },
     TinkerUserMessageReceived {
@@ -100,7 +78,6 @@ pub enum LogEvent {
     GoalSessionDispatched {
         goal_id: String,
         reason: Option<String>,
-        init_message_chars: usize,
         backend: String,
     },
     GoalSessionStarted {
@@ -115,7 +92,6 @@ pub enum LogEvent {
         tool_calls: usize,
         summary_chars: usize,
         full_output: String,
-        usage: Option<UsageInfo>,
         backend: String,
     },
     CleanupHookRun {
@@ -282,11 +258,8 @@ fn apply_to_state(entry: &LogEntry, state: &mut StateSnapshot) -> bool {
             });
             true
         }
-        LogEvent::GoalSessionFinished { goal_id, usage, .. } => {
+        LogEvent::GoalSessionFinished { goal_id, .. } => {
             state.queue.retain(|e| &e.goal_id != goal_id || e.status != "running");
-            if let Some(u) = usage {
-                state.session_usage_totals.accumulate(u);
-            }
             true
         }
         _ => false,
@@ -369,40 +342,6 @@ pub fn hash_string(s: &str) -> String {
     format!("{:016x}", h.finish())
 }
 
-/// Parse usage from a streamed output string by looking for a USAGE_LINE_MARKER line.
-/// Returns None when no such line is present (opencode backend case).
-pub fn parse_usage_from_text(text: &str) -> Option<UsageInfo> {
-    use crate::claude::USAGE_LINE_MARKER;
-    for line in text.lines() {
-        let line = line.trim();
-        if line.starts_with(USAGE_LINE_MARKER) {
-            let inner = line
-                .trim_start_matches(USAGE_LINE_MARKER)
-                .trim_start_matches('\u{21B3}') // ↳
-                .trim();
-            // "1000 in / 200 out / 800 cache_read / 50 cache_write"
-            let parts: Vec<&str> = inner.split('/').collect();
-            if parts.len() >= 4 {
-                let n = |s: &str| -> u64 {
-                    s.trim()
-                        .split_whitespace()
-                        .next()
-                        .unwrap_or("0")
-                        .parse()
-                        .unwrap_or(0)
-                };
-                return Some(UsageInfo {
-                    input_tokens: n(parts[0]),
-                    output_tokens: n(parts[1]),
-                    cache_read_input_tokens: n(parts[2]),
-                    cache_creation_input_tokens: n(parts[3]),
-                });
-            }
-        }
-    }
-    None
-}
-
 /// Count tool-call lines (lines starting with the → arrow) in streamed output.
 pub fn count_tool_calls(output: &str) -> usize {
     output
@@ -476,7 +415,6 @@ mod tests {
                 "tinker_session_started",
                 LogEvent::TinkerSessionStarted {
                     system_prompt_chars: 100,
-                    goal_list_chars: 200,
                     goal_list_hash: "abc".to_string(),
                     backend: "claude".to_string(),
                 },
@@ -492,7 +430,6 @@ mod tests {
                     tool_calls: 3,
                     summary_chars: 200,
                     full_output: "output".to_string(),
-                    usage: None,
                     backend: "opencode".to_string(),
                 },
             ),
@@ -522,15 +459,9 @@ mod tests {
 
     // spec (tinker-introspection): goal_session_finished carries the
     // observable set — exit_status, duration_ms, files_modified, tool_calls,
-    // summary_chars, full_output, usage, backend. No session-declared outcome.
+    // summary_chars, full_output, backend. No session-declared outcome.
     #[test]
     fn test_spec_goal_session_finished_carries_observable_set() {
-        let usage = UsageInfo {
-            input_tokens: 1000,
-            output_tokens: 200,
-            cache_read_input_tokens: 800,
-            cache_creation_input_tokens: 50,
-        };
         let event = LogEvent::GoalSessionFinished {
             goal_id: "tui".to_string(),
             exit_status: "clean".to_string(),
@@ -540,7 +471,6 @@ mod tests {
             tool_calls: 7,
             summary_chars: 350,
             full_output: "full session transcript".to_string(),
-            usage: Some(usage),
             backend: "claude".to_string(),
         };
         let entry = LogEntry {
@@ -556,46 +486,12 @@ mod tests {
         assert!(val.get("tool_calls").is_some());
         assert!(val.get("summary_chars").is_some());
         assert!(val.get("full_output").is_some());
-        assert!(val.get("usage").is_some());
         assert!(val.get("backend").is_some());
         // no session-declared outcome field
         assert!(
             val.get("outcome").is_none(),
             "goal_session_finished must not have an outcome field"
         );
-        assert_eq!(val["usage"]["input_tokens"], 1000);
-        assert_eq!(val["usage"]["output_tokens"], 200);
-    }
-
-    // spec (tinker-introspection): backend-agnostic — opencode events
-    // carry null for usage (field present, value null) not a missing field.
-    #[test]
-    fn test_spec_opencode_backend_has_null_usage() {
-        let event = LogEvent::GoalSessionFinished {
-            goal_id: "g".to_string(),
-            exit_status: "clean".to_string(),
-            duration_ms: 100,
-            files_modified_count: 0,
-            files_modified: vec![],
-            tool_calls: 0,
-            summary_chars: 0,
-            full_output: String::new(),
-            usage: None,
-            backend: "opencode".to_string(),
-        };
-        let entry = LogEntry {
-            ts: "2026-05-20T00:00:00Z".to_string(),
-            source: "goal_session".to_string(),
-            event,
-        };
-        let json = serde_json::to_string(&entry).unwrap();
-        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert!(
-            val.get("usage").is_some(),
-            "usage field must be present even for opencode (as null)"
-        );
-        assert!(val["usage"].is_null(), "opencode usage must be null");
-        assert_eq!(val["backend"], "opencode");
     }
 
     // spec (tinker-introspection): message-level events carry full text.
@@ -707,67 +603,6 @@ mod tests {
         assert!(!changed3, "TinkerTurnStart must not mark state dirty");
     }
 
-    // spec: session usage totals accumulate across finished sessions.
-    #[test]
-    fn test_spec_state_accumulates_usage_from_finished_sessions() {
-        let mut state = StateSnapshot::default();
-        let entry = |ev: LogEvent| LogEntry {
-            ts: "2026-05-20T00:00:00Z".to_string(),
-            source: "goal_session".to_string(),
-            event: ev,
-        };
-        let u = UsageInfo {
-            input_tokens: 100,
-            output_tokens: 50,
-            cache_creation_input_tokens: 10,
-            cache_read_input_tokens: 200,
-        };
-        apply_to_state(
-            &entry(LogEvent::GoalSessionFinished {
-                goal_id: "g".to_string(),
-                exit_status: "clean".to_string(),
-                duration_ms: 500,
-                files_modified_count: 0,
-                files_modified: vec![],
-                tool_calls: 2,
-                summary_chars: 100,
-                full_output: "text".to_string(),
-                usage: Some(u),
-                backend: "claude".to_string(),
-            }),
-            &mut state,
-        );
-        assert_eq!(state.session_usage_totals.input_tokens, 100);
-        assert_eq!(state.session_usage_totals.output_tokens, 50);
-    }
-
-    // spec: parse_usage_from_text extracts all four token counts from a
-    // USAGE_LINE_MARKER-prefixed line (Claude backend output).
-    #[test]
-    fn test_spec_parse_usage_from_text_extracts_all_fields() {
-        use crate::claude::USAGE_LINE_MARKER;
-        let text = format!(
-            "{}\u{21B3} 1000 in / 200 out / 800 cache_read / 50 cache_write\n",
-            USAGE_LINE_MARKER
-        );
-        let usage = parse_usage_from_text(&text).expect("must parse usage line");
-        assert_eq!(usage.input_tokens, 1000);
-        assert_eq!(usage.output_tokens, 200);
-        assert_eq!(usage.cache_read_input_tokens, 800);
-        assert_eq!(usage.cache_creation_input_tokens, 50);
-    }
-
-    // spec: parse_usage_from_text returns None when no usage line is present
-    // (opencode backend produces no usage line).
-    #[test]
-    fn test_spec_parse_usage_returns_none_for_opencode_output() {
-        let text = "Some output without usage line.\n\u{2192} Bash cargo build\n";
-        assert!(
-            parse_usage_from_text(text).is_none(),
-            "opencode output with no USAGE_LINE_MARKER must yield None"
-        );
-    }
-
     // spec (tinker-introspection): count_tool_calls counts lines starting
     // with the → arrow, matching the format emitted by format_tool_use in
     // claude.rs and opencode.rs.
@@ -864,75 +699,4 @@ mod tests {
         );
     }
 
-    // spec (cost-reduction): TinkerSessionStarted must carry goal_list_chars
-    // so the decomposition substrate can attribute cache_write on the first turn
-    // between the system prompt and the goals list.
-    #[test]
-    fn test_spec_cost_reduction_tinker_session_started_carries_goal_list_chars() {
-        let event = LogEvent::TinkerSessionStarted {
-            system_prompt_chars: 12000,
-            goal_list_chars: 3500,
-            goal_list_hash: "abc123".to_string(),
-            backend: "claude".to_string(),
-        };
-        let entry = LogEntry {
-            ts: "2026-05-25T00:00:00Z".to_string(),
-            source: "tinker".to_string(),
-            event,
-        };
-        let json = serde_json::to_string(&entry).unwrap();
-        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(val["system_prompt_chars"], 12000);
-        assert_eq!(val["goal_list_chars"], 3500);
-    }
-
-    // spec (cost-reduction): TinkerTurnEnd must carry message_chars so the
-    // decomposition substrate can attribute each turn's cache_write between
-    // the new user message and the prior conversation history growth.
-    #[test]
-    fn test_spec_cost_reduction_tinker_turn_end_carries_message_chars() {
-        let event = LogEvent::TinkerTurnEnd {
-            duration_ms: 1234,
-            message_chars: 500,
-            usage: None,
-            backend: "claude".to_string(),
-        };
-        let entry = LogEntry {
-            ts: "2026-05-25T00:00:00Z".to_string(),
-            source: "tinker".to_string(),
-            event,
-        };
-        let json = serde_json::to_string(&entry).unwrap();
-        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(val["message_chars"], 500);
-        assert_eq!(val["duration_ms"], 1234);
-    }
-
-    // spec (cost-reduction): GoalSessionDispatched must carry init_message_chars
-    // so the decomposition substrate can see how large each goal session's initial
-    // context is — the primary driver for that session's first-turn cache_write.
-    #[test]
-    fn test_spec_cost_reduction_goal_session_dispatched_carries_init_message_chars() {
-        let event = LogEvent::GoalSessionDispatched {
-            goal_id: "tui".to_string(),
-            reason: Some("user edited goal".to_string()),
-            init_message_chars: 4200,
-            backend: "claude".to_string(),
-        };
-        let entry = LogEntry {
-            ts: "2026-05-25T00:00:00Z".to_string(),
-            source: "goal_session".to_string(),
-            event: event.clone(),
-        };
-        let json = serde_json::to_string(&entry).unwrap();
-        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(val["init_message_chars"], 4200);
-        assert_eq!(val["goal_id"], "tui");
-
-        // Must still flow into the state queue via apply_to_state.
-        let mut state = StateSnapshot::default();
-        let changed = apply_to_state(&entry, &mut state);
-        assert!(changed, "GoalSessionDispatched must mark state dirty");
-        assert_eq!(state.queue.len(), 1);
-    }
 }

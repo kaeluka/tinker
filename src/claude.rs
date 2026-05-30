@@ -16,18 +16,6 @@ pub const TINKER_MODEL: &str = "opus";
 pub const GOAL_MODEL: &str = "sonnet";
 pub const SCHEDULER_MODEL: &str = "haiku";
 
-/// Sentinel prefix for usage-summary lines emitted at the end of every run.
-/// The TUI strips this byte before rendering the line in a dim style.
-pub const USAGE_LINE_MARKER: char = '\x02';
-
-#[derive(Debug, Deserialize, Default, Clone)]
-struct ClaudeUsage {
-    input_tokens: Option<u64>,
-    output_tokens: Option<u64>,
-    cache_creation_input_tokens: Option<u64>,
-    cache_read_input_tokens: Option<u64>,
-}
-
 #[derive(Debug, Deserialize)]
 struct ClaudeEvent {
     #[serde(rename = "type")]
@@ -37,7 +25,6 @@ struct ClaudeEvent {
     message: Option<ClaudeMessage>,
     #[allow(dead_code)]
     result: Option<String>,
-    usage: Option<ClaudeUsage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,7 +96,6 @@ impl OpenCodeRunner for ClaudeRunner {
         let mut lines = BufReader::new(stdout).lines();
         let mut returned_session_id = String::new();
         let mut sid_emitted = false;
-        let mut run_usage: Option<ClaudeUsage> = None;
 
         while let Some(line) = lines.next_line().await? {
             if line.is_empty() {
@@ -150,18 +136,6 @@ impl OpenCodeRunner for ClaudeRunner {
                 }
             }
 
-            if ev.event_type == "result" {
-                if let Some(u) = ev.usage {
-                    run_usage = Some(u);
-                }
-            }
-        }
-
-        if let Some(u) = run_usage {
-            let line = format_usage_line(&u);
-            if !line.is_empty() {
-                on_chunk(line);
-            }
         }
 
         child.wait().await?;
@@ -215,21 +189,6 @@ fn short_tool_summary(tool: &str, input: &serde_json::Value) -> String {
             String::new()
         }
     }
-}
-
-/// Returns empty string when all counts are zero so no noise appears in the log.
-fn format_usage_line(u: &ClaudeUsage) -> String {
-    let input = u.input_tokens.unwrap_or(0);
-    let output = u.output_tokens.unwrap_or(0);
-    let cache_read = u.cache_read_input_tokens.unwrap_or(0);
-    let cache_write = u.cache_creation_input_tokens.unwrap_or(0);
-    if input == 0 && output == 0 && cache_read == 0 && cache_write == 0 {
-        return String::new();
-    }
-    format!(
-        "{}↳ {} in / {} out / {} cache_read / {} cache_write\n",
-        USAGE_LINE_MARKER, input, output, cache_read, cache_write,
-    )
 }
 
 /// Build the complete `claude -p` subprocess command.
@@ -448,55 +407,6 @@ mod tests {
                 args
             );
         }
-    }
-
-    // spec (cost-reduction): the result event's usage field must be
-    // deserialized so token counts survive the event loop.
-    #[test]
-    fn test_spec_usage_deserializes_from_result_event() {
-        let json = r#"{
-            "type": "result",
-            "subtype": "success",
-            "usage": {
-                "input_tokens": 1000,
-                "output_tokens": 200,
-                "cache_creation_input_tokens": 50,
-                "cache_read_input_tokens": 800
-            }
-        }"#;
-        let ev: ClaudeEvent = serde_json::from_str(json).unwrap();
-        let u = ev.usage.expect("usage must deserialize");
-        assert_eq!(u.input_tokens, Some(1000));
-        assert_eq!(u.output_tokens, Some(200));
-        assert_eq!(u.cache_creation_input_tokens, Some(50));
-        assert_eq!(u.cache_read_input_tokens, Some(800));
-    }
-
-    // spec (cost-reduction): format_usage_line must include all four token
-    // counts and carry the USAGE_LINE_MARKER prefix so the TUI can style it.
-    #[test]
-    fn test_spec_usage_line_format_shows_all_four_fields() {
-        let u = ClaudeUsage {
-            input_tokens: Some(1000),
-            output_tokens: Some(200),
-            cache_creation_input_tokens: Some(50),
-            cache_read_input_tokens: Some(800),
-        };
-        let line = format_usage_line(&u);
-        assert!(line.starts_with(USAGE_LINE_MARKER), "must start with USAGE_LINE_MARKER");
-        assert!(line.contains("1000"), "must show input tokens");
-        assert!(line.contains("200"), "must show output tokens");
-        assert!(line.contains("800"), "must show cache_read tokens");
-        assert!(line.contains("50"), "must show cache_write tokens");
-        assert!(line.ends_with('\n'), "must end with newline");
-    }
-
-    // spec (cost-reduction): format_usage_line must return empty when all
-    // counts are zero so no noise appears when usage isn't reported.
-    #[test]
-    fn test_spec_usage_line_empty_when_all_zero() {
-        let u = ClaudeUsage::default();
-        assert_eq!(format_usage_line(&u), "");
     }
 
     // security: → security.md T5 — Claude subprocesses must drop stderr

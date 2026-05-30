@@ -1,11 +1,11 @@
 id = "tend-introspection"
-summary = "governs: runtime introspection substrate at .tinker/logs/runtime.jsonl and .tinker/state/runtime.json; append-only event log (17 kinds: turns/messages/sessions/cleanup/TUI); debounced state snapshot; async non-blocking writes; backend-agnostic cost capture | triggers: adding event types; reading tend's own runtime state; cost decomposition; session lifecycle tracking"
+summary = "governs: runtime introspection substrate at .tinker/logs/runtime.jsonl and .tinker/state/runtime.json; append-only event log (turns/messages/sessions/cleanup/TUI); debounced state snapshot; async non-blocking writes | triggers: adding event types; reading tend's own runtime state; session lifecycle tracking"
 description = """
 ## WHAT
 A runtime introspection substrate that lets tend inspect its own
-state — token usage per turn, the goal-session queue, the current
-UI snapshot, message history — instead of estimating from inference
-or asking the user to read numbers off.
+state — the goal-session queue, the current UI snapshot, message
+history — instead of estimating from inference or asking the user
+to read numbers off.
 
 The mechanism is **hybrid**: an append-only **event log** for
 sequence and history, plus a **state file** holding the current
@@ -16,17 +16,17 @@ reconstructing current state by scanning. Both live under
 reads both with its existing file tools when it needs them. It
 never writes to either, and goal sessions don't touch them at all.
 
-The **event log** captures: tend turn boundaries with token
-usage; message-level events in three categories — user input (full
-text), assistant reply (full text, tool calls and results inline),
-and tend-injected system messages (full content plus a `source`
-field naming the emitting component — dispatcher, harness);
+The **event log** captures: tend turn boundaries; message-level
+events in three categories — user input (full text), assistant
+reply (full text, tool calls and results inline), and
+tend-injected system messages (full content plus a `source` field
+naming the emitting component — dispatcher, harness);
 goal-session lifecycle (dispatched, started, finished) with
-observable facts; `@`-dispatch emissions; cleanup-hook
-results; goal-file changes; and TUI structural state changes
-(selection, focus, scroll, queue). The session-start event captures
-the system-prompt text plus a goal-list hash so persona/goal drift
-is detectable across sessions. New categories can be added
+observable facts; `@`-dispatch emissions; cleanup-hook results;
+goal-file changes; and TUI structural state changes (selection,
+focus, scroll, queue). The session-start event captures the
+system-prompt text plus a goal-list hash so persona/goal drift is
+detectable across sessions. New categories can be added
 additively. The log format satisfies three constraints: a `kind`
 discriminator for filtering by event type; a shape suitable for
 `jq`-style aggregation; and individual events retrievable at low
@@ -43,52 +43,44 @@ observables, never from the session labeling its own work.
 Implementation chooses the specific observable fields.
 
 The **state file** is JSON, semantic only: selected goal id, focus
-region, scroll offsets, queue snapshot (running + pending with
-reasons and start/queue timestamps), and rolling session usage
-totals. Not verbatim pane text — that can be added later as a purely
-additive change if a concrete need emerges.
+region, scroll offsets, and queue snapshot (running + pending with
+reasons and start/queue timestamps). Not verbatim pane text —
+that can be added later as a purely additive change if a concrete
+need emerges.
 
-Writes are **async and non-blocking**, so the substrate never slows
-tend's main loop. Cost capture is **backend-agnostic and
-best-effort**: both Claude and opencode calls emit into the same
-log shape, and every call captures its cost where available. When
-cost is genuinely unavailable, the `usage` field is `null` and that
-unavailability is recorded as a known gap — not silently accepted
-as the default.
+Writes are **async and non-blocking**, so the substrate never
+slows tend's main loop.
 
 ## WHY
-Tend has been operating on inferred state — estimating its own
-cost, asking the user "what's running?", reconstructing turn counts
-from memory. That's backwards: tend itself holds this state. The
-`user-system-interaction` principle says tinker holds the *is*, but
-until now the *is* reached only the user's view, never tend's own
-reasoning. This goal closes that asymmetry — tend is part of
+Tend has been operating on inferred state — asking the user
+"what's running?", reconstructing turn counts from memory. That's
+backwards: tend itself holds this state. The
+`user-system-interaction` principle says tinker holds the *is*,
+but until now the *is* reached only the user's view, never tend's
+own reasoning. This goal closes that asymmetry — tend is part of
 tinker, and the *is* should be available to it the same way it's
 available to the user.
 
-The persistent log also opens cross-session self-improvement. Every
-session's transcript, timing, cost, queue events, and observable
+The persistent log also opens cross-session self-improvement.
+Every session's transcript, timing, queue events, and observable
 goal-session facts become durable, so questions like "why did the
-previous session need a restart?", "did my reactive scheduling
-produce real work?", and "how does cost compare across goals?"
-become structured queries instead of fading memory. Logging system
-messages as a first-class category is what makes the "why" of each
-turn queryable — they explain why turns happened, not just what was
-said.
+previous session need a restart?" and "did my reactive scheduling
+produce real work?" become structured queries instead of fading
+memory. Logging system messages as a first-class category is what
+makes the "why" of each turn queryable — they explain why turns
+happened, not just what was said.
 
 Finished-session events carry observables rather than a
-self-declared outcome because the session is an unreliable narrator
-about its own work. Self-classification fails exactly where it
-matters most — scope expansion, scope shrinkage, doing something
-else entirely. Observable facts from outside the session are
-trustworthy where the session's own account is not.
+self-declared outcome because the session is an unreliable
+narrator about its own work. Self-classification fails exactly
+where it matters most — scope expansion, scope shrinkage, doing
+something else entirely. Observable facts from outside the session
+are trustworthy where the session's own account is not.
 
 ## SCOPE
 - In scope: the append-only event log (categories above) and the
   semantic JSON state file, both under `.tinker/`; async
-  non-blocking writes; backend-agnostic best-effort cost capture
-  for every Claude and opencode call, with unavailability recorded
-  as a known gap; passive read-only access for tend via its
+  non-blocking writes; passive read-only access for tend via its
   existing file tools.
 - Out of scope:
   - Pane content beyond message-level — verbatim conversation-pane
