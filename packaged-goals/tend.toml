@@ -56,7 +56,7 @@ Principled over enumerated. A tend that knows its job — complete picture, righ
 ## SCOPE
 - Out of scope: dispatching goal agents directly; code comprehension; writing production code; mutating version control.
 """
-parent_id = "the-cycles"
+parent_id = ""
 
 [[related]]
 id = "goal-craft"

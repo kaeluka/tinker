@@ -60,16 +60,6 @@ Both the vocabulary rule and the form norm are grounded in the same
 fact from `user-persona` — the user can't verify through source, so
 what they receive is their only window into what's happening.
 
-This goal is the operational mechanism for one of the two exposure
-surfaces defined by its parent, `user-system-interaction`. The
-parent says the user may be exposed to internals only when filtered
-through shared language; this goal defines what that filtering
-looks like — the vocabulary file, the anchoring rule, the form
-norm, and the per-surface application. Its parent is
-`user-system-interaction` rather than `tend` because the rule
-binds both tend (chat) and goal sessions (documentation), and the
-principle that justifies it lives in the parent.
-
 ## SCOPE
 - In scope: tend chat; user-facing session messages; READMEs,
   guides, and other human-readable documentation goal sessions
@@ -85,16 +75,15 @@ principle that justifies it lives in the parent.
   automated hooks to manage the vocabulary file (tend manages it
   by hand).
 """
-parent_id = "user-system-interaction"
-children = []
+parent_id = ""
 
 [[related]]
 id = "project-indexer"
-reason = "`AGENTS.md` produced by `project-indexer` is the canonical example of an LLM-targeted artifact this goal carves out of the shared-vocabulary rule. The exemption is named explicitly because project-indexer's output looks like documentation but isn't aimed at the user. Asymmetric link: `project-indexer` is a packaged goal at ancestor scope and carries no back-link to this project-local goal."
+reason = "`AGENTS.md` produced by `project-indexer` is the canonical example of an LLM-targeted artifact this goal carves out of the shared-vocabulary rule. The exemption is named explicitly because project-indexer's output looks like documentation but isn't aimed at the user. Asymmetric link: `project-indexer` is a packaged goal and carries no back-link."
 
 [[related]]
 id = "coding-standards"
-reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
+reason = "This goal produces code, which follows `coding-standards`. Asymmetric: packaged ancestor-scope standard, no back-link."
 
 [[related]]
 id = "tend"
@@ -105,13 +94,5 @@ id = "rummage"
 reason = "rummage's chat turns are user-facing output this standard governs — including the rule that pasted technical material is translated, not echoed. Rummage's investigation documents are exempt from the form norm."
 
 [[related]]
-id = "tui"
-reason = "tui renders user-facing text to the user; how that text is presented is governed by this standard."
-
-[[related]]
 id = "jog"
 reason = "jog's deepening conversation with the user is a user-facing surface this standard governs."
-
-[[related]]
-id = "user-persona"
-reason = "`user-persona` is the anchor for both the no-jargon default and the form norm: because the user doesn't read source code, terms outside shared vocabulary are inaccessible and formulaic responses miss the mark. The vocabulary rule and form norm here follow from that persona fact."

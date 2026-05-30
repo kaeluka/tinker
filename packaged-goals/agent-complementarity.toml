@@ -1,5 +1,5 @@
 id = "agent-complementarity"
-summary = "governs: profile-complementarity design principle for tinker's agents; quality routing (tasks go to the agent whose profile best handles them); intentional overlap documentation; audit mandate when profiles change | triggers: adding or reshaping an agent; deciding which agent handles a workload; reviewing consultation patterns; overlap audit"
+summary = "governs: profile-complementarity design principle for tinker's agents; quality routing (tasks go to the agent whose profile best handles them); intentional overlap documentation; audit mandate when profiles change; goal-orthogonality corollary (goals are agents — distinct domains, no encroachment) | triggers: adding or reshaping an agent; deciding which agent handles a workload; reviewing consultation patterns; overlap audit; goal placement decisions"
 description = """
 WHAT
 Tinker's agents are not interchangeable. Each has a profile suited to
@@ -36,6 +36,14 @@ other. Tend owns the *should*; rummage owns the *is*. When they
 consult each other, the boundary is clean — neither substitutes for
 the other's domain.
 
+**Goal orthogonality.** Goals are agents. The complementarity
+principle therefore applies to the goal tree: each goal should own a
+distinct domain, and goals should stay out of each other's lanes.
+Goals that encroach on each other's scope produce the same degradation
+as overlapping agent profiles — the spec becomes ambiguous and the
+agent executing it receives conflicting instructions. `goal-structure-standard`
+is where orthogonal placement is enforced structurally.
+
 **Audit mandate.** When an agent's profile changes, a new agent is
 added, or a new recurring consultation pattern emerges, the profile
 assignments must be reviewed: does the routing still send each workload
@@ -55,14 +63,15 @@ SCOPE
 In scope: the complementarity principle as a design constraint on
 agent profiles and consultation patterns; the assignment of workloads
 to profiles; documenting intentional overlap and naming the
-authoritative agent where profiles share territory; the audit mandate.
+authoritative agent where profiles share territory; the audit mandate;
+the goal-orthogonality corollary.
 Out of scope: each agent's internal behaviour (lives in the agent's
 own goal); the cycle structure and producer/skeptic axis (live in
 `the-cycles`); the consultation mechanism itself (lives in
-`peer-consult`).
+`peer-consult`); the structural enforcement of orthogonality (lives in
+`goal-structure-standard`).
 """
-parent_id = "the-cycles"
-children = []
+parent_id = ""
 
 [[related]]
 id = "peer-consult"
@@ -71,3 +80,7 @@ reason = "Peer consultation is the runtime mechanism through which complementary
 [[related]]
 id = "tend"
 reason = "Tend is the mechanism through which the audit mandate fires: when tend edits any agent goal, it pulls this goal in cross-goal alignment to verify profile assignments still hold before writing."
+
+[[related]]
+id = "goal-structure-standard"
+reason = "Goals are agents; the complementarity principle applies to the goal tree. Each goal should own a distinct domain — goals encroaching on each other's scope degrade the spec the same way overlapping agent profiles degrade output. `goal-structure-standard` is where orthogonal placement is enforced structurally."

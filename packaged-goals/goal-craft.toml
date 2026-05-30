@@ -112,20 +112,11 @@ WHY.
 
 """
 parent_id = "creative-process"
-children = []
 
 [[related]]
 id = "goal-structure-standard"
 reason = "Structural twin at write-time. `goal-structure-standard` governs tree organization (Merge, Nest Down, Nest Up, New Root, Retire; parent-summary; related-link symmetry) and owns the goal schema; `goal-craft` governs content quality within each goal, including the synthesis-over-enumeration tactic. Both apply on every edit."
 
 [[related]]
-id = "goal-agents"
-reason = "Goal agents are the consumers of goals these tactics produce. A sparse, well-formed goal gives an agent a tractable optimization target it rarely needs to question — sparseness is operationalized via the anchor test."
-
-[[related]]
 id = "tend"
-reason = "Tend applies these rules during interview and edit-time cross-goal alignment. Without enforcement at that surface, the rules do not fire."
-
-[[related]]
-id = "tend"
-reason = "The summary field content rules (terse, LLM-consume, governs+triggers format) are now in tend's Phase 4 write procedure. Goal-craft tactics apply to WHAT/WHY/SCOPE; summary has distinct rules described there."
+reason = "Tend enforces these rules during interview and edit-time cross-goal alignment. Goal-craft tactics apply to WHAT/WHY/SCOPE; tend's Phase 4 write procedure covers the summary field separately."

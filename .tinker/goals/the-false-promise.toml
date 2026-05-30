@@ -29,9 +29,5 @@ layer — Goals — kept distinct from implementation.
 parent_id = ""
 
 [[children]]
-id = "creative-process"
-reason = "the dialectical process converting tacit user intent into explicit goal conventions through iterative interview"
-
-[[children]]
 id = "user-system-interaction"
 reason = "architectural boundary: user holds the should (intent), tinker holds the is (state) — governs what surfaces to the user"

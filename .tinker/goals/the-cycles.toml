@@ -75,24 +75,8 @@ and traced back to the intent that justified it.
 parent_id = ""
 
 [[children]]
-id = "tend"
-reason = "intent↔spec producer — surfaces user intent through dialogue and crystallizes it into goal specs"
-
-[[children]]
-id = "rummage"
-reason = "spec↔code skeptic — investigates whether code satisfies the goal spec; treats goal as signal-with-noise"
-
-[[children]]
-id = "jog"
-reason = "intent↔spec skeptic — audits whether the spec still reflects user intent; dialectical because intent is tacit"
-
-[[children]]
 id = "goal-agents"
 reason = "spec↔code producer and runtime substrate — every goal is a process-scoped agent generating code from its spec; the session registry makes the cycle executable"
-
-[[children]]
-id = "agent-complementarity"
-reason = "design principle governing how agent profiles are assigned and kept complementary across the producer/skeptic cycle"
 
 [[related]]
 id = "user-system-interaction"
