@@ -134,15 +134,11 @@ two LLMs cannot replace the human in a dialectical process."
   operational goals (each is a separate deliberate edit).
 
 """
-parent_id = "the-false-promise"
+parent_id = ""
 
 [[children]]
 id = "goal-craft"
 reason = "five content-quality tactics for writing goals that work as both standing intent and as the prompt agents read"
-
-[[related]]
-id = "user-persona"
-reason = "The reflective-practitioner role this goal defines applies to the specific user described in `user-persona`. The design-partner expectation and trade-off framing the user needs are downstream of this goal's framing."
 
 [[related]]
 id = "tend"

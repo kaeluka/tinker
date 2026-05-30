@@ -59,23 +59,18 @@ actually delivered, producing incomplete or misleading consultations.
   `tui`).
 """
 parent_id = ""
-children = []
 
 [[related]]
 id = "tend"
-reason = "Rummage is tend's code-reading arm: tend reaches for `@rummage` proactively whenever forming a recommendation that depends on what the system currently does, and never reads source for comprehension. Tend also receives `@tend` consultations from rummage when rummage needs intent context."
+reason = "Rummage is tend's code-reading arm: tend reaches for `@rummage` proactively whenever forming a recommendation that depends on what the system currently does. Tend also receives `@tend` consultations from rummage when rummage needs intent context."
 
 [[related]]
 id = "rummage"
-reason = "Tend is rummage's intent-reading arm: rummage consults `@tend` when it needs to understand the *should* rather than inferring from goal text — specifically for case-1/case-2 disambiguation, ownership resolution before dispatch, and intentionality checks. Rummage also receives `@rummage` consultations from tend on code-reality questions."
+reason = "Tend is rummage's intent-reading arm: rummage consults `@tend` when it needs to understand the *should* rather than inferring from goal text — specifically for case-1/case-2 disambiguation, ownership resolution before dispatch, and intentionality checks."
 
 [[related]]
 id = "jog"
 reason = "jog participates as both sender and receiver of `@` messages alongside its existing deepening conversation with the user."
-
-[[related]]
-id = "tui"
-reason = "The `@` message stream between agents appears in the conversation pane; TUI owns the rendering details."
 
 [[related]]
 id = "agent-complementarity"
@@ -83,4 +78,4 @@ reason = "`agent-complementarity` names the quality-routing principle that makes
 
 [[related]]
 id = "coding-standards"
-reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
+reason = "This goal produces code, which follows `coding-standards`. Asymmetric: packaged ancestor-scope standard, no back-link."

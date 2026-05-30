@@ -82,16 +82,11 @@ a question alongside it would never be answered before the edit lands.
   probing the running system (route to `@rummage`); push/scheduled
   invocation; durable jog documents; multi-author goal governance.
 """
-parent_id = "the-cycles"
-children = []
+parent_id = ""
 
 [[related]]
 id = "tend"
 reason = "On 'I know better' jog commissions tend to fix/clarify/enrich a goal via `@tend`; tend applies without a playback — jog's conversation already did the anchoring."
-
-[[related]]
-id = "tui"
-reason = "jog is a sibling chat agent; the TUI renders the prompt tag and the mechanism by which the user switches to it."
 
 [[related]]
 id = "shared-language"

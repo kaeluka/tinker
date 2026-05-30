@@ -55,10 +55,6 @@ that could drift from or override what the goal says.
 """
 parent_id = ""
 
-[[children]]
-id = "goal-structure-standard"
-reason = "structural rules for organizing the goal tree — merge/nest/retire operations, level-of-detail coherence, parent-summary, related-link symmetry"
-
 [[related]]
 id = "coding-standards"
 reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
