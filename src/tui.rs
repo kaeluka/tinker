@@ -1,5 +1,4 @@
 use crate::app::{App, Focus, Phase, Role};
-use crate::claude::USAGE_LINE_MARKER;
 use crate::goal_session::TRIGGER_REASON_MARKER;
 use crate::goal::{build_tree, GoalNode};
 use ratatui::{
@@ -304,34 +303,8 @@ fn push_assistant_text(lines: &mut Vec<Line<'static>>, text: &str) {
     let mut in_tool_call = false;
     let mut output_index = 0usize;
     for raw_line in text.lines() {
-        // The streamed text chunk arriving before a usage line often lacks a
-        // trailing `\n`, so the usage marker can land mid-line. Split here so
-        // each segment is dispatched to its own renderer.
-        let (text_part, usage_part) = match raw_line.find(USAGE_LINE_MARKER) {
-            Some(idx) => (
-                &raw_line[..idx],
-                Some(&raw_line[idx + USAGE_LINE_MARKER.len_utf8()..]),
-            ),
-            None => (raw_line, None),
-        };
-
-        let has_usage = usage_part.is_some();
-        if !text_part.is_empty() || !has_usage {
-            push_assistant_text_segment(lines, text_part, &mut in_tool_call, output_index);
-            output_index += 1;
-        }
-
-        if let Some(usage) = usage_part {
-            in_tool_call = false;
-            lines.push(Line::from(vec![
-                Span::raw("       "),
-                Span::styled(
-                    usage.to_string(),
-                    Style::default().fg(Color::Gray),
-                ),
-            ]));
-            output_index += 1;
-        }
+        push_assistant_text_segment(lines, raw_line, &mut in_tool_call, output_index);
+        output_index += 1;
     }
 }
 
@@ -605,26 +578,10 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 }
 
 pub fn render_log_line(raw: &str) -> Vec<Line<'static>> {
-    // A streamed text chunk that lacks a trailing newline before the usage
-    // line lands here with the marker mid-string. Split the prefix off so
-    // each segment can be styled independently.
-    if let Some(idx) = raw.find(USAGE_LINE_MARKER) {
-        if idx > 0 {
-            let mut out = render_log_line(&raw[..idx]);
-            out.extend(render_log_line(&raw[idx..]));
-            return out;
-        }
-    }
-
     let line = if let Some(reason) = raw.strip_prefix(TRIGGER_REASON_MARKER) {
         Line::from(Span::styled(
             reason.to_string(),
             Style::default().add_modifier(Modifier::BOLD),
-        ))
-    } else if let Some(usage) = raw.strip_prefix(USAGE_LINE_MARKER) {
-        Line::from(Span::styled(
-            usage.to_string(),
-            Style::default().fg(Color::Cyan),
         ))
     } else {
         Line::from(raw.to_string())
@@ -1073,181 +1030,6 @@ mod tests {
         assert!(
             lines.iter().any(|l| l.spans.iter().any(|s| s.content.contains("normal text"))),
             "text after the tool call must still be rendered",
-        );
-    }
-
-    /// Spec (cost-reduction): usage lines emitted by ClaudeRunner must render
-    /// in the session log with the USAGE_LINE_MARKER stripped and styled in
-    /// Cyan (no DIM — DIM causes ghost cells on terminal scroll).
-    #[test]
-    fn test_spec_usage_line_rendered_cyan_in_log() {
-        use crate::claude::USAGE_LINE_MARKER;
-        let usage_body = "↳ 1000 in / 200 out / 800 cache_read / 50 cache_write";
-        let raw = format!("{}{}", USAGE_LINE_MARKER, usage_body);
-        let rendered = render_log_line(&raw);
-        assert_eq!(rendered.len(), 1);
-        let line = &rendered[0];
-        assert_eq!(line.spans.len(), 1);
-        let span = &line.spans[0];
-        // Marker must be stripped.
-        assert_eq!(span.content, usage_body, "USAGE_LINE_MARKER must be stripped from rendered text");
-        // Must be Cyan (visual recession via colour, not DIM).
-        assert_eq!(span.style.fg, Some(Color::Cyan), "usage line must be Cyan");
-        // Must NOT be BOLD (contrast with trigger reason lines).
-        assert!(
-            !span.style.add_modifier.contains(Modifier::BOLD),
-            "usage line must not be bold",
-        );
-    }
-
-    /// Spec (tui): the streamed assistant text chunk arriving just before a
-    /// usage line frequently lacks a trailing `\n` (LLM replies typically end
-    /// with a period, quote, etc.), so the usage marker can land mid-line.
-    /// The chat-pane renderer must still split the marker off and style the
-    /// usage segment as DarkGray with a 7-space indent — and must not leak the
-    /// marker byte into the rendered text.
-    #[test]
-    fn test_spec_chat_pane_splits_usage_marker_mid_line() {
-        let usage_body = "↳ 1000 in / 200 out / 800 cache_read / 50 cache_write";
-        let text = format!("Sure, here is my answer.{}{}", USAGE_LINE_MARKER, usage_body);
-
-        let mut lines: Vec<Line> = vec![];
-        push_assistant_text(&mut lines, &text);
-
-        // The assistant text must be on its own line (with the tend tag).
-        let assistant_line = lines
-            .iter()
-            .find(|l| l.spans.iter().any(|s| s.content.contains("Sure, here is my answer.")))
-            .expect("assistant text must render on its own line");
-        assert!(
-            assistant_line.spans.iter().any(|s| s.content.trim() == "tend"),
-            "first assistant line must carry the green tend tag",
-        );
-        // The marker byte must not appear in any rendered span.
-        assert!(
-            !lines.iter().any(|l| l.spans.iter().any(|s| s.content.contains(USAGE_LINE_MARKER))),
-            "USAGE_LINE_MARKER must be stripped from rendered text",
-        );
-
-        // The usage segment must render as a Gray-styled line with body text.
-        let usage_line = lines
-            .iter()
-            .find(|l| l.spans.iter().any(|s| s.content == usage_body))
-            .expect("usage segment must render as its own line");
-        let usage_span = usage_line
-            .spans
-            .iter()
-            .find(|s| s.content == usage_body)
-            .unwrap();
-        assert_eq!(
-            usage_span.style.fg,
-            Some(Color::Gray),
-            "usage segment must be Gray (not DIM — DIM causes ghost cells; not DarkGray — invisible on dark terminals)",
-        );
-    }
-
-    /// Spec (tui): the chat pane's "crop tool-call payload to one line"
-    /// feature must not silently destroy the usage line when the message
-    /// shape is `tool_call + text-without-trailing-\n + usage`. The usage
-    /// segment must still render even when the line it shares with leftover
-    /// post-tool-call text would otherwise be cropped.
-    #[test]
-    fn test_spec_chat_pane_usage_survives_after_tool_call_without_newline() {
-        let usage_body = "↳ 1000 in / 200 out / 800 cache_read / 50 cache_write";
-        let text = format!(
-            "Let me check.\n→ Read /some/path/file.rs\nSome more text after the tool call.{}{}",
-            USAGE_LINE_MARKER, usage_body
-        );
-
-        let mut lines: Vec<Line> = vec![];
-        push_assistant_text(&mut lines, &text);
-
-        // Usage segment must render as a Gray-styled line.
-        let usage_line = lines
-            .iter()
-            .find(|l| l.spans.iter().any(|s| s.content == usage_body))
-            .expect("usage segment must render even after a tool call without trailing newline");
-        let usage_span = usage_line
-            .spans
-            .iter()
-            .find(|s| s.content == usage_body)
-            .unwrap();
-        assert_eq!(
-            usage_span.style.fg,
-            Some(Color::Gray),
-            "usage segment must be Gray (not DIM — DIM causes ghost cells; not DarkGray — invisible on dark terminals)",
-        );
-        // Marker must not leak into rendered output.
-        assert!(
-            !lines.iter().any(|l| l.spans.iter().any(|s| s.content.contains(USAGE_LINE_MARKER))),
-            "USAGE_LINE_MARKER must not appear in rendered text",
-        );
-    }
-
-    /// Spec (tui): the session-log renderer must split a raw log line on a
-    /// mid-string usage marker so the usage segment is styled Cyan. A streamed
-    /// chunk lacking a trailing newline before the usage line must not cause
-    /// the marker to render as a raw control byte.
-    #[test]
-    fn test_spec_log_pane_splits_usage_marker_mid_line() {
-        let usage_body = "↳ 1000 in / 200 out / 800 cache_read / 50 cache_write";
-        let raw = format!("Sure, here is my answer.{}{}", USAGE_LINE_MARKER, usage_body);
-
-        let rendered = render_log_line(&raw);
-        assert_eq!(rendered.len(), 2, "marker mid-line must split into two rendered lines");
-
-        let prefix_text: String = rendered[0].spans.iter().map(|s| s.content.to_string()).collect();
-        assert_eq!(prefix_text, "Sure, here is my answer.");
-        assert!(
-            !prefix_text.contains(USAGE_LINE_MARKER),
-            "prefix segment must not contain the marker byte",
-        );
-
-        let usage_text: String = rendered[1].spans.iter().map(|s| s.content.to_string()).collect();
-        assert_eq!(usage_text, usage_body);
-        let usage_span = &rendered[1].spans[0];
-        assert_eq!(
-            usage_span.style.fg,
-            Some(Color::Cyan),
-            "usage segment in the log pane must be Cyan (not DIM — DIM causes ghost cells)",
-        );
-    }
-
-    /// Spec (tui + cost-reduction): usage lines must NOT carry Modifier::DIM.
-    /// DIM triggers terminal emulator clearing failures — SGR 22 (NormalIntensity)
-    /// is not honored by all terminals, leaving ghost characters at positions
-    /// the usage line previously occupied. Visual recession is achieved via
-    /// colour alone (DarkGray in the chat pane, Cyan in the log pane).
-    #[test]
-    fn test_spec_usage_lines_must_not_use_dim_modifier() {
-        use crate::claude::USAGE_LINE_MARKER;
-        let usage_body = "↳ 1000 in / 200 out / 800 cache_read / 50 cache_write";
-        let raw = format!("{}{}", USAGE_LINE_MARKER, usage_body);
-
-        // Chat pane.
-        let text = format!("Some reply.{}{}", USAGE_LINE_MARKER, usage_body);
-        let mut lines: Vec<Line> = vec![];
-        push_assistant_text(&mut lines, &text);
-        let chat_usage_span = lines
-            .iter()
-            .flat_map(|l| l.spans.iter())
-            .find(|s| s.content == usage_body)
-            .expect("usage body must appear in chat pane");
-        assert!(
-            !chat_usage_span.style.add_modifier.contains(Modifier::DIM),
-            "chat pane usage lines must not carry DIM modifier (causes ghost cells on terminal scroll)"
-        );
-
-        // Log pane.
-        let rendered = render_log_line(&raw);
-        let log_usage_span = rendered
-            .iter()
-            .flat_map(|l| l.spans.iter())
-            .find(|s| s.content == usage_body)
-            .expect("usage body must appear in log pane");
-        assert!(
-            !log_usage_span.style.add_modifier.contains(Modifier::DIM),
-            "log pane usage lines must not carry DIM modifier (causes ghost cells on terminal scroll)"
         );
     }
 

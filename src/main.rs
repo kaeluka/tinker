@@ -124,7 +124,6 @@ async fn goal_agent_loop(
             log.emit("goal_session", logger::LogEvent::GoalSessionDispatched {
                 goal_id: goal_id.clone(),
                 reason: Some(dispatch_msg.clone()),
-                init_message_chars: 0,
                 backend: backend_name.clone(),
             });
             log.emit("goal_session", logger::LogEvent::GoalSessionStarted {
@@ -166,7 +165,6 @@ async fn goal_agent_loop(
                 llm_session_id = Some(new_sid.clone());
                 let tool_calls = logger::count_tool_calls(&output);
                 let files_modified = logger::extract_modified_files(&output);
-                let usage = logger::parse_usage_from_text(&output);
                 log.emit("goal_session", logger::LogEvent::GoalSessionFinished {
                     goal_id: goal_id.clone(),
                     exit_status: "clean".to_string(),
@@ -176,7 +174,6 @@ async fn goal_agent_loop(
                     tool_calls,
                     summary_chars: 0,
                     full_output: output,
-                    usage,
                     backend: backend_name.clone(),
                 });
                 let _ = session_tx.send(SessionEvent::Done { goal_id: goal_id.clone() }).await;
@@ -191,7 +188,6 @@ async fn goal_agent_loop(
                     tool_calls: 0,
                     summary_chars: 0,
                     full_output: output,
-                    usage: None,
                     backend: backend_name.clone(),
                 });
                 // Clear session_id so next message starts a fresh session.
@@ -388,7 +384,6 @@ async fn main() -> Result<()> {
             // Log the session start — goal-list hash lets us detect persona/goal drift.
             log_orch.emit("tend", logger::LogEvent::TinkerSessionStarted {
                 system_prompt_chars: tend_agent_content().len(),
-                goal_list_chars: goals_summary.len(),
                 goal_list_hash: logger::hash_string(&goals_summary),
                 backend: backend_name_orch.clone(),
             });
@@ -406,8 +401,6 @@ async fn main() -> Result<()> {
                 .unwrap_or_default();
             log_orch.emit("tend", logger::LogEvent::TinkerTurnEnd {
                 duration_ms: t0.elapsed().as_millis() as u64,
-                message_chars: init.len(),
-                usage: logger::parse_usage_from_text(&full_reply),
                 backend: backend_name_orch.clone(),
             });
             log_orch.emit("tend", logger::LogEvent::TinkerReplyEmitted { text: full_reply.clone() });
@@ -428,8 +421,6 @@ async fn main() -> Result<()> {
                 .unwrap_or_default();
                 log_orch.emit("tend", logger::LogEvent::TinkerTurnEnd {
                     duration_ms: t0.elapsed().as_millis() as u64,
-                    message_chars: msg.len(),
-                    usage: logger::parse_usage_from_text(&full_reply),
                     backend: backend_name_orch.clone(),
                 });
                 log_orch.emit("tend", logger::LogEvent::TinkerReplyEmitted { text: full_reply.clone() });
