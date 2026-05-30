@@ -189,29 +189,30 @@ mod tests {
         );
     }
 
-    // spec (rummage): the system prompt must name case 2 as the action case —
-    // spec is correct, code diverged, rummage writes the durable test and dispatches.
+    // spec (rummage): the system prompt must name the code drift fix path as the
+    // action case — spec is correct, code diverged, rummage writes the durable test
+    // and dispatches.
     #[test]
-    fn test_spec_rummage_case_2_fix_path_named() {
+    fn test_spec_rummage_code_drift_fix_path_named() {
         let prompt = rummage_description();
         assert!(
-            prompt.contains("case 2") || prompt.contains("case-2") || prompt.contains("Case-2"),
-            "rummage system prompt must name case 2 as the action case for fix dispatch",
+            prompt.contains("code drift") || prompt.contains("Code drift"),
+            "rummage system prompt must name the code drift fix path as the action case for fix dispatch",
         );
     }
 
-    // spec (rummage): the system prompt must name case 1 as the abstention case —
-    // correct behavior requires fresh intent, so rummage surfaces and defers.
+    // spec (rummage): the system prompt must name the intent question case as
+    // abstention — correct behavior requires fresh intent, so rummage surfaces and defers.
     #[test]
-    fn test_spec_rummage_case_1_abstention_named() {
+    fn test_spec_rummage_intent_question_abstention_named() {
         let prompt = rummage_description();
         assert!(
-            prompt.contains("Case 1") || prompt.contains("case 1") || prompt.contains("case-1") || prompt.contains("Case-1"),
-            "rummage system prompt must name case 1 as the abstention case",
+            prompt.contains("intent question") || prompt.contains("Intent question"),
+            "rummage system prompt must name intent question as the abstention case",
         );
     }
 
-    // spec (rummage): the durable failing test rummage writes for case 2 must
+    // spec (rummage): the durable failing test rummage writes for code drift must
     // NOT carry the tinker-test-case: marker so the cleanup hook leaves it in
     // place for the next goal session to satisfy. The system prompt must make
     // this explicit and distinguish the durable test from investigation code.
@@ -241,7 +242,7 @@ mod tests {
     }
 
     // spec (peer-consult): the prompt must describe rummage consulting tend for
-    // intent and name the case-1/case-2 decision boundary.
+    // intent and name the intent question vs code drift decision boundary.
     #[test]
     fn test_spec_rummage_prompt_names_tend_as_intent_arm_with_three_triggers() {
         let prompt = rummage_description();
@@ -250,12 +251,12 @@ mod tests {
             "rummage prompt must describe consulting tend for intent questions",
         );
         assert!(
-            prompt.contains("Case-1") || prompt.contains("case-1") || prompt.contains("case 1"),
-            "rummage prompt must name the case-1 abstention boundary",
+            prompt.contains("intent question") || prompt.contains("Intent question"),
+            "rummage prompt must name the intent question abstention boundary",
         );
         assert!(
-            prompt.contains("Case-2") || prompt.contains("case-2") || prompt.contains("case 2"),
-            "rummage prompt must name the case-2 fix-dispatch boundary",
+            prompt.contains("code drift") || prompt.contains("Code drift"),
+            "rummage prompt must name the code drift fix-dispatch boundary",
         );
     }
 }
