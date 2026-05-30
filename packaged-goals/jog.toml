@@ -3,26 +3,17 @@ summary = "governs: layer-agnostic bidirectional discrepancy finder; forward che
 description = """
 ## WHAT
 
-Jog is a layer-agnostic bidirectional discrepancy finder. Given two
-adjacent layers, it runs two checks:
+Jog is a bidirectional discrepancy finder. Given two redundant sources
+of information (where one is created from the other):
 
-- **Forward check** (coverage): is everything in layer N represented
-  in layer N+1? Gaps are bugs — intent not captured in spec, or spec
-  not implemented in code.
-- **Backward check** (provenance): does everything in layer N+1 trace
-  back to layer N? Orphans are points of interest — code with no spec
-  claim, or spec claims with no identifiable user intent.
-
-**Layer pairs.** Jog works either adjacency:
-- Intent ↔ Spec
-- Spec ↔ Code
-
-Jog infers which layers to compare from context.
-
-**Reading mechanisms.** Jog never reads a layer directly. It delegates:
-- **Intent**: interrogate the user.
-- **Spec**: send a read-only `@tend` query.
-- **Code**: send a read-only `@rummage` query.
+- **It creates a set of things, concepts, behaviours, etc, in each of
+  them**. It does that by dispatching @-messages to whichever agent is
+  best suited for the task. Or by asking the user (in case the user's
+  intent is one of the sources of information). When sending @-messages,
+  jog makes it clear that the intent is to read only, not to make writing
+  changes.
+- It then compares these two sets step by step. For each of the things
+  not in both, it'll inform the agent or user that asked for jog's help.
 
 Every `@tend` and `@rummage` message jog sends during a run is
 explicitly framed as read-only — "tell me what you see here, don't
@@ -35,11 +26,8 @@ documenting the findings, separated into forward and backward checks.
 
 ## WHY
 
-Spec↔code drift from large refactors surfaces by accident. No existing
-agent sweeps an adjacency systematically — rummage investigates when
-pointed at something specific; tend handles specific questions, not
-full-layer comparison passes. Layer-agnostic design means the same
-discipline applies regardless of which adjacency is under scrutiny.
+Drift between spec and code is a fact of life. Jog needs to catch that.
+Also, drift between intent and spec.
 
 ## SCOPE
 - In scope: bidirectional layer comparison across either adjacency;
