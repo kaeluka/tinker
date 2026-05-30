@@ -2,60 +2,54 @@ id = "agent-complementarity"
 summary = "governs: profile-complementarity design principle for tinker's agents; quality routing (tasks go to the agent whose profile best handles them); intentional overlap documentation; audit mandate when profiles change | triggers: adding or reshaping an agent; deciding which agent handles a workload; reviewing consultation patterns; overlap audit"
 description = """
 WHAT
-Tinker's agents are not interchangeable. Each occupies a specific
-position in the intent→spec→code cycle and is equipped with a prompt
-profile suited to the work at that position. The design principle:
-tasks go to the agent whose profile gives the highest likelihood of a
-high-quality response for that workload. Where profiles overlap, the
-overlap is intentional and the authoritative agent is named.
+Tinker's agents are not interchangeable. Each has a profile suited to
+a specific kind of work, and tasks go to the agent whose profile gives
+the highest likelihood of a high-quality response. Where profiles
+overlap, the overlap is intentional and the authoritative agent is
+named.
 
-The current profile assignments follow from cycle position:
+The current profile assignments:
 
-- **Tend** (intent↔spec, forward): optimised for intent synthesis,
-  dialectical interviewing, and goal management. Handles workloads
-  that require holding user intent and the goal tree in tension.
+- **Tend** (intent arm, ecosystem-wide): optimised for intent
+  synthesis, dialectical interviewing, and goal management. The
+  intent-layer advisor for every agent — any agent that needs to
+  understand the *should* consults tend.
+- **Rummage** (technical arm, ecosystem-wide): optimised for skeptical
+  technical analysis — pre-dispatch spec validation, grounded code
+  investigation, hypothesis loops, falsification, LSP traversal.
+  The technical advisor for every agent. Validates specs before
+  dispatch and sequences goal agents to minimise conflicts.
 - **Goal sessions** (spec↔code, forward): optimised for code
   generation from a written spec. Handle workloads that require
   turning a precise, authoritative goal into working code.
-- **Rummage** (spec↔code, backward): optimised for grounded code
-  investigation — hypothesis loops, falsification, LSP traversal.
-  Handles workloads that require making true, verifiable claims about
-  what running code actually does.
 - **Jog** (intent↔spec, backward): optimised for Socratic deepening
   and no-cue questioning. Handles workloads that require surfacing
   tacit intent drift without leading the user.
 
 At shared boundaries, profile complementarity is what makes peer
-consultation (`peer-consult`) effective. When tend routes a
-code-reality question to rummage, it is not delegating an inconvenient
-task — it is routing to the agent whose prompt is built for grounded
-investigation, because that profile produces better answers than
-tend's. A consultation that crosses to an agent with a weaker profile
-for the workload produces worse output than staying put.
+consultation (`peer-consult`) effective. Routing to an agent with a
+weaker profile for the workload produces worse output than staying put.
 
-Intentional overlap exists at the spec-satisfaction boundary: tend
-reads session summaries and synthesises the user-facing message
-(spec-reading is in scope for tend); rummage may also be invoked via
-`@rummage` to check whether the code satisfies the spec.
-The boundary is that tend owns the synthesis and the user-facing
-output; rummage owns the code-reality assessment.
+Intentional overlap exists at the intent/technical boundary: tend and
+rummage are both ecosystem-wide advisors, each the counterpart of the
+other. Tend owns the *should*; rummage owns the *is*. When they
+consult each other, the boundary is clean — neither substitutes for
+the other's domain.
 
 **Audit mandate.** When an agent's profile changes, a new agent is
 added, or a new recurring consultation pattern emerges, the profile
 assignments must be reviewed: does the routing still send each workload
 to the best-suited profile? Where has overlap appeared, and is it
 intentional? The mechanism is cross-goal alignment: when tend edits any
-agent goal (tend, rummage, or jog), it pulls this goal as part of the
-alignment step and verifies the assignments still hold before writing.
+agent goal, it pulls this goal as part of the alignment step and
+verifies the assignments still hold before writing.
 
 WHY
 A system where each agent attempts every workload produces average
 quality everywhere. Specialised profiles let each agent operate in its
 strength zone, and the closed cycle ensures no workload is
-unattended — every adjacency has a producer and a skeptic. The
-consultation channel is only as valuable as the quality gap it
-crosses: if tend and rummage handled code-reality questions equally
-well, the consultation would add latency without adding quality.
+unattended. The consultation channel is only as valuable as the quality
+gap it crosses.
 
 SCOPE
 In scope: the complementarity principle as a design constraint on
