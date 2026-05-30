@@ -1,5 +1,5 @@
 id = "backends"
-summary = "governs: pluggable LLM backend abstraction (runner trait at composition root); opencode default (agent files) vs claude --claude (--system-prompt, --disallowedTools parity); per-backend model-tier defaults overridable via model-config | triggers: backend implementation; persona/tool-denial parity between backends; adding third backend; startup flag changes"
+summary = "governs: pluggable LLM backend abstraction (runner trait at composition root); opencode default (agent files for tend/rummage/jog, uniform task/todowrite denials) vs claude --claude (--system-prompt, --disallowedTools parity); per-backend model-tier defaults overridable via model-config | triggers: backend implementation; persona/tool-denial parity between backends; adding third backend; startup flag changes"
 description = """
 ## WHAT
 Tinker runs against a **pluggable backend** — the LLM CLI it shells
@@ -11,21 +11,29 @@ on the trait, not on any vendor's CLI. Adding a third backend (e.g.
 codex) means implementing that trait, not threading vendor specifics
 through the system.
 
-Each backend maps tinker's roles to its own models and delivers the
-tend persona its own way:
+Each backend maps tinker's roles to its own models and delivers agent
+personas its own way:
 
-- **opencode** (default): runs its own configured model defaults, and
-  installs the tend, rummage, and jog personas as `opencode` agent
-  files (see `tend-agent`), whose YAML frontmatter also carries the
-  `task`/`todowrite` tool denials.
+- **opencode** (default): runs its own configured model defaults. At
+  startup installs agent files for tend, rummage, and jog
+  (`~/.config/opencode/agents/tend.md` etc.), always overwriting so
+  the installed copies stay in sync. Each agent file replaces
+  opencode's default software-engineer persona with the agent's own
+  operational protocol. All three files carry the same YAML
+  frontmatter tool denials — `task` and `todowrite` — the autonomous
+  multi-step tools that bypass user visibility. Tend's agent file uses
+  a static/dynamic split: the persona lives in the file; the current
+  goal list is passed in fresh over stdin each run so tend's context
+  stays current without rebuilding the file.
+
 - **claude** (`--claude`): maps roles to Opus (tend) and Sonnet
-  (goal sessions); passes the persona via `--system-prompt` instead
+  (goal sessions); passes each persona via `--system-prompt` instead
   of an agent file; resumes sessions with `--resume <session-id>`;
   parses streaming JSON (`--output-format stream-json --verbose`);
-  and, because it bypasses the agent file, must re-impose the same
+  and, because it bypasses the agent files, re-imposes the same
   `task`/`todowrite` denials mechanically via `--disallowedTools` —
-  the parity `tend-agent` and `rummage` rely on. The backend choice
-  is a boolean startup flag and is not persisted.
+  keeping the permission boundary identical across both backends.
+  The backend choice is a boolean startup flag and is not persisted.
 
 Which model fills each tier, per backend, is overridable at runtime
 through `model-config`, a `.tinker/config.toml` file; the per-backend
@@ -35,9 +43,9 @@ the config leaves a slot unset.
 Tool calls from either backend render in the TUI as compact
 one-liners.
 
-Startup argument handling (unknown-arg detection, help text, exit behaviour)
-is governed by `startup-args`. Recognised flags passed to this goal's
-backends are `--claude` (select the claude backend) and
+Startup argument handling (unknown-arg detection, help text, exit
+behaviour) is governed by `startup-args`. Recognised flags passed to
+this goal's backends are `--claude` (select the claude backend) and
 `--tend-full-goal-context` (restore full goal text in tend's context
 instead of the compact index).
 
@@ -57,10 +65,11 @@ backend explicit and small.
   wired only at the composition root; the two current backends
   (opencode default, claude via `--claude`); per-backend model-tier
   mapping (the built-in defaults, overridable per tier via
-  `model-config`) and persona delivery; `--resume` session resumption
-  and streaming-JSON parsing on the claude path; compact one-liner
-  tool-call rendering; mechanical `task`/`todowrite` denial parity on
-  the claude path, which bypasses the opencode agent file.
+  `model-config`) and persona delivery; agent file installation for
+  tend, rummage, and jog on the opencode path; `--resume` session
+  resumption and streaming-JSON parsing on the claude path; compact
+  one-liner tool-call rendering; mechanical `task`/`todowrite` denial
+  parity on the claude path, which bypasses the opencode agent files.
 - Out of scope: persisting the backend *choice* (`--claude` is a
   startup flag — per-tier model overrides, by contrast, are persisted
   in `model-config`); auto-detecting which CLI is installed; backends
@@ -79,12 +88,8 @@ id = "startup-args"
 reason = "`startup-args` owns unknown-arg detection, help text, and exit behaviour. The flag set it validates against is defined by this goal (--claude, --tend-full-goal-context, --default-model); when a new flag is added here it must also be registered in `startup-args`."
 
 [[related]]
-id = "tend-agent"
-reason = "`tend-agent` defines how the opencode backend delivers the tend persona — a custom agent file whose YAML frontmatter carries the `task`/`todowrite` denials. The claude backend bypasses that file (persona via `--system-prompt`), so this goal owns re-imposing those denials mechanically via `--disallowedTools` to keep the boundary identical on both backends."
-
-[[related]]
 id = "rummage"
-reason = "Same parity concern as `tend-agent`: rummage's opencode agent file carries `task`/`todowrite` denials in frontmatter that the claude backend bypasses; this goal owns re-imposing them via `--disallowedTools` on the claude path."
+reason = "Rummage's opencode agent file carries `task`/`todowrite` denials in frontmatter that the claude backend bypasses; this goal owns re-imposing them via `--disallowedTools` on the claude path."
 
 [[related]]
 id = "cost-reduction"

@@ -127,5 +127,5 @@ id = "tend"
 reason = "Tend applies these rules during interview and edit-time cross-goal alignment. Without enforcement at that surface, the rules do not fire."
 
 [[related]]
-id = "compact-goal-context"
-reason = "compact-goal-context defines summary field content rules (terse, LLM-consume, governs+triggers); goal-craft tactics apply to WHAT/WHY/SCOPE, summary has distinct rules in compact-goal-context"
+id = "tend"
+reason = "The summary field content rules (terse, LLM-consume, governs+triggers format) are now in tend's Phase 4 write procedure. Goal-craft tactics apply to WHAT/WHY/SCOPE; summary has distinct rules described there."

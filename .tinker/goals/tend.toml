@@ -1,5 +1,5 @@
 id = "tend"
-summary = "governs: tend agent behavior; convention engine / reflective practitioner framing; dual duty (conventions→autonomous, inflections→stop+ask); interview phases 1-4; frame mismatch patterns; goal TOML edit procedure; reframing triggers+format+outcomes; note-taking; vocabulary file; reactive scheduling; @goal-id dispatch; jog-commissioned edits via @tend | triggers: interview/playback/goal-creation behavior; goal edit procedure; @goal-id dispatch; reframe handling; when to consult rummage; note-taking triggers"
+summary = "governs: tend agent behavior; convention engine / reflective practitioner framing; dual duty (conventions→autonomous, inflections→stop+ask); interview phases 1-4; frame mismatch patterns; goal TOML edit procedure; compact goal index; summary write protocol; reframing triggers+format+outcomes; note-taking; vocabulary file; reactive scheduling; @goal-id dispatch; jog-commissioned edits via @tend | triggers: interview/playback/goal-creation behavior; goal edit procedure; @goal-id dispatch; reframe handling; when to consult rummage; note-taking triggers; summary field authoring"
 description = """
 ## WHAT
 
@@ -87,6 +87,8 @@ intent. Never infer consent from silence or an indirect signal.
 6. Re-validate related-link symmetry: confirm every partner goal listed
    in `related` links back; add or fix missing back-links in the same
    write turn.
+7. Write or update the `summary` field: terse, grammar-stripped,
+   keyword-dense; format `governs: [domain]; triggers: [situations]`.
 
 TOML key order: `id`, `summary`, `description`, `parent_id`,
 `children`, `related` (omit if empty). Description: WHAT/WHY/SCOPE
@@ -128,9 +130,17 @@ introducing a new distinction, swapping one frame for another — name
 it: "I'm reframing here: we were talking about X, I'm now treating
 it as Y."
 
-**4. Runtime state.** Read the structured log and state file that
-`tend-introspection` maintains rather than estimating or asking the
-user.
+**4. Runtime state.** Read the structured log and state file that the
+introspection infrastructure (under `user-system-interaction`) maintains
+rather than estimating or asking the user.
+
+**Goal index.** Tend's context carries a compact index of all goals —
+summaries, parent/child relationships, related-link reasons. Pull full
+goal text on demand via `Read .tinker/goals/<id>.toml`. Pull strategy:
+pull when in doubt — summaries let tend confidently skip
+clearly-irrelevant goals; everything else gets pulled. The
+`--tend-full-goal-context` startup flag restores full goal text in
+context as a fallback.
 
 **Reactive scheduling.** When a goal agent reports via `@tend`, three
 responsibilities in order: (optional) compliance review — invoke
@@ -159,7 +169,9 @@ conversation pivots frame (**reframe**); a pattern repeats
 (**framing slip**); the user says "remember this." Format:
 `- [YYYY-MM-DD HH:MM] <type>: <one-line observation>`. Tone: observe
 without judging. Never mention note-taking; never interrupt the
-conversation.
+conversation. The notes file is private to tend — goal agents neither
+read nor write it. This builds only the substrate; there is no
+retrieval or reflection mechanism yet.
 
 **VCS.** Read-only. May run `git status`, `git diff`, `git log` to
 orient. Never commit, push, checkout, branch, rebase, or stash.
@@ -178,26 +190,6 @@ through the dispatch channel.
   context; mutating version control.
 """
 parent_id = "the-cycles"
-
-[[children]]
-id = "tend-agent"
-reason = "tend's opencode agent profile installed at startup — custom persona and tool denials for the tend session"
-
-[[children]]
-id = "goal-structure-standard"
-reason = "structural rules tend enforces on goal tree operations (merge/nest/retire) and write-time coherence enforcement"
-
-[[children]]
-id = "tend-notes"
-reason = "silent observation log — tend appends friction/surprise/reframe/recurring-thread notes throughout conversation"
-
-[[children]]
-id = "tend-introspection"
-reason = "runtime event log and state snapshot at .tinker/logs/ and .tinker/state/ — gives tend structured access to tinker's is"
-
-[[children]]
-id = "compact-goal-context"
-reason = "compact index in tend's context — summaries and parent_id for navigation, per-child link reasons, full text pulled on demand"
 
 [[related]]
 id = "goal-craft"
