@@ -244,6 +244,7 @@ async fn main() -> Result<()> {
     fs.mkdir_all(&primary_tinker_dir.join("state"))?;
     fs.mkdir_all(&primary_tinker_dir.join("notes"))?;
     fs.mkdir_all(&primary_tinker_dir.join("logs"))?;
+    fs.mkdir_all(&primary_tinker_dir.join("discrepancies"))?;
 
     // Write a self-documenting starter config only when none exists yet;
     // then load whatever is present (or default if still absent/invalid).
@@ -1646,6 +1647,15 @@ mod tests {
         // other directories created at startup.
         let logs_mkdir = main_rs.contains("mkdir_all") && main_rs.contains("\"logs\"");
         assert!(logs_mkdir, "main.rs must call mkdir_all for the logs subdir");
+    }
+
+    // spec (jog): ".tinker/discrepancies/" is pre-created at startup so jog
+    // sessions can write discrepancy files without creating the directory themselves.
+    #[test]
+    fn test_spec_discrepancies_dir_created_at_startup() {
+        let main_rs = include_str!("main.rs");
+        let discrepancies_mkdir = main_rs.contains("mkdir_all") && main_rs.contains("\"discrepancies\"");
+        assert!(discrepancies_mkdir, "main.rs must call mkdir_all for the discrepancies subdir");
     }
 
     // spec (rummage): "Rummage uses the strongest model available for the chosen

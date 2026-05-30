@@ -28,6 +28,14 @@ separate from the code. Goals survive restarts. They track cleanly in
 version control. Every line of generated code has a goal that explains why
 it exists.
 
+Goals are kept deliberately sparse. Each line must be anchored by something
+outside the implementation — a decision you actually made, an external
+constraint, or a hard lesson from a previous attempt. Nothing goes in just
+because it seemed like a good idea. That sparseness matters because goals do
+double duty: they are the standing record of your intent AND the prompt the
+goal session reads when it starts work. A cluttered goal gives the agent a
+cluttered target.
+
 The result: a codebase that is readable because it is the result of choices
 you made, not a pile of guesses the AI left behind.
 
@@ -46,33 +54,81 @@ The system runs in both directions.
 what fits and what does not, and decide when a result is good enough. The
 tool is named after what you do: tinker.
 
-**Tend** (the conversational agent) draws out what you want, writes it as a
-goal, and reads it back to you. You correct it. It reads it back again.
+**Tend** (the conversational agent) draws out what you want through a
+back-and-forth: it proposes a framing, you accept, reject, or push back, it
+refines, and over several rounds something crystallizes that resonates. The
+resolution does not come from either side alone — it is constructed through
+the exchange.
+
+One consequence of this is that the process must be hard for you. The
+friction of finding language for something that does not yet have language
+is exactly the work that generates user-anchored material. When tend makes
+the process easy — proposing ready-made framings, filling gaps on your
+behalf — you have handed over the only contribution only you can make. What
+enters the goal layer then is tend's content wearing user-vetted provenance.
+The friction is not a cost to minimize; it is the signal that the right work
+is happening.
+
+A second consequence is that you cannot be replaced in this loop. A second
+language model standing in for you has no real stake in the outcome, no
+contact with the problem outside the system, no continuity across sessions.
+It cannot supply the external bounding that terminates the refinement loop
+at a useful point. You are not in the loop as a courtesy — you are the
+termination condition.
+
 Once the goal says what you mean, tend dispatches a **goal session** — a
-persistent agent dedicated to that goal, which reads the spec, writes the
+persistent agent dedicated to that goal — which reads the spec, writes the
 code, and reports back to tend when done. Multiple goal sessions can be
 active at once; you select any goal in the goal list to see its session log.
 
-Tend does not guess. When it cannot resolve something from the rules alone,
-it stops and asks. When the framing is wrong — when your question is not the
-right question — tend names the shift explicitly before continuing. It never
-silently redirects.
+The loop continues after a goal is written. A sparse goal is implemented by
+a goal session; you try the result; observations feed back into the goal;
+the goal updates; the session re-runs paying attention to the delta. A
+sparse goal converges toward correctness through iteration, not by getting
+the spec right the first time.
 
-**Backward — checking.** Two agents run the other direction, looking for
-gaps between adjacent layers.
+Tend does not guess. When it cannot resolve something from the rules alone,
+it stops and asks. When the framing is wrong, tend names the shift
+explicitly before continuing. It never silently redirects.
+
+**Backward — checking.** The same four agents cover the return path, looking
+for gaps between adjacent layers.
+
+Two axes organize them into a system rather than a list:
+
+- **Producers vs. skeptics.** Tend and goal sessions move forward and treat
+  the goal as authoritative — they build from it. Rummage and jog move
+  backward and treat the goal as signal-with-noise — the gap under
+  investigation may be in the goal itself. When a skeptic finds something
+  wanting, it commissions the paired producer to fix it: rummage to a goal
+  session, jog to tend.
+
+- **Observable vs. drawn-out inputs.** Goal sessions and rummage work with
+  directly observable inputs — the written goal and the running code
+  respectively. They operate without user involvement. Tend and jog work
+  with inputs that cannot be read directly: tacit intent can only be drawn
+  out through dialogue. That is why they are the human-coupled agents.
 
 **Rummage** checks whether the code does what the goal says. When something
 needs explaining — a bug, surprising output, behavior you do not trust, code
 you are about to change — rummage investigates: reads what is there, writes
 scratch tests, traces the problem from symptom to cause. When it confirms
-the code diverged from the goal, it writes a failing test and sends the goal
-agent that owns that code a message pointing at the test.
+the code diverged from the goal, it writes a failing test and sends the
+owning goal agent a message pointing at the test.
 
-**Jog** checks whether the goal still says what you mean. Goals are written
-at a point in time; your understanding moves. Open jog by naming a topic in
-your own words — "jog me on logging" — and jog questions you, without first
-telling you what the goal says. If your understanding has drifted, jog hands
-the edit to tend, which applies it and shows you what changed.
+**Jog** checks for gaps between any two layers. It builds a set of things in
+each source — what the spec says, what the code does — by sending read-only
+queries to peer agents (tend for the spec layer, rummage for the code layer).
+It then compares the two sets step by step.
+
+Two kinds of problems emerge. A **coverage gap** (forward direction) is
+something in the code that the spec does not account for — a bug-finding
+lens, because unaccounted behavior is unintended behavior until proven
+otherwise. A **point of interest** (backward direction) is something in the
+spec with no traceable origin in the code — a place where the design has
+not landed yet.
+
+Jog documents findings in a discrepancy log. It does not commission fixes.
 
 The cycle is closed: everything built forward is a candidate for scrutiny
 backward. Code that cannot be explained by its goal, or a goal that no
@@ -81,17 +137,6 @@ catch.
 
 You switch between the three agents with `/tend`, `/rummage`, and `/jog`.
 The prompt line always shows which is active.
-
-Goals are kept deliberately sparse. Each line in a goal must be anchored by
-something outside the implementation — a decision you actually made, an
-external constraint, or a hard lesson from a previous attempt. Nothing
-goes in just because it seemed like a good idea. That sparseness matters
-because goals do double duty: they are the standing record of your intent
-AND the prompt the goal session reads when it starts work. A cluttered
-goal gives the agent a cluttered target. A sparse goal gives the iteration
-loop room to converge — the session implements what the goal says, you try
-the result, and if something is missing or wrong, that gap drives the next
-update to the goal rather than staying hidden.
 
 ---
 
@@ -138,6 +183,6 @@ Two backends are available:
 ## About this document
 
 This README is written by Tinker itself. It reads its own goals and
-synthesizes the narrative you see here. The goals are the source of truth;
-this document is a reflection of them. As Tinker's understanding of itself
-changes, this document changes with it.
+synthesizes the narrative you see here. It is as authoritative as the goals
+it reflects. As Tinker's understanding of itself changes, this document
+changes with it.

@@ -197,4 +197,16 @@ mod tests {
             "jog description must state that @rummage consultations are read-only",
         );
     }
+
+    // spec (peer-consult): the jog description must name the @-block peer
+    // consultation mechanism — specifically @tend and @rummage as the agents
+    // it dispatches to during a run.
+    #[test]
+    fn test_spec_jog_prompt_describes_peer_consultation_syntax() {
+        let prompt = jog_description();
+        assert!(
+            prompt.contains("@-messages") || prompt.contains("@tend") || prompt.contains("@rummage"),
+            "jog description must name the @-block peer consultation mechanism",
+        );
+    }
 }
