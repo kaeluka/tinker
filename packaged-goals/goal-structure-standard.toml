@@ -110,6 +110,10 @@ id = "goal-craft"
 reason = "Content-quality counterpart to this goal's structural rules, and owner of the WHAT/WHY/SCOPE section schema. Structure ensures tree integrity (parent-summary coherence, symmetric related-links, merge/nest operations); content ensures each file is a clean prompt (anchored claims, positive framing, orthogonality, goals-as-prompts, synthesis over enumeration). Both apply on every edit."
 
 [[related]]
+id = "goal-storage"
+reason = "`goal-storage` defines the TOML format for the [[children]] and [[related]] link fields — the array-of-tables syntax and id+reason schema. This goal defines what those fields mean: reason semantics, navigation-index role, symmetry rules."
+
+[[related]]
 id = "coding-standards"
 reason = "This goal produces code, which follows `coding-standards`. Asymmetric: packaged ancestor-scope standard, no back-link."
 

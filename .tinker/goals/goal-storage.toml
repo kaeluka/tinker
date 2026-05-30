@@ -20,11 +20,9 @@ source of truth across restarts.
 
 The `children` and `related` link lists both use the array-of-tables
 syntax (`[[children]]` / `[[related]]`), each entry carrying `id`
-and `reason` fields. The reason on a `[[related]]` entry explains
-how the two goals interact; the reason on a `[[children]]` entry
-explains why that goal is a sub-aspect of its parent. Both serve as
-the navigation index for agents deciding what to pull, and for tend's
-cross-goal alignment.
+and `reason` fields. The semantics of these fields — what reasons
+mean, how they serve as navigation indexes, symmetry rules — are
+governed by `goal-structure-standard`.
 
 ## WHY
 Goals are the user's standing intent. They have to survive restarts,
@@ -54,6 +52,10 @@ that could drift from or override what the goal says.
 
 """
 parent_id = ""
+
+[[related]]
+id = "goal-structure-standard"
+reason = "`goal-structure-standard` defines the semantics of the link fields this goal stores: what reasons mean on [[children]] and [[related]] entries, how they serve as navigation indexes, and the symmetry rules. This goal owns the format; that goal owns the meaning."
 
 [[related]]
 id = "coding-standards"

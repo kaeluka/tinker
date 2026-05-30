@@ -75,10 +75,6 @@ id = "user-persona"
 reason = "formalizes the user as an experienced dev who doesn't read source — sets the design-partner communication posture"
 
 [[children]]
-id = "shared-language"
-reason = "vocabulary standard and form norm for all user-facing surfaces (tend chat, session summaries, READMEs)"
-
-[[children]]
 id = "implementation-ownership"
 reason = "mandate giving goal agents full autonomy over source implementation without the default LLM structural-caution"
 
@@ -89,3 +85,7 @@ reason = "runtime substrate giving tinker structured access to the *is* it holds
 [[related]]
 id = "the-cycles"
 reason = "`the-cycles`'s three-layer stack (intent / spec / code) is the layered form of this goal's should/is split: layer 1 is the *should*, layers 2–3 the *is*. Its input-observability axis — which agents must work with the user because their inputs require drawing out human intent — is the agent-architecture consequence of this boundary."
+
+[[related]]
+id = "shared-language"
+reason = "The operational rule for filtering internal references through shared vocabulary when they surface to the user. `shared-language` is a packaged goal (global scope) and cannot carry a parent_id back to this project-local goal; the relationship is captured here as an asymmetric link."

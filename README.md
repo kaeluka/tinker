@@ -1,5 +1,10 @@
 # Tinker
 
+**Status:** Tinker is early-stage and experimental. Bugs are expected.
+Features are in heavy flux. This is a design study; work is actively ongoing.
+
+---
+
 You tell an AI what to build. The AI writes code. Now your codebase has two
 kinds of content mixed together: the things you actually wanted, and the
 things the AI guessed on its own. Over time you cannot tell them apart.
@@ -135,8 +140,44 @@ backward. Code that cannot be explained by its goal, or a goal that no
 longer matches your intent, is a failure the backward pass is there to
 catch.
 
-You switch between the three agents with `/tend`, `/rummage`, and `/jog`.
-The prompt line always shows which is active.
+---
+
+## Agents
+
+You interact with three agents in the conversation pane: tend, rummage, and
+jog. What "How it works" does not make obvious is that they consult each
+other — directly, without you in the middle.
+
+When rummage needs to know what you intended, it sends a message to tend.
+When tend needs to know what the code actually does, it sends a message to
+rummage. When jog wants to read the spec, it asks tend; when it wants to read
+the code, it asks rummage. These exchanges appear in the session logs. You can
+see them; you do not manage them.
+
+Switch between agents with `/tend`, `/rummage`, and `/jog`. The prompt line
+shows which is active.
+
+**Tend is the right place to start any new conversation.** Rummage and jog
+get pulled in as the work calls for them.
+
+---
+
+## Architecture
+
+Every goal is an agent — a persistent, addressable session. Any agent can
+send a message to any other by name. There is no central dispatcher. When a
+goal session finds a gap it cannot resolve, it messages rummage. When rummage
+needs intent context, it messages tend. When jog wants to read the spec, it
+messages tend. The exchange resolves without you brokering it.
+
+This is an actor model applied to specification documents. The goals are not
+passive files waiting for a human to notice conflicts. They are live sessions
+that can enforce their own constraints and consult peers to resolve ambiguity.
+
+The consequence for you: you stay informed through tend's reports and the
+session logs, without ever having to read the code behind them. Cognitive debt
+stays low because the goals — which you write and approve — are the whole
+story.
 
 ---
 
@@ -161,10 +202,36 @@ variables. Everything behind that is Tinker's job to keep straight.
 
 ---
 
-## Running Tinker
+## Installation
+
+Build from source:
 
 ```
-cargo run
+cargo build --release
+```
+
+Add the binary to your PATH:
+
+```
+export PATH="$PATH:/path/to/tinker/target/release"
+```
+
+Tinker ships with a set of packaged goals — built-in goals that apply to
+every project. To make them available, symlink the `packaged-goals/`
+directory into `~/.tinker`:
+
+```
+ln -s /path/to/tinker/packaged-goals ~/.tinker/packaged-goals
+```
+
+Tinker merges goal directories from your home directory down to your project.
+The symlink puts the packaged goals in the ancestor position, so any project
+inherits them without copying files.
+
+Run tinker from your project directory:
+
+```
+tinker
 ```
 
 You get a three-pane terminal: a conversation pane where you talk to the

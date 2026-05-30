@@ -40,9 +40,6 @@ through `model-config`, a `.tinker/config.toml` file; the per-backend
 mappings above are the built-in defaults each tier falls back to when
 the config leaves a slot unset.
 
-Tool calls from either backend render in the TUI as compact
-one-liners.
-
 Startup argument handling (unknown-arg detection, help text, exit
 behaviour) is governed by `startup-args`. Recognised flags passed to
 this goal's backends are `--claude` (select the claude backend) and
@@ -67,14 +64,15 @@ backend explicit and small.
   mapping (the built-in defaults, overridable per tier via
   `model-config`) and persona delivery; agent file installation for
   tend, rummage, and jog on the opencode path; `--resume` session
-  resumption and streaming-JSON parsing on the claude path; compact
-  one-liner tool-call rendering; mechanical `task`/`todowrite` denial
-  parity on the claude path, which bypasses the opencode agent files.
+  resumption and streaming-JSON parsing on the claude path; mechanical
+  `task`/`todowrite` denial parity on the claude path, which bypasses
+  the opencode agent files.
 - Out of scope: persisting the backend *choice* (`--claude` is a
   startup flag — per-tier model overrides, by contrast, are persisted
   in `model-config`); auto-detecting which CLI is installed; backends
   beyond opencode and claude until one is actually added; unknown-arg
-  detection and help text (see `startup-args`).
+  detection and help text (see `startup-args`); tool-call rendering
+  (see `tui`).
 
 """
 parent_id = ""

@@ -84,5 +84,13 @@ id = "tend"
 reason = "Tend is the mechanism through which the audit mandate fires: when tend edits any agent goal, it pulls this goal in cross-goal alignment to verify profile assignments still hold before writing."
 
 [[related]]
+id = "rummage"
+reason = "Rummage's profile (skeptical technical analysis, code investigation, hypothesis loops) is named here as the technical arm. Pull `rummage` when auditing whether the spec↔code skeptic role is assigned to the right profile."
+
+[[related]]
+id = "jog"
+reason = "Jog's profile (bidirectional discrepancy finding, read-only delegation to peer agents) is named here as the layer-agnostic backward checker. Pull `jog` when auditing whether the discrepancy-finding role is correctly assigned."
+
+[[related]]
 id = "goal-structure-standard"
 reason = "Goals are agents; the complementarity principle applies to the goal tree. Each goal should own a distinct domain — goals encroaching on each other's scope degrade the spec the same way overlapping agent profiles degrade output. `goal-structure-standard` is where orthogonal placement is enforced structurally."

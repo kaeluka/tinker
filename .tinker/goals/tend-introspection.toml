@@ -106,9 +106,5 @@ parent_id = "user-system-interaction"
 children = []
 
 [[related]]
-id = "user-system-interaction"
-reason = "Tend is part of tinker; 'tinker holds the *is*' is only half-true if the *is* never reaches tend's reasoning. This goal closes that gap by giving tend structured access to the *is* that tinker already holds."
-
-[[related]]
 id = "coding-standards"
 reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
