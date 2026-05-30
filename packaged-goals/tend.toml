@@ -76,7 +76,7 @@ reason = "tend's conversation is user-facing prose; `shared-language` governs vo
 
 [[related]]
 id = "jog"
-reason = "jog commissions tend to fix/clarify/enrich a goal on an 'I know better' finding via `@tend`."
+reason = "Jog sends read-only @tend queries to read the spec layer during discrepancy runs — no goal edits, no interview."
 
 [[related]]
 id = "rummage"

@@ -48,4 +48,4 @@ reason = "The `@`-block protocol through which rummage communicates with tend, g
 
 [[related]]
 id = "jog"
-reason = "Jog consults `@rummage` when deepening surfaces a possible implementation drift. Rummage is jog's code-reality arm."
+reason = "Jog sends read-only @rummage queries to read the code layer during discrepancy runs — no investigation, no dispatch."

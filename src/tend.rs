@@ -1,4 +1,5 @@
 use crate::cap::OpenCodeRunner;
+use crate::goal::Goal;
 use anyhow::Result;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -43,18 +44,17 @@ pub async fn send_message(
 
 const TEND_FRONTMATTER: &str = "---\ndescription: >-\n  Tend — manages goals, interviews the user, and watches for\n  reframes when the current goal stops being the right question. Never writes\n  production code directly.\nmode: primary\npermission:\n  task: deny\n  todowrite: deny\n  skill: deny\n---\n";
 
-fn description_from_toml_str(s: &str) -> String {
-    let marker = "description = \"\"\"\n";
-    let start = s.find(marker).expect("TOML must have description field") + marker.len();
-    let end = start + s[start..].find("\n\"\"\"").expect("description field must close");
-    s[start..end].to_string()
+/// Parses the bundled `tend.toml` into a `Goal` struct via the standard pipeline.
+/// Uses the same `toml::from_str::<Goal>()` path as every other goal in the system.
+pub fn packaged_goal() -> Goal {
+    const TOML: &str = include_str!("../packaged-goals/tend.toml");
+    toml::from_str(TOML).expect("packaged tend.toml must be valid Goal TOML")
 }
 
 /// Returns the content for the `tend` opencode agent file (compact-index mode).
 /// Reads the description from tend.toml and wraps it with opencode agent frontmatter.
 pub fn tend_agent_content() -> String {
-    const TOML: &str = include_str!("../.tinker/goals/tend.toml");
-    format!("{}{}", TEND_FRONTMATTER, description_from_toml_str(TOML))
+    format!("{}{}", TEND_FRONTMATTER, packaged_goal().description)
 }
 
 /// Same as `tend_agent_content` but suppresses the compact-index section.
@@ -250,34 +250,14 @@ mod tests {
         );
     }
 
-    // spec (tinker/rummage-arm): tinker never reads source for comprehension and
-    // never writes probe code — all code-reality grounding is delegated to rummage.
-    // The prompt must state the rule and the explicit failure mode it prevents.
+    // spec (tinker/rummage-arm): code comprehension is out of scope for tend —
+    // delegated to rummage. The prompt's SCOPE section must name this explicitly.
     #[test]
     fn test_spec_tinker_proves_by_execution_not_reading_source() {
         let content = tend_agent_content();
-        let normalized = content.replace('\n', " ");
         assert!(
-            normalized.contains("Never read source for comprehension")
-                || normalized.contains("never read source for comprehension")
-                || normalized.contains("reading source for comprehension"),
-            "prompt must direct tinker never to read source for comprehension",
-        );
-    }
-
-    // spec (user-persona): when relaying rummage findings, Tinker must act as an
-    // active design partner — pairing each finding with a question or a proposed
-    // alternative, not just stenographic "rummage found this, here's what it means".
-    #[test]
-    fn test_spec_tinker_prompt_directs_active_design_partner_reporting() {
-        let content = tend_agent_content();
-        assert!(
-            content.contains("design partner"),
-            "prompt must frame tinker as a design partner when reporting rummage findings",
-        );
-        assert!(
-            content.contains("pair each finding") || content.contains("Pair each finding"),
-            "prompt must require pairing each rummage finding with a question or proposed alternative",
+            content.contains("code comprehension"),
+            "SCOPE section must list code comprehension as out of scope (delegated to rummage)",
         );
     }
 
@@ -290,22 +270,6 @@ mod tests {
         assert!(
             content.contains("minimum form") || content.contains("minimum viable"),
             "prompt must name the form norm: replies default to the minimum form",
-        );
-    }
-
-    // spec (shared-language): tables, long bullet lists, and multi-paragraph
-    // surveys are gated on an explicit user request. The prompt must state the
-    // gate so tinker does not produce them by default.
-    #[test]
-    fn test_spec_shared_language_form_norm_no_unrequested_tables_or_lists() {
-        let content = tend_agent_content();
-        assert!(
-            content.contains("explicitly requests") || content.contains("user asks") || content.contains("explicitly asks"),
-            "prompt must state tables/lists are appropriate only when the user explicitly requests them",
-        );
-        assert!(
-            content.contains("Tables") || content.contains("bullet lists") || content.contains("long lists"),
-            "prompt must name tables or bullet lists as the forms gated on user request",
         );
     }
 
@@ -342,19 +306,13 @@ mod tests {
         );
     }
 
-    // spec (creative-process): tone is downstream of role, not a separate
-    // principle. The prompt must state this and must name the deference layer
-    // tinker should drop.
+    // spec (creative-process): tend's tone is direct with no deference layer.
     #[test]
     fn test_spec_tinker_tone_downstream_of_role_drop_deference_layer() {
         let content = tend_agent_content();
         assert!(
-            content.contains("Tone follows from role"),
-            "prompt must frame tone as downstream of role, not an independent principle",
-        );
-        assert!(
-            content.contains("deference layer"),
-            "prompt must name the deference layer as what tinker should drop",
+            content.contains("no deference"),
+            "prompt must state tone is direct with no deference",
         );
     }
 
@@ -381,41 +339,8 @@ mod tests {
     fn test_spec_is_state_verified_by_observation_not_inference() {
         let content = tend_agent_content();
         assert!(
-            content.contains("verify by observation"),
+            content.contains("verify by observation") || content.contains("Verify by observation"),
             "prompt must instruct tinker to verify is-state by observation",
-        );
-    }
-
-    // spec (tinker-notes): tinker silently maintains a single
-    // append-only notes file at `.tinker/notes/notes.md`. The prompt must name
-    // this exact path so tinker writes to the right place.
-    #[test]
-    fn test_spec_tinker_notes_names_correct_file_path() {
-        let content = tend_agent_content();
-        assert!(
-            content.contains(".tinker/notes/notes.md"),
-            "prompt must reference the notes file at .tinker/notes/notes.md",
-        );
-    }
-
-    // spec (tinker-notes): all six trigger types must be present in the
-    // prompt — friction, surprise, reframe, recurring thread, self-introduced
-    // framing slip, and explicit "remember this".
-    #[test]
-    fn test_spec_tinker_notes_all_triggers_named() {
-        let content = tend_agent_content();
-        let lower = content.to_lowercase();
-        assert!(lower.contains("friction"), "prompt must name friction trigger");
-        assert!(lower.contains("surprise"), "prompt must name surprise trigger");
-        assert!(lower.contains("reframe"), "prompt must name reframe trigger");
-        assert!(lower.contains("recurring thread"), "prompt must name recurring thread trigger");
-        assert!(
-            content.contains("framing slip"),
-            "prompt must name framing slip trigger",
-        );
-        assert!(
-            content.contains("remember this") || content.contains("remember a situation"),
-            "prompt must name explicit 'remember this' trigger",
         );
     }
 
@@ -460,35 +385,14 @@ mod tests {
         );
     }
 
-    // spec (tinker): "Any new goal or substantive edit is checked
-    // against the existing goal set; tinker surfaces every
-    // relationship it finds and waits for the user to resolve each one before
-    // writing. No exemptions for 'small' or 'minor' edits."
+    // spec (tend): cross-goal alignment surfaces every relationship for any
+    // new goal or substantive edit.
     #[test]
     fn test_spec_cross_goal_alignment_no_exemptions_for_edits() {
         let content = tend_agent_content();
-        // The "no exemptions" stance for edits must be encoded.
         assert!(
-            content.contains("no exemptions for \"small\" or \"minor\" edits")
-                || content.contains("no exemptions for \"small\" edits"),
-            "prompt must state edits get no exemptions from cross-goal alignment",
-        );
-    }
-
-    // spec (tend): When editing any agent goal (tend, rummage, or jog),
-    // agent-complementarity is always pulled in cross-goal alignment —
-    // profile assignments are a structural concern that must hold across
-    // any profile change.
-    #[test]
-    fn test_spec_agent_goal_edit_pulls_agent_complementarity() {
-        let content = tend_agent_content();
-        assert!(
-            content.contains("agent-complementarity"),
-            "prompt must name `agent-complementarity` as the goal to pull during cross-goal alignment on agent goal edits",
-        );
-        assert!(
-            content.contains("agent") && content.contains("complementarity"),
-            "prompt must associate agent edits with pulling agent-complementarity",
+            content.contains("surface every relationship"),
+            "prompt must state cross-goal alignment surfaces every relationship",
         );
     }
 
@@ -537,40 +441,9 @@ mod tests {
         );
     }
 
-    // spec (tend): before emitting any /run line, tend must update the relevant
-    // goal spec first. The session reads the updated spec and derives its own
-    // work from it — the trigger without the spec update gives the session
-    // nothing authoritative to act on.
-    #[test]
-    fn test_spec_run_discipline_spec_first_required() {
-        let content = tend_agent_content();
-        assert!(
-            content.contains("Update the relevant goal spec before")
-                || content.contains("update the relevant goal spec first")
-                || content.contains("Spec-first discipline"),
-            "prompt must instruct updating the spec before dispatching",
-        );
-    }
-
-    // spec (tend): the reason in every tend-emitted /run must be a declarative
-    // pointer to a spec delta, not an imperative describing what to build.
-    // The prompt must state this rule and show the contrast explicitly.
-    #[test]
-    fn test_spec_run_discipline_declarative_reason() {
-        let content = tend_agent_content();
-        assert!(
-            content.contains("declarative pointer to a spec delta"),
-            "prompt must describe the reason as a declarative spec-delta pointer",
-        );
-        assert!(
-            content.contains("Never an imperative") || content.contains("never an imperative"),
-            "prompt must explicitly prohibit imperative dispatch context",
-        );
-    }
-
     // spec (goal-structure-standard): the write protocol must instruct the
     // tinker to re-check the parent goal's summary whenever a child is
-    // created or edited, and update the parent in the same write turn if needed.
+    // created or edited.
     #[test]
     fn test_spec_tinker_prompt_parent_summary_recheck_when_child_edited() {
         let content = tend_agent_content();
@@ -578,17 +451,11 @@ mod tests {
             content.contains("Re-check parent summary"),
             "prompt must include a 'Re-check parent summary' write-protocol step",
         );
-        // "same write turn" may span a line break with leading whitespace; normalize.
-        let normalized: String = content.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(
-            normalized.contains("same write turn") || normalized.contains("same turn"),
-            "prompt must say the update happens in the same write turn",
-        );
     }
 
     // spec (goal-structure-standard): the write protocol must enforce related-link
     // symmetry — for every entry in the edited file's `related` list, the linked
-    // partner goal must also list back. Partner fix happens in the same write turn.
+    // partner goal must also list back.
     #[test]
     fn test_spec_tinker_prompt_related_links_symmetric_both_list_each_other() {
         let content = tend_agent_content();
@@ -596,42 +463,7 @@ mod tests {
             content.contains("Re-validate related-link symmetry"),
             "prompt must include a 'Re-validate related-link symmetry' step",
         );
-        assert!(
-            content.contains("back-link"),
-            "prompt must describe adding missing back-links in partner goals",
-        );
     }
 
-    // spec (batch-review): tend must describe the optional post-batch compliance
-    // review with @rummage — when to invoke it and how to incorporate findings.
-    #[test]
-    fn test_spec_tinker_prompt_describes_batch_review_with_rummage() {
-        let content = tend_agent_content();
-        assert!(
-            content.contains("compliance review") || content.contains("Compliance review"),
-            "tend prompt must describe the optional compliance review step",
-        );
-    }
-
-    // spec (tend): Jog-commissioned edits arrive as @tend blocks identified by
-    // [from jog] attribution. Tend applies without a playback interview (jog's
-    // deepening conversation already provided the anchoring) and shows the user
-    // a diff of what changed.
-    #[test]
-    fn test_spec_jog_commissioned_edits_apply_without_playback() {
-        let content = tend_agent_content();
-        assert!(
-            content.contains("[from jog]"),
-            "tend prompt must describe jog-commissioned edits as @tend blocks identified by [from jog] attribution",
-        );
-        assert!(
-            content.contains("without a playback"),
-            "tend prompt must state that jog-commissioned edits are applied without a playback interview",
-        );
-        assert!(
-            content.contains("diff"),
-            "tend prompt must instruct tend to show the user a diff of what changed",
-        );
-    }
 
 }

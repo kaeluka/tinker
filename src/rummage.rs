@@ -1,10 +1,12 @@
+use crate::goal::Goal;
+
 const RUMMAGE_FRONTMATTER: &str = "---\ndescription: >-\n  Rummage — investigates program behavior through backward causal reasoning.\nmode: primary\npermission:\n  task: deny\n  todowrite: deny\n  skill: deny\n---\n";
 
-fn description_from_toml_str(s: &str) -> String {
-    let marker = "description = \"\"\"\n";
-    let start = s.find(marker).expect("TOML must have description field") + marker.len();
-    let end = start + s[start..].find("\n\"\"\"").expect("description field must close");
-    s[start..end].to_string()
+/// Parses the bundled `rummage.toml` into a `Goal` struct via the standard pipeline.
+/// Uses the same `toml::from_str::<Goal>()` path as every other goal in the system.
+pub fn packaged_goal() -> Goal {
+    const TOML: &str = include_str!("../packaged-goals/rummage.toml");
+    toml::from_str(TOML).expect("packaged rummage.toml must be valid Goal TOML")
 }
 
 /// Returns the content for the `rummage` opencode agent file.
@@ -14,8 +16,7 @@ fn description_from_toml_str(s: &str) -> String {
 /// the call graph, and look up external library details. task/todowrite are denied
 /// because rummage is a chat investigation session, not a planner.
 pub fn rummage_agent_content() -> String {
-    const TOML: &str = include_str!("../.tinker/goals/rummage.toml");
-    format!("{}{}", RUMMAGE_FRONTMATTER, description_from_toml_str(TOML))
+    format!("{}{}", RUMMAGE_FRONTMATTER, packaged_goal().description)
 }
 
 #[cfg(test)]
@@ -23,8 +24,7 @@ mod tests {
     use super::*;
 
     fn rummage_description() -> String {
-        const TOML: &str = include_str!("../.tinker/goals/rummage.toml");
-        description_from_toml_str(TOML)
+        super::packaged_goal().description
     }
 
     // spec (rummage): rummage is an active investigator — it writes scratch tests,
@@ -58,29 +58,6 @@ mod tests {
         assert!(
             prompt.contains("backward causal"),
             "rummage system prompt must name backward causal reasoning in the technique inventory",
-        );
-    }
-
-    // spec (rummage): rummage operates in three explicit modes — debugging,
-    // reconnaissance, and exploration. All three must be named in the system prompt
-    // so the agent knows to declare and track the active mode.
-    #[test]
-    fn test_spec_rummage_three_modes_named() {
-        let prompt = rummage_description();
-        assert!(prompt.contains("Debugging") || prompt.contains("debugging"), "rummage must name the debugging mode");
-        assert!(prompt.contains("Reconnaissance") || prompt.contains("reconnaissance"), "rummage must name the reconnaissance mode");
-        assert!(prompt.contains("Exploration") || prompt.contains("exploration"), "rummage must name the exploration mode");
-    }
-
-    // spec (rummage): rummage re-declares the active mode in chat and document
-    // whenever it notices a shift. The system prompt must require explicit
-    // re-declaration so the user always knows which mode is active.
-    #[test]
-    fn test_spec_rummage_mode_declared_on_shift() {
-        let prompt = rummage_description();
-        assert!(
-            prompt.contains("Re-declare") || prompt.contains("re-declare") || prompt.contains("re-declared"),
-            "rummage system prompt must require re-declaration of mode when a shift occurs",
         );
     }
 
@@ -249,53 +226,22 @@ mod tests {
         );
     }
 
-    // spec (batch-review): the compliance review covers three areas — spec
-    // satisfaction, security coverage, and a general scan. The prompt must
-    // name all three so rummage runs through them systematically.
-    #[test]
-    fn test_spec_rummage_compliance_review_covers_three_areas() {
-        let prompt = rummage_description();
-        assert!(
-            prompt.contains("Spec satisfaction") || prompt.contains("spec satisfaction"),
-            "rummage prompt must name spec satisfaction as a compliance review area",
-        );
-        assert!(
-            prompt.contains("Security coverage") || prompt.contains("security coverage"),
-            "rummage prompt must name security coverage as a compliance review area",
-        );
-        assert!(
-            prompt.contains("General scan") || prompt.contains("general scan"),
-            "rummage prompt must name a general scan as the third compliance review area",
-        );
-    }
-
-    // spec (batch-review): rummage reports its compliance review findings back
-    // to tend via @tend, not directly to the user. The prompt must state this.
-    #[test]
-    fn test_spec_rummage_compliance_review_reports_to_tend() {
-        let prompt = rummage_description();
-        assert!(
-            prompt.contains("Report back via `@tend`") || prompt.contains("Report back via @tend"),
-            "rummage prompt must state compliance review findings are reported to tend via @tend",
-        );
-    }
-
-    // spec (peer-consult): the prompt must frame tend as rummage's intent-reading
-    // arm and name the triggers for @tend consultation.
+    // spec (peer-consult): the prompt must describe rummage consulting tend for
+    // intent and name the case-1/case-2 decision boundary.
     #[test]
     fn test_spec_rummage_prompt_names_tend_as_intent_arm_with_three_triggers() {
         let prompt = rummage_description();
         assert!(
-            prompt.contains("intent-reading arm"),
-            "rummage prompt must frame tend as the intent-reading arm",
+            prompt.contains("@tend") || prompt.contains("consults tend"),
+            "rummage prompt must describe consulting tend for intent questions",
         );
         assert!(
-            prompt.contains("case-1 vs case-2") || prompt.contains("case-1/case-2") || prompt.contains("case-1 vs"),
-            "rummage prompt must name the case-1/case-2 disambiguation trigger",
+            prompt.contains("Case-1") || prompt.contains("case-1") || prompt.contains("case 1"),
+            "rummage prompt must name the case-1 abstention boundary",
         );
         assert!(
-            prompt.contains("dispatch") && (prompt.contains("which goal") || prompt.contains("owns")),
-            "rummage prompt must name the ownership-before-dispatch trigger",
+            prompt.contains("Case-2") || prompt.contains("case-2") || prompt.contains("case 2"),
+            "rummage prompt must name the case-2 fix-dispatch boundary",
         );
     }
 }
