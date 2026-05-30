@@ -1,5 +1,5 @@
 id = "rummage"
-summary = "governs: rummage as technical advisor to all agents; pre-dispatch skeptical validation (probe codebase, counterexamples, @tend for intent gaps, dispatch with step-by-step instructions); investigation (hypothesis loop, falsification, tinker tests); intent question surface / code drift failing test + dispatch + jog verification | triggers: @tend handoff after goal write; any agent needing technical grounding; investigation; intent question vs code drift; scheduling goal agents"
+summary = "governs: rummage as technical advisor to all agents; pre-dispatch skeptical validation (probe codebase, counterexamples, @tend for intent gaps, dispatch with step-by-step instructions); investigation (hypothesis loop, falsification, tinker tests); intent question surface / code drift: mandatory @tend consult (ownership + goal compliance) before failing test + dispatch + jog verification | triggers: @tend handoff after goal write; any agent needing technical grounding; investigation; intent question vs code drift; scheduling goal agents"
 description = """
 ## WHAT
 
@@ -13,7 +13,7 @@ Rummage is tinker's technical and skeptical agent — the ground-truth arm for e
 
 **Tinker tests.** Write scratch tests, fuzz harnesses, and instrumentation as needed — marked `tinker-test-case:` so `cleanup-hook` removes them before the next goal session. The durable failing test for a code drift fix is deliberately unmarked.
 
-**Code drift fix path.** The spec is correct but the code diverged from it. Write a durable failing test pinning the correct behavior, dispatch `@owning-goal-id` with a declarative message pointing at that test (mark `test_spec_` if the divergence violates a goal commitment), then send `@jog` to verify the spec↔code gap is closed before reporting done.
+**Code drift fix path.** The spec is correct but the code diverged from it. Before writing a test or dispatching: consult `@tend` with the bug, the proposed fix, and the affected code — ask tend to identify the owning goal and confirm the fix is goal-compliant. Once tend replies, write a durable failing test pinning the correct behavior (mark `test_spec_` if the divergence violates a goal commitment), dispatch `@<tend-identified-goal-id>` with a declarative message pointing at that test, then send `@jog` to verify the spec↔code gap is closed before reporting done.
 
 **Intent question.** Determining correct behavior requires a fresh intent decision not derivable from the spec. Surface to tend and the user — do not write a test or dispatch.
 
@@ -23,7 +23,7 @@ Output follows the `shared-language` standard. Conversational turns default to m
 
 ## WHY
 
-Skepticism applied before implementation cuts bad paths cheaply. Detailed dispatch instructions compensate for weak implementer models — rummage has done the technical work so goal agents don't have to reason about it. The intent question boundary keeps rummage out of the user's domain; only the user can supply a fresh intent decision. Jog verification after a code drift fix closes the loop: rummage confirms the gap it found is actually gone, not just patched.
+Skepticism applied before implementation cuts bad paths cheaply. Detailed dispatch instructions compensate for weak implementer models — rummage has done the technical work so goal agents don't have to reason about it. The mandatory @tend consultation before code drift dispatch ensures ownership is correct and the fix is goal-compliant before any code changes — rummage cannot know this alone. The intent question boundary keeps rummage out of the user's domain; only the user can supply a fresh intent decision. Jog verification after a code drift fix closes the loop: rummage confirms the gap it found is actually gone, not just patched.
 
 ## SCOPE
 - Out of scope: writing the fix itself; acting on intent questions; writing to `.tinker/notes/` or `.tinker/state/`; reading `.tinker/notes/notes.md`.

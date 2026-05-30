@@ -201,6 +201,22 @@ mod tests {
         );
     }
 
+    // spec (rummage): before writing a durable failing test or dispatching on a
+    // code drift fix, rummage must consult @tend to confirm ownership and goal
+    // compliance. The system prompt must name this mandatory pre-dispatch step.
+    #[test]
+    fn test_spec_rummage_code_drift_requires_tend_consult_before_dispatch() {
+        let prompt = rummage_description();
+        assert!(
+            prompt.contains("consult `@tend`") || prompt.contains("consult @tend"),
+            "rummage system prompt must require @tend consultation before code drift dispatch",
+        );
+        assert!(
+            prompt.contains("owning goal") || prompt.contains("goal-compliant") || prompt.contains("goal compliance"),
+            "rummage system prompt must name ownership confirmation and goal compliance as the purpose of the @tend consult",
+        );
+    }
+
     // spec (rummage): the system prompt must name the intent question case as
     // abstention — correct behavior requires fresh intent, so rummage surfaces and defers.
     #[test]
