@@ -55,12 +55,14 @@ and eroded trust in a working feature — made the gap visible.
   what surfaces are legitimate (interface as-is, internals only via
   shared-language filtering); framing `user-persona` (who the user
   is), `shared-language` (the filtering mechanism for the second
-  surface), and `implementation-ownership` (the application of
-  "tinker holds the *is*" to source code) as downstream
-  applications of this principle.
+  surface), `implementation-ownership` (the application of
+  "tinker holds the *is*" to source code), and `tend-introspection`
+  (the mechanism by which tinker gains structured access to the *is*
+  its own reasoning depends on) as downstream applications of this
+  principle.
 - Out of scope: the specific mechanisms by which these rules are
   enforced (those live in children and in operational goals like
-  `tinker-agent`, `goal-agents`, `cleanup-hook`); rollout across
+  `tend-agent`, `goal-agents`, `cleanup-hook`); rollout across
   existing operational surfaces (each operational goal that needs to
   absorb this principle is its own follow-up edit, deliberate rather
   than one-shot).
@@ -78,11 +80,11 @@ reason = "vocabulary standard and form norm for all user-facing surfaces (tend c
 
 [[children]]
 id = "implementation-ownership"
-reason = "mandate giving goal sessions full autonomy over source implementation without the default LLM structural-caution"
+reason = "mandate giving goal agents full autonomy over source implementation without the default LLM structural-caution"
 
-[[related]]
+[[children]]
 id = "tend-introspection"
-reason = "That goal is the in-tinker mechanism by which tinker — itself a part of tinker — gains structured access to the *is* this principle defines tinker as holding. Without it, the verify-by-observation rule applies to the user-facing surface but tinker's own reasoning stays inference-based, leaving the principle only half-realized."
+reason = "runtime substrate giving tinker structured access to the *is* it holds — without it, verify-by-observation applies to the user-facing surface but tinker's own reasoning stays inference-based"
 
 [[related]]
 id = "the-cycles"

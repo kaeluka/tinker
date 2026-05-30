@@ -103,7 +103,7 @@ compact index, keeping navigation cheap.
   rendering of related-links.
 
 """
-parent_id = "tend"
+parent_id = "goal-storage"
 children = []
 
 [[related]]
@@ -119,5 +119,5 @@ id = "goal-agents"
 reason = "Every agent session navigates the goal graph using the compact index (summaries, parent/child relationships, related-link reasons) injected by the framework preamble. The reason-per-link is what makes that navigation local to the index — agents pull full text only when the reason warrants it."
 
 [[related]]
-id = "compact-goal-context"
-reason = "`compact-goal-context` adds the `summary` field to the TOML write protocol and schema key order; both goals apply on every goal edit"
+id = "tend"
+reason = "The summary write protocol (terse, governs+triggers format, written on every goal creation and edit) is part of tend's Phase 4 write procedure. Both goals apply on every edit: this goal for structural integrity, tend for summary authoring."

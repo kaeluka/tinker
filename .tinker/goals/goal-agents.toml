@@ -153,9 +153,5 @@ id = "tend"
 reason = "tend is the only agent with structural exceptions in the registry (eager start, parse-correction loop). Those two exceptions and nothing more are what make tend different from any other session entry."
 
 [[related]]
-id = "compact-goal-context"
-reason = "compact-goal-context defines the index format that the framework preamble injects into every session, giving all agents the same navigable goal tree without loading full text."
-
-[[related]]
 id = "coding-standards"
 reason = "This goal produces code, which follows coding-standards (capability-based DI, the polymorphism ladder, test_spec_/test_security_ marking, security.md, and the tinker-test-case: convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: coding-standards is a packaged ancestor-scope standard and carries no back-link."
