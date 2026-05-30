@@ -301,10 +301,9 @@ fn push_jog_text(lines: &mut Vec<Line<'static>>, text: &str) {
 
 fn push_assistant_text(lines: &mut Vec<Line<'static>>, text: &str) {
     let mut in_tool_call = false;
-    let mut output_index = 0usize;
+    let mut label_rendered = false;
     for raw_line in text.lines() {
-        push_assistant_text_segment(lines, raw_line, &mut in_tool_call, output_index);
-        output_index += 1;
+        push_assistant_text_segment(lines, raw_line, &mut in_tool_call, &mut label_rendered);
     }
 }
 
@@ -312,7 +311,7 @@ fn push_assistant_text_segment(
     lines: &mut Vec<Line<'static>>,
     line: &str,
     in_tool_call: &mut bool,
-    output_index: usize,
+    label_rendered: &mut bool,
 ) {
     if line.starts_with("→ ") {
         *in_tool_call = true;
@@ -328,7 +327,8 @@ fn push_assistant_text_segment(
         ]));
     } else if *in_tool_call {
         // Skip rendering subsequent lines of a tool call payload (crop to first line)
-    } else if output_index == 0 {
+    } else if !*label_rendered {
+        *label_rendered = true;
         lines.push(Line::from(vec![
             Span::styled(
                 "tend   ",
@@ -1030,6 +1030,25 @@ mod tests {
         assert!(
             lines.iter().any(|l| l.spans.iter().any(|s| s.content.contains("normal text"))),
             "text after the tool call must still be rendered",
+        );
+    }
+
+    // spec (tui): when a tend reply opens with a tool call, the "tend" label must
+    // appear on the first prose line, not on the tool-call line (which would leave
+    // all real content unlabeled).
+    #[test]
+    fn test_spec_tend_label_appears_after_leading_tool_call() {
+        let text = "→ read src/lib.rs\npayload skipped\n\nHere is what I found.";
+        let mut lines: Vec<Line> = vec![];
+        push_assistant_text(&mut lines, text);
+        let label_line = lines.iter().find(|l| {
+            l.spans.iter().any(|s| s.content.trim() == "tend")
+        });
+        assert!(label_line.is_some(), "tend label must appear even when reply opens with a tool call");
+        let label_line = label_line.unwrap();
+        assert!(
+            label_line.spans.iter().any(|s| s.content.contains("Here is what I found.")),
+            "tend label must be on the first prose line, not the tool-call line",
         );
     }
 
