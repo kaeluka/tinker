@@ -148,9 +148,7 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
          output is your private working log (rendered in the log pane, not delivered to \
          other agents). `@`-blocks in your reply are extracted after you finish and routed \
          to the named recipients. No blocking calls — replies arrive in the normal message \
-         stream. **Answering peer queries.** When a message arrives prefixed `[from \
-         <sender>]`, send your answer back as `@<sender> <answer>` — prose output alone \
-         stays in your private log. **Reporting completions.** When you complete significant work, report \
+         stream. **Reporting completions.** When you complete significant work, report \
          to your dispatcher — the agent whose `@`-message initiated your current task \
          (this can be the user). In your report: what you did, what you decided beyond \
          the goal, how to try the result, every `test_spec_` function you created or \
@@ -591,19 +589,6 @@ mod tests {
         assert!(
             msg.contains("cannot write a useful message without knowing"),
             "preamble must explain why reading is required before sending"
-        );
-    }
-
-    // spec (peer-consult): when a peer query arrives prefixed [from <sender>],
-    // the answer must go back via @<sender> — not left as prose in the private log.
-    // The preamble must name this rule explicitly so agents don't silently drop answers.
-    #[test]
-    fn test_spec_preamble_requires_at_reply_to_peer_queries() {
-        let goal = make_goal("widget", "build a widget");
-        let msg = session_init_message(&goal, None, "[]");
-        assert!(
-            msg.contains("[from") && msg.contains("@<sender>"),
-            "preamble must instruct agents to reply via @<sender> when message has [from <sender>] prefix"
         );
     }
 

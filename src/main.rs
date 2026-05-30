@@ -827,7 +827,7 @@ fn dispatch_peer_consultations(
     log: &logger::LogSender,
 ) {
     for (recipient, msg) in consultations {
-        let formatted = format!("[from {}] {}", sender, msg);
+        let formatted = format!("[from {}] {}\n\nReply via @{}.", sender, msg, sender);
         let sys = format!("@{} → @{}: {}", sender, recipient, msg);
         app.push_system_message(&sys);
         log.emit(sender, logger::LogEvent::TinkerSystemMessageReceived { content: sys });
@@ -2010,6 +2010,32 @@ mod tests {
         let jog_msg = jog_rx.try_recv().expect("jog must receive its consultation");
         assert!(jog_msg.contains("[from rummage]"));
         assert_eq!(app.jog_tasks, 1, "jog_tasks must increment");
+    }
+
+    // spec (peer-consult): dispatched messages carry an inline return-routing
+    // instruction ("Reply via @<sender>.") so the receiving agent knows to wrap
+    // its answer in an @-block rather than leave it as private prose.
+    #[test]
+    fn test_spec_peer_consult_dispatch_includes_reply_instruction() {
+        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let mut senders = HashMap::new();
+        senders.insert("tend".to_string(), msg_tx);
+        let mut app = App::new();
+        let consultations = vec![("tend".to_string(), "what does this mean?".to_string())];
+        dispatch_peer_consultations(
+            &mut app,
+            "rummage",
+            &consultations,
+            &senders,
+            &spawn_tx,
+            &logger::noop_sender(),
+        );
+        let msg = msg_rx.try_recv().expect("tend must receive the consultation");
+        assert!(
+            msg.contains("Reply via @rummage"),
+            "dispatched message must carry return-routing instruction with sender name"
+        );
     }
 
     // spec (peer-consult): a system message is pushed for each consultation

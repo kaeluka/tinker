@@ -376,18 +376,6 @@ mod tests {
         );
     }
 
-    // spec (peer-consult): when tend receives a peer query prefixed [from <sender>],
-    // it must send the answer back via @<sender> — not leave it as prose in the output.
-    // The tend description must name this rule so tend actually routes the answer.
-    #[test]
-    fn test_spec_tend_peer_query_answer_routed_via_at_sender() {
-        let content = tend_agent_content();
-        assert!(
-            content.contains("@<sender>") && content.contains("[from <sender>]"),
-            "tend description must instruct sending answers back via @<sender> for [from <sender>] peer queries",
-        );
-    }
-
     // spec (tinker-notes): the `.tinker/notes/` directory must be
     // created at startup. Tested by asserting that main.rs contains the
     // mkdir call for the notes subdirectory.
