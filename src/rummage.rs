@@ -11,12 +11,11 @@ pub fn packaged_goal() -> Goal {
 
 /// Returns the content for the `rummage` opencode agent file.
 /// Installed to `~/.config/opencode/agents/rummage.md` at startup.
-/// Rummage is an active investigator: write/edit/bash/lsp/webfetch/websearch are
-/// allowed so it can write scratch tests, fuzz harnesses, instrumentation, navigate
-/// the call graph, and look up external library details. task/todowrite are denied
-/// because rummage is a chat investigation session, not a planner.
+/// Frontmatter only — the description is now injected via session_init_message
+/// so rummage receives the same framework preamble as every other goal agent.
+/// The frontmatter carries the task/todowrite denials; the agent file body is empty.
 pub fn rummage_agent_content() -> String {
-    format!("{}{}", RUMMAGE_FRONTMATTER, packaged_goal().description)
+    RUMMAGE_FRONTMATTER.to_string()
 }
 
 #[cfg(test)]
@@ -48,6 +47,21 @@ mod tests {
         let content = rummage_agent_content();
         assert!(content.contains("task: deny"), "rummage must deny task");
         assert!(content.contains("todowrite: deny"), "rummage must deny todowrite");
+    }
+
+    // spec (goal-agents): rummage agent file must be frontmatter-only. The description
+    // is now injected via session_init_message, giving rummage the same framework preamble
+    // as every other goal agent. Having the description in both the agent file body and
+    // the init message would duplicate it.
+    #[test]
+    fn test_spec_rummage_agent_file_frontmatter_only() {
+        let content = rummage_agent_content();
+        // Frontmatter is delimited by "---"; the body is everything after the closing "---".
+        let after_frontmatter = content.splitn(3, "---").nth(2).unwrap_or("").trim();
+        assert!(
+            after_frontmatter.is_empty(),
+            "rummage agent file must have no body — description comes through session_init_message, not the agent file",
+        );
     }
 
     // spec (rummage): backward causal reasoning is part of the technique inventory —

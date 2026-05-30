@@ -11,12 +11,11 @@ pub fn packaged_goal() -> Goal {
 
 /// Returns the content for the `jog` opencode agent file.
 /// Installed to `~/.config/opencode/agents/jog.md` at startup.
-/// Jog is a Socratic investigator: write/edit/bash are available for reading
-/// goal files via the shell, but jog writes no investigation code and does not
-/// probe the running system. task/todowrite are denied because jog is a chat
-/// audit session, not a planner.
+/// Frontmatter only — the description is now injected via session_init_message
+/// so jog receives the same framework preamble as every other goal agent.
+/// The frontmatter carries the task/todowrite denials; the agent file body is empty.
 pub fn jog_agent_content() -> String {
-    format!("{}{}", JOG_FRONTMATTER, packaged_goal().description)
+    JOG_FRONTMATTER.to_string()
 }
 
 #[cfg(test)]
@@ -36,152 +35,166 @@ mod tests {
         assert!(content.contains("todowrite: deny"), "jog must deny todowrite");
     }
 
-    // spec (jog): pull-only invocation — the user names a topic and jog resolves
-    // it to relevant claims. The system prompt must describe this pull pattern.
+    // spec (goal-agents): jog agent file must be frontmatter-only. The description
+    // is now injected via session_init_message, giving jog the same framework preamble
+    // as every other goal agent. Having the description in both the agent file body and
+    // the init message would duplicate it.
+    #[test]
+    fn test_spec_jog_agent_file_frontmatter_only() {
+        let content = jog_agent_content();
+        let after_frontmatter = content.splitn(3, "---").nth(2).unwrap_or("").trim();
+        assert!(
+            after_frontmatter.is_empty(),
+            "jog agent file must have no body — description comes through session_init_message, not the agent file",
+        );
+    }
+
+    // spec (jog): jog invocation is on-request. The description must state that
+    // triggering is on-request / not automated.
     #[test]
     fn test_spec_jog_system_prompt_describes_pull_invocation() {
         let prompt = jog_description();
         assert!(
-            prompt.contains("Pull only") || prompt.contains("on demand") || prompt.contains("invokes you"),
-            "jog system prompt must describe pull invocation by user-named topic",
+            prompt.contains("On-request") || prompt.contains("on-request")
+                || prompt.contains("on demand") || prompt.contains("on request"),
+            "jog description must describe on-request invocation (not automated triggering)",
         );
     }
 
-    // spec (jog): Socratic no-cue questioning — jog never leads the witness.
-    // The system prompt must name the no-cue discipline.
+    // spec (jog): jog sends read-only @-messages to peer agents — it reads both
+    // sources of truth by consulting agents, never by writing or modifying.
+    // The description must name the read-only consultation discipline.
     #[test]
     fn test_spec_jog_system_prompt_names_no_cue_questioning() {
         let prompt = jog_description();
         assert!(
-            prompt.contains("no-cue") || prompt.contains("No-cue") || prompt.contains("never lead") || prompt.contains("leading"),
-            "jog system prompt must name the no-cue questioning discipline",
+            prompt.contains("read-only") || prompt.contains("read only")
+                || prompt.contains("don't act on it"),
+            "jog description must name the read-only consultation discipline",
         );
     }
 
-    // spec (jog): two findings — "I didn't know" (user drifted from correct goal)
-    // and "I know better" (goal is thin or wrong). Both must be named.
+    // spec (jog): jog performs both a forward check (N→N+1 coverage: things in
+    // the derived source that are missing from the base) and a backward check
+    // (N+1→N provenance: things in the base with no origin). The description must
+    // name both check directions.
     #[test]
     fn test_spec_jog_system_prompt_names_two_findings() {
         let prompt = jog_description();
         assert!(
-            prompt.contains("I didn't know") || prompt.contains("didn't know"),
-            "jog system prompt must name the 'I didn't know' finding",
+            prompt.contains("forward") || prompt.contains("Forward"),
+            "jog description must name the forward check direction",
         );
         assert!(
-            prompt.contains("I know better") || prompt.contains("know better"),
-            "jog system prompt must name the 'I know better' finding",
+            prompt.contains("backward") || prompt.contains("Backward"),
+            "jog description must name the backward check direction",
         );
     }
 
-    // spec (jog): on an "I know better" finding, jog commissions the fix via an
-    // @tend block. The system prompt must name this commission format.
+    // spec (jog): jog sends @tend and @rummage queries to read the spec and code
+    // layers respectively. These consultations are always read-only — jog does
+    // not commission fixes. The description must name both recipients and the
+    // read-only constraint.
     #[test]
     fn test_spec_jog_commission_uses_at_tend() {
         let prompt = jog_description();
         assert!(
             prompt.contains("@tend"),
-            "jog system prompt must describe commissioning tend via an @tend block",
+            "jog description must name @tend as a peer agent it consults",
         );
-        // The block must be self-contained — the prompt teaches what to include.
+        // jog does NOT commission fixes — it documents discrepancies.
         assert!(
-            prompt.contains("goal-id") || prompt.contains("goal `X`") || prompt.contains("self-contained"),
-            "jog system prompt must say the @tend block must carry goal-id and change description",
+            prompt.contains("No writes") || prompt.contains("no commissions")
+                || prompt.contains("doesn't dispatch") || prompt.contains("does not dispatch"),
+            "jog description must state it has no commissions — jog documents, doesn't dispatch",
         );
     }
 
-    // spec (jog): jog does not write investigation code. The system prompt must
-    // state that investigation code is not jog's tool.
+    // spec (jog): jog produces no writes or fixes during a run. The description
+    // must state this constraint so jog does not cross into rummage's territory.
     #[test]
     fn test_spec_jog_prohibits_investigation_code() {
         let prompt = jog_description();
-        // jog's scope excludes running/probing the system; investigation code is out of scope
         assert!(
-            prompt.contains("probing the running system") || prompt.contains("do not probe")
-                || prompt.contains("Do not probe") || prompt.contains("investigation code"),
-            "jog system prompt must state that probing the running system is out of scope for jog",
+            prompt.contains("No writes") || prompt.contains("no fixes")
+                || prompt.contains("no commissions") || prompt.contains("writing goals or code"),
+            "jog description must state that writes, fixes, and commissions are out of scope",
         );
     }
 
-    // spec (jog): jog does not probe the running system — it reads goal files
-    // for context but does not instrument or run code. The system prompt must
-    // state this boundary.
+    // spec (jog): jog reads but does not write — no code, no goal files, no
+    // instrumentation during a run.
     #[test]
     fn test_spec_jog_does_not_probe_running_system() {
         let prompt = jog_description();
         assert!(
-            prompt.contains("do not probe") || prompt.contains("not probe") || prompt.contains("Do not probe")
-                || prompt.contains("probing the running system"),
-            "jog system prompt must state that jog does not probe the running system",
+            prompt.contains("No writes") || prompt.contains("no fixes")
+                || prompt.contains("read-only") || prompt.contains("read only"),
+            "jog description must state it is read-only and does not write during a run",
         );
     }
 
-    // spec (jog): jog does not write goals — only tend writes goals; jog
-    // commissions the edit via /jog-edit. The system prompt must name this boundary.
+    // spec (jog): jog does not write goals. SCOPE must name this as out of scope.
     #[test]
     fn test_spec_jog_does_not_write_goals() {
         let prompt = jog_description();
         assert!(
-            prompt.contains("do not write goals") || prompt.contains("Do not write goals")
-                || prompt.contains("Only `tend` writes goals") || prompt.contains("only `tend` writes goals")
-                || prompt.contains("writing goals directly"),
-            "jog system prompt must state that jog does not write goals itself",
+            prompt.contains("writing goals or code") || prompt.contains("write goals")
+                || prompt.contains("Out of scope") || prompt.contains("out of scope"),
+            "jog description must state that writing goals or code directly is out of scope",
         );
     }
 
-    // spec (jog): a commission is terminal for a thread — an @tend block fires
-    // the moment the reply finalises, so jog must never pose a question in the
-    // same turn as a commission. The system prompt must state this constraint.
+    // spec (jog): jog documents discrepancies but does not dispatch fix commissions.
+    // This is a hard boundary — a discrepancy run ends with a log, not with @-dispatch.
     #[test]
     fn test_spec_jog_commission_is_terminal_for_thread() {
         let prompt = jog_description();
         assert!(
-            prompt.contains("terminal for a thread") || prompt.contains("no open question"),
-            "jog system prompt must state that a commission is terminal for a thread",
-        );
-        assert!(
-            prompt.contains("Never emit") || prompt.contains("never emit")
-                || prompt.contains("open question") || prompt.contains("no open question"),
-            "jog system prompt must prohibit posing a question and emitting an @tend commission in the same reply",
+            prompt.contains("doesn't dispatch") || prompt.contains("does not dispatch")
+                || prompt.contains("jog documents") || prompt.contains("no commissions"),
+            "jog description must state it documents discrepancies but doesn't dispatch fixes",
         );
     }
 
-    // spec (jog): the why of a feature is where drift hides — the system prompt
-    // must name probing the why as a core part of the deepening.
+    // spec (jog): jog compares two sets step by step, finding things present in
+    // one source but absent in the other. The description must name this comparison
+    // loop as jog's core process.
     #[test]
     fn test_spec_jog_probes_the_why() {
         let prompt = jog_description();
         assert!(
-            prompt.contains("*why*") || prompt.contains("the why") || prompt.contains("why of"),
-            "jog system prompt must name probing the why as part of the deepening",
+            prompt.contains("compares") || prompt.contains("not in both")
+                || prompt.contains("bidirectional"),
+            "jog description must name step-by-step set comparison as the core process",
         );
     }
 
-    // spec (shared-language / form norm): jog's conversational replies default
-    // to the minimum form the moment calls for — a direct statement or question.
-    // The prompt must state this so jog does not produce unrequested surveys.
+    // spec (jog): each run produces a discrepancy log under .tinker/discrepancies/.
+    // The description must name the output location.
     #[test]
     fn test_spec_jog_form_norm_minimum_viable_shape() {
         let prompt = jog_description();
         assert!(
-            prompt.contains("minimum form") || prompt.contains("minimum viable"),
-            "jog system prompt must name the form norm: replies default to minimum form",
+            prompt.contains(".tinker/discrepancies") || prompt.contains("discrepancy log"),
+            "jog description must name the discrepancy log output location",
         );
     }
 
-    // spec (jog): rummage is jog's code-reality arm — consulted when a deepening
-    // thread surfaces a claim that may have drifted because the *implementation*
-    // changed (not the user's intent). The prompt must name this specific trigger.
+    // spec (jog): jog uses @rummage to read the code layer and @tend to read the
+    // spec layer. The description must name @rummage as the code-reading arm.
     #[test]
     fn test_spec_jog_prompt_names_rummage_as_code_reality_arm() {
         let prompt = jog_description();
         assert!(
-            prompt.contains("code-reality") || prompt.contains("@rummage"),
-            "jog prompt must name @rummage for code-reality grounding",
+            prompt.contains("@rummage"),
+            "jog description must name @rummage as the peer agent consulted for code-layer reading",
         );
+        // @rummage queries are read-only during a jog run.
         assert!(
-            prompt.contains("implementation changed") || prompt.contains("implementation* changed")
-                || prompt.contains("*implementation* changed"),
-            "jog prompt must name implementation change as the trigger for consulting @rummage",
+            prompt.contains("read-only") || prompt.contains("read only")
+                || prompt.contains("don't act on it"),
+            "jog description must state that @rummage consultations are read-only",
         );
     }
 }

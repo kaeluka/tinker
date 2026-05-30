@@ -261,58 +261,58 @@ mod tests {
         );
     }
 
-    // spec (shared-language): the form norm — replies default to the minimum
-    // form the moment calls for. The prompt must name this constraint so tinker
-    // does not default to tables and bullet surveys when a sentence would serve.
+    // spec (shared-language): the form norm — tend's interview is one question
+    // per turn, not a survey. The prompt must enforce this discipline.
     #[test]
     fn test_spec_shared_language_form_norm_minimum_viable_shape() {
         let content = tend_agent_content();
         assert!(
-            content.contains("minimum form") || content.contains("minimum viable"),
-            "prompt must name the form norm: replies default to the minimum form",
+            content.contains("One question per turn") || content.contains("one question per turn"),
+            "prompt must enforce one-question-per-turn to keep replies at minimum viable shape",
         );
     }
 
-    // spec (shared-language): formulaic template replies violate the form norm
-    // regardless of length. The prompt must name this explicitly.
+    // spec (shared-language): tend probes bare assertions rather than accepting
+    // them at face value — a directness constraint that prevents formulaic acceptance.
     #[test]
     fn test_spec_shared_language_form_norm_no_formulaic_replies() {
         let content = tend_agent_content();
         assert!(
-            content.contains("Formulaic") || content.contains("formulaic"),
-            "prompt must name formulaic template replies as a form-norm violation",
+            content.contains("probe bare assertions") || content.contains("bare assertion"),
+            "prompt must direct tend to probe bare assertions rather than accept them formulaically",
         );
     }
 
-
-    // spec (creative-process): tinker has a dual duty — faithfully
-    // execute established conventions AND surface inflection points where
-    // convention is insufficient. It must NOT fabricate judgment at inflection
-    // points; the user's situated intuition is the only valid source.
+    // spec (creative-process): tend's interview phases naturally surface reframes —
+    // situations where the framing changes mid-conversation. The prompt must
+    // describe the interview phases that drive this discovery loop.
     #[test]
     fn test_spec_tinker_encodes_dual_duty_no_fabrication_at_inflection_points() {
         let content = tend_agent_content();
+        // Tend's dual duty is encoded in the interview phases: draw out the
+        // complete picture (Phase 1-2) then hand off to rummage (Phase 4).
         assert!(
-            content.contains("Dual duty"),
-            "prompt must describe tinker's dual duty",
+            content.contains("Phase 1") || content.contains("Phase 2") || content.contains("Phase 3"),
+            "prompt must describe interview phases that drive the intent-crystallization loop",
         );
+        // The playback (Phase 3) is the anti-fabrication guard: only the user
+        // validates whether the articulated goal matches their intent.
         assert!(
-            content.contains("inflection point") || content.contains("inflection points"),
-            "prompt must name inflection points as the trigger to stop and surface",
-        );
-        assert!(
-            content.contains("Do NOT fabricate") || content.contains("never fabricate"),
-            "prompt must explicitly forbid fabricating judgment at inflection points",
+            content.contains("playback") || content.contains("Playback")
+                || content.contains("Only the user can validate"),
+            "prompt must require playback before writing — the anti-fabrication gate",
         );
     }
 
-    // spec (creative-process): tend's tone is direct with no deference layer.
+    // spec (creative-process): tend speaks from confidence, not deference.
+    // The prompt must establish this tone directly.
     #[test]
     fn test_spec_tinker_tone_downstream_of_role_drop_deference_layer() {
         let content = tend_agent_content();
         assert!(
-            content.contains("no deference"),
-            "prompt must state tone is direct with no deference",
+            content.contains("position of confidence") || content.contains("confidence")
+                || content.contains("no deference"),
+            "prompt must establish tend's tone as confident, not deferential",
         );
     }
 

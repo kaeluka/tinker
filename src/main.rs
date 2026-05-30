@@ -284,10 +284,8 @@ async fn main() -> Result<()> {
             Arc::new(ClaudeRunner::new(goal_m)),
             Arc::new(ClaudeRunner::new(tinker_m)),
             Arc::new(ClaudeRunner::new(cleanup_m)),
-            Arc::new(ClaudeRunner::with_system_prompt(tinker_m, rummage::packaged_goal().description)
-                .with_denied_tools(["task", "todowrite"])),
-            Arc::new(ClaudeRunner::with_system_prompt(tinker_m, jog::packaged_goal().description)
-                .with_denied_tools(["task", "todowrite"])),
+            Arc::new(ClaudeRunner::new(tinker_m).with_denied_tools(["task", "todowrite"])),
+            Arc::new(ClaudeRunner::new(tinker_m).with_denied_tools(["task", "todowrite"])),
         )
     } else if use_default_model {
         (
@@ -366,10 +364,6 @@ async fn main() -> Result<()> {
     let (msg_tx, mut msg_rx) = mpsc::channel::<String>(16);
     let (session_tx, mut session_rx) = mpsc::channel::<SessionEvent>(128);
     let (goal_spawn_tx, mut goal_spawn_rx) = mpsc::channel::<SpawnGoalRequest>(32);
-    let (rummage_orch_tx, mut rummage_orch_rx) = mpsc::channel::<TendEvent>(64);
-    let (rummage_msg_tx, mut rummage_msg_rx) = mpsc::channel::<String>(16);
-    let (jog_orch_tx, mut jog_orch_rx) = mpsc::channel::<TendEvent>(64);
-    let (jog_msg_tx, mut jog_msg_rx) = mpsc::channel::<String>(16);
 
     // Tend task — forwards messages to opencode and streams events back
     {
@@ -486,38 +480,6 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Rummage task — sits idle until the user switches to rummage and sends a
-    // message. No init prompt; the first user message opens the session.
-    // Uses the strongest model tier (same as tend) per the rummage goal decision.
-    {
-        let app_ref = app.clone();
-        let work_dir = work_dir.clone();
-        let oc = oc_rummage.clone();
-        let tx = rummage_orch_tx.clone();
-        tokio::spawn(async move {
-            while let Some(msg) = rummage_msg_rx.recv().await {
-                let sid = app_ref.lock().unwrap().rummage_session_id.clone();
-                let _ = tend::send_message(oc.clone(), &msg, sid.as_deref(), &work_dir, tx.clone()).await;
-            }
-        });
-    }
-
-    // Jog task — sits idle until the user switches to jog and sends a message.
-    // No init prompt; the first user message opens the session.
-    // Uses the strongest model tier (same as tend and rummage) per the jog goal.
-    {
-        let app_ref = app.clone();
-        let work_dir = work_dir.clone();
-        let oc = oc_jog.clone();
-        let tx = jog_orch_tx.clone();
-        tokio::spawn(async move {
-            while let Some(msg) = jog_msg_rx.recv().await {
-                let sid = app_ref.lock().unwrap().jog_session_id.clone();
-                let _ = tend::send_message(oc.clone(), &msg, sid.as_deref(), &work_dir, tx.clone()).await;
-            }
-        });
-    }
-
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -534,16 +496,14 @@ async fn main() -> Result<()> {
         &mut goal_spawn_rx,
         oc_goal,
         oc_goal_high,
+        oc_rummage,
+        oc_jog,
         oc_cleanup_runner,
         fs.clone(),
         work_dir.clone(),
         session_tx,
         log,
         backend_name,
-        &mut rummage_orch_rx,
-        rummage_msg_tx,
-        &mut jog_orch_rx,
-        jog_msg_tx,
     )
     .await;
 
@@ -571,23 +531,20 @@ async fn run_loop(
     goal_spawn_rx: &mut mpsc::Receiver<SpawnGoalRequest>,
     oc_goal: Arc<dyn OpenCodeRunner>,
     oc_goal_high: Arc<dyn OpenCodeRunner>,
+    oc_rummage: Arc<dyn OpenCodeRunner>,
+    oc_jog: Arc<dyn OpenCodeRunner>,
     oc_cleanup_runner: Arc<dyn OpenCodeRunner>,
     fs: Arc<dyn Filesystem>,
     work_dir: std::path::PathBuf,
     session_tx: mpsc::Sender<SessionEvent>,
     log: logger::LogSender,
     backend_name: &str,
-    rummage_orch_rx: &mut mpsc::Receiver<TendEvent>,
-    rummage_msg_tx: mpsc::Sender<String>,
-    jog_orch_rx: &mut mpsc::Receiver<TendEvent>,
-    jog_msg_tx: mpsc::Sender<String>,
 ) -> Result<()> {
     // Session registry: maps goal_id → message channel sender.
-    // Pre-populated for the three interactive agents; goal agents added lazily on first @goal-id.
+    // Tend is pre-populated (eager start). All other sessions — including rummage
+    // and jog — start lazily on first @goal-id dispatch or user message.
     let mut session_senders: HashMap<String, mpsc::Sender<String>> = HashMap::new();
     session_senders.insert("tend".to_string(), msg_tx.clone());
-    session_senders.insert("rummage".to_string(), rummage_msg_tx.clone());
-    session_senders.insert("jog".to_string(), jog_msg_tx.clone());
     loop {
         // Draw
         terminal.draw(|f| tui::draw(f, &mut app.lock().unwrap()))?;
@@ -604,10 +561,15 @@ async fn run_loop(
                     let (msg_tx_goal, msg_rx_goal) = mpsc::channel::<String>(16);
                     session_senders.insert(req.goal_id.clone(), msg_tx_goal.clone());
                     let _ = msg_tx_goal.try_send(req.message);
-                    // Select runner tier from goal TOML (default: mid).
-                    let oc_for_goal = match goal.tier.as_deref() {
-                        Some("high") => oc_goal_high.clone(),
-                        _ => oc_goal.clone(),
+                    // Select runner: rummage and jog use their specialized runners
+                    // (right model tier + tool denials). All other goals use tier field.
+                    let oc_for_goal = match goal.id.as_str() {
+                        "rummage" => oc_rummage.clone(),
+                        "jog" => oc_jog.clone(),
+                        _ => match goal.tier.as_deref() {
+                            Some("high") => oc_goal_high.clone(),
+                            _ => oc_goal.clone(),
+                        },
                     };
                     let session_tx_goal = session_tx.clone();
                     let oc_cleanup_goal = oc_cleanup_runner.clone();
@@ -646,18 +608,6 @@ async fn run_loop(
                     running_goal_id: active_after,
                 });
             }
-        }
-
-        // Drain rummage events — convert TendEvent to SessionEvent
-        while let Ok(ev) = rummage_orch_rx.try_recv() {
-            let sev = tend_event_to_session("rummage", ev);
-            handle_session_event(&mut app.lock().unwrap(), sev, &msg_tx, &goal_spawn_tx, &session_senders, fs.as_ref(), &log);
-        }
-
-        // Drain jog events — convert TendEvent to SessionEvent
-        while let Ok(ev) = jog_orch_rx.try_recv() {
-            let sev = tend_event_to_session("jog", ev);
-            handle_session_event(&mut app.lock().unwrap(), sev, &msg_tx, &goal_spawn_tx, &session_senders, fs.as_ref(), &log);
         }
 
         // Terminal events (50ms poll)
@@ -713,7 +663,18 @@ async fn run_loop(
                     (a.repl_scroll.y.unwrap_or(0), a.log_scroll.y.unwrap_or(0), a.goal_list_scroll.y.unwrap_or(0), a.goal_text_scroll.y.unwrap_or(0)),
                 )
             };
-            let known_ids: Vec<String> = session_senders.keys().cloned().collect();
+            // Build known IDs from both the registry and all goal IDs from app.goals,
+            // so that /<goal-id> switching works even before a session is spawned.
+            let known_ids: Vec<String> = {
+                let a = app.lock().unwrap();
+                let mut ids: Vec<String> = session_senders.keys().cloned().collect();
+                for g in &a.goals {
+                    if !ids.iter().any(|id| id == &g.id) {
+                        ids.push(g.id.clone());
+                    }
+                }
+                ids
+            };
             let known_ids_refs: Vec<&str> = known_ids.iter().map(|s| s.as_str()).collect();
             let action = {
                 let mut a = app.lock().unwrap();
@@ -751,6 +712,13 @@ async fn run_loop(
                 KeyAction::SendToSession(session_id, msg) => {
                     if let Some(tx) = session_senders.get(&session_id) {
                         let _ = tx.send(msg).await;
+                    } else {
+                        // Session not yet spawned — route through lazy spawn so the
+                        // first user message to rummage/jog triggers session_init_message.
+                        let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
+                            goal_id: session_id,
+                            message: msg,
+                        });
                     }
                 }
                 KeyAction::RunGoal(id, reason) => {
@@ -1698,18 +1666,29 @@ mod tests {
     // (bound to model_config.*_tinker(TINKER_MODEL)), so we check that rummage
     // uses the same `tinker_m` variable that tinker itself uses — never goal_m or
     // cleanup_m.
+    //
+    // Under goal-agents structural identity, rummage starts lazily via goal_agent_loop.
+    // The description is injected via session_init_message (NOT as a system prompt).
+    // The opencode runner still uses the "rummage" agent file at tinker_m tier.
     #[test]
     fn test_spec_rummage_wired_to_strongest_model_tier() {
         let main_rs = include_str!("main.rs");
-        // Both backends bind the tinker-tier model to `tinker_m` with the built-in
-        // constant as fallback, then use it for rummage and jog as well.
-        assert!(
-            main_rs.contains("tinker_m, rummage::packaged_goal().description"),
-            "rummage claude runner must use tinker_m (strongest tier)",
-        );
+        // opencode path: rummage agent file at tinker_m
         assert!(
             main_rs.contains("tinker_m, \"rummage\""),
             "rummage opencode runner must use tinker_m (strongest tier)",
+        );
+        // Claude path: description is in init message, NOT injected as system prompt.
+        // Split string to avoid this test's own source appearing in the include_str scan.
+        let old_pattern: String = ["tinker_m, ", "rummage::packaged_goal().description"].concat();
+        assert!(
+            !main_rs.contains(&old_pattern),
+            "rummage description must not appear as system prompt — it comes through session_init_message",
+        );
+        // Lazy spawn selects the specialized oc_rummage runner for rummage goal agents
+        assert!(
+            main_rs.contains("\"rummage\" => oc_rummage"),
+            "lazy spawn must select oc_rummage runner for the rummage goal agent",
         );
         // The tinker_m variable on the Claude path must default to CLAUDE_TINKER_MODEL.
         assert!(
@@ -1725,16 +1704,47 @@ mod tests {
 
     // spec (jog): "Jog runs on the strongest model tier." The composition root
     // in main.rs must wire the jog runner to the tinker tier (the smartest tier).
+    // Description injected via session_init_message, not as a system prompt.
     #[test]
     fn test_spec_jog_wired_to_strongest_model_tier() {
         let main_rs = include_str!("main.rs");
-        assert!(
-            main_rs.contains("tinker_m, jog::packaged_goal().description"),
-            "jog claude runner must use tinker_m (strongest tier)",
-        );
+        // opencode path: jog agent file at tinker_m
         assert!(
             main_rs.contains("tinker_m, \"jog\""),
             "jog opencode runner must use tinker_m (strongest tier)",
+        );
+        // Claude path: description in init message, not system prompt.
+        // Split string to avoid this test's own source appearing in the include_str scan.
+        let old_pattern: String = ["tinker_m, ", "jog::packaged_goal().description"].concat();
+        assert!(
+            !main_rs.contains(&old_pattern),
+            "jog description must not appear as system prompt — it comes through session_init_message",
+        );
+        // Lazy spawn selects the specialized oc_jog runner
+        assert!(
+            main_rs.contains("\"jog\" => oc_jog"),
+            "lazy spawn must select oc_jog runner for the jog goal agent",
+        );
+    }
+
+    // spec (goal-agents): rummage and jog must NOT be pre-seeded in session_senders.
+    // They start lazily on the first @goal-id dispatch or user message, just like
+    // every other goal agent. Tend is the only pre-populated entry.
+    #[test]
+    fn test_spec_rummage_jog_lazy_not_pre_seeded() {
+        let main_rs = include_str!("main.rs");
+        assert!(
+            !main_rs.contains("session_senders.insert(\"rummage\""),
+            "rummage must not be pre-seeded in session_senders (lazy startup only)",
+        );
+        assert!(
+            !main_rs.contains("session_senders.insert(\"jog\""),
+            "jog must not be pre-seeded in session_senders (lazy startup only)",
+        );
+        // Tend IS pre-seeded (its eager startup is the only registry exception).
+        assert!(
+            main_rs.contains("session_senders.insert(\"tend\""),
+            "tend must be pre-seeded in session_senders (the only eager-start exception)",
         );
     }
 
