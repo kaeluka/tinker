@@ -344,6 +344,38 @@ mod tests {
         );
     }
 
+    // spec (user-system-interaction): "verify by observation" applies to goal
+    // content as well as runtime state. Before asserting how a procedure governs
+    // behavior, tend must read the file — not recall it from memory.
+    #[test]
+    fn test_spec_tend_prompt_extends_observation_to_goal_files() {
+        let content = tend_agent_content();
+        assert!(
+            content.contains("goal files are observable"),
+            "prompt must extend the observation rule to goal files, not just runtime state",
+        );
+        assert!(
+            content.contains("not from memory"),
+            "prompt must name memory as the failure mode the rule guards against",
+        );
+    }
+
+    // spec (user-system-interaction): a sufficiency claim ("X covers Y") requires
+    // checking the goals governing both sides. Reading only one side cannot
+    // establish that the overlap is complete.
+    #[test]
+    fn test_spec_tend_prompt_requires_both_sides_for_sufficiency_claims() {
+        let content = tend_agent_content();
+        assert!(
+            content.contains("sufficiency claim") || content.contains("A sufficiency claim"),
+            "prompt must name sufficiency claims as a category requiring both-sides checking",
+        );
+        assert!(
+            content.contains("reading only X cannot establish the overlap"),
+            "prompt must state that reading only one side is insufficient to establish coverage",
+        );
+    }
+
     // spec (tinker-notes): the `.tinker/notes/` directory must be
     // created at startup. Tested by asserting that main.rs contains the
     // mkdir call for the notes subdirectory.

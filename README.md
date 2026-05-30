@@ -144,9 +144,9 @@ catch.
 
 ## Agents
 
-You interact with three agents in the conversation pane: tend, rummage, and
-jog. What "How it works" does not make obvious is that they consult each
-other — directly, without you in the middle.
+Tend, rummage, and jog are the three conversational agents — the interactive
+layer you speak with directly. What "How it works" does not make obvious is
+that they consult each other — directly, without you in the middle.
 
 When rummage needs to know what you intended, it sends a message to tend.
 When tend needs to know what the code actually does, it sends a message to
@@ -154,8 +154,9 @@ rummage. When jog wants to read the spec, it asks tend; when it wants to read
 the code, it asks rummage. These exchanges appear in the session logs. You can
 see them; you do not manage them.
 
-Switch between agents with `/tend`, `/rummage`, and `/jog`. The prompt line
-shows which is active.
+Switch to tend, rummage, or jog with the matching slash command. Every goal
+session is also addressable the same way — `/` followed by the goal's id.
+The prompt line shows which is active.
 
 **Tend is the right place to start any new conversation.** Rummage and jog
 get pulled in as the work calls for them.
