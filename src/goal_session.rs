@@ -148,8 +148,11 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
          output is your private working log (rendered in the log pane, not delivered to \
          other agents). `@`-blocks in your reply are extracted after you finish and routed \
          to the named recipients. No blocking calls — replies arrive in the normal message \
-         stream. When you complete significant work, send `@tend` a structured summary: \
-         what was accomplished, design changes, decisions made beyond the goal, how to try it.\n\
+         stream. **Reporting completions.** When you complete significant work, report \
+         to your dispatcher — the agent whose `@`-message initiated your current task \
+         (this can be the user). In your report: what you did, what you decided beyond \
+         the goal, how to try the result, every `test_spec_` function you created or \
+         modified, and how you collaborated with other agents in fulfilling the task.\n\
          \n\
          **Before sending `@goal-id`, read `.tinker/goals/<goal-id>.toml`.** The goal is \
          the agent's role. You cannot write a useful message without knowing what that \
@@ -586,6 +589,27 @@ mod tests {
         assert!(
             msg.contains("cannot write a useful message without knowing"),
             "preamble must explain why reading is required before sending"
+        );
+    }
+
+    // spec: goal-agents preamble — completion reports go to the dispatcher (the
+    // agent whose @-message initiated the task), not always to @tend. The preamble
+    // must name the dispatcher as the recipient and require test_spec_ listing.
+    #[test]
+    fn test_spec_preamble_reports_to_dispatcher_not_always_tend() {
+        let goal = make_goal("widget", "build a widget");
+        let msg = session_init_message(&goal, None, "[]");
+        assert!(
+            msg.contains("dispatcher"),
+            "preamble must name the dispatcher as the completion-report target"
+        );
+        assert!(
+            !msg.contains("send `@tend` a structured summary"),
+            "preamble must not hardcode @tend as the mandatory report target"
+        );
+        assert!(
+            msg.contains("test_spec_"),
+            "preamble must require listing test_spec_ functions in the report"
         );
     }
 

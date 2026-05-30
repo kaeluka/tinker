@@ -1,5 +1,5 @@
 id = "goal-agents"
-summary = "governs: uniform session registry — every goal is a structurally identical process-scoped addressable agent; @goal-id universal dispatch; two tend-only exceptions (eager start, parse-correction loop); framework preamble; tier field in goal TOML; structured summary requirement; .tinker/ write prohibition | triggers: session registry; @-dispatch routing; agent init; tier field; tend exception boundaries; session output requirements"
+summary = "governs: uniform session registry — every goal is a structurally identical process-scoped addressable agent; @goal-id universal dispatch; two tend-only exceptions (eager start, parse-correction loop); framework preamble (incl. dispatcher-report rule and agent-collaboration requirement); tier field in goal TOML; structured summary requirement; .tinker/ write prohibition | triggers: session registry; @-dispatch routing; agent init; tier field; tend exception boundaries; session output requirements"
 description = """
 ## WHAT
 Tinker's agent architecture follows one rule: **every goal is a
@@ -56,17 +56,24 @@ Your message here.
 - `@rummage` — for code reality and *is*: what the code actually
   does, how a flow works, whether an implementation matches a spec.
 
+**Reporting completions.** When you complete significant work, report
+to your dispatcher — the agent whose `@`-message initiated your
+current task (this can be the user). In your report: what you did,
+what you decided beyond the goal, how to try the result, every
+`test_spec_` function you created or modified, and how you
+collaborated with other agents in fulfilling the task.
+
 ---
 
 The agent's role in the intent↔spec↔code cycle is part of its
 `description`, not injected by the runtime.
 
-**Structured summary.** When a session completes significant work it
-reports back via `@tend` with a structured summary: what it did,
-what it decided beyond what the goal stated, and how to try the
-result. The summary MUST explicitly list every `test_spec_` function
-created or modified — this is the mechanism that enforces the
-`coding-standards` tests-as-guardrails requirement.
+**Structured summary.** When a session completes significant work, it
+reports to its dispatcher (see preamble) with a structured summary
+covering: accomplishments, decisions made beyond the goal, how to
+try the result, every `test_spec_` function created or modified
+(enforces the `coding-standards` tests-as-guardrails requirement),
+and agent collaboration during the task.
 
 **Tier.** Every goal TOML may carry an optional `tier` field:
 `"high"`, `"mid"`, or absent (defaults to `"mid"`). Resolved at
