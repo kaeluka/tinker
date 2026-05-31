@@ -6,6 +6,7 @@ use std::path::PathBuf;
 pub enum Role {
     User,
     System,
+    Agent(String),
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +127,9 @@ pub struct App {
     pub modal: Option<ModalState>,
     /// Which session currently receives the user's REPL input (goal-id string).
     pub active_session: String,
+    /// Tracks the index in `messages` of the current in-progress agent turn
+    /// for each session, so incoming chunks can append to that slot in-place.
+    pub agent_msg_idx: HashMap<String, usize>,
 }
 
 impl App {
@@ -160,6 +164,7 @@ impl App {
             },
             modal: None,
             active_session: "tend".to_string(),
+            agent_msg_idx: HashMap::new(),
         }
     }
 
@@ -187,6 +192,26 @@ impl App {
 
     pub fn append_goal_log(&mut self, goal_id: &str, text: &str) {
         self.goal_logs.entry(goal_id.to_string()).or_default().push_str(text);
+    }
+
+    /// Append agent text to the REPL message list. The first chunk for a new
+    /// turn creates a new `Role::Agent` message; subsequent chunks extend it
+    /// in-place so the REPL doesn't accumulate thousands of tiny entries.
+    pub fn append_agent_message(&mut self, goal_id: &str, text: &str) {
+        if let Some(&idx) = self.agent_msg_idx.get(goal_id) {
+            if let Some(msg) = self.messages.get_mut(idx) {
+                msg.text.push_str(text);
+                return;
+            }
+        }
+        let idx = self.messages.len();
+        self.messages.push(Message { role: Role::Agent(goal_id.to_string()), text: text.to_string() });
+        self.agent_msg_idx.insert(goal_id.to_string(), idx);
+    }
+
+    /// Call when a session turn ends so the next turn opens a fresh message.
+    pub fn finalize_agent_message(&mut self, goal_id: &str) {
+        self.agent_msg_idx.remove(goal_id);
     }
 
     pub fn selected_goal(&self) -> Option<Goal> {

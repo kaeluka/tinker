@@ -195,7 +195,7 @@ fn input_pane_layout(prompt: &str, input: &str, cursor: &str, width: u16, max: u
 }
 
 fn push_message_lines(lines: &mut Vec<Line<'static>>, msg: &crate::app::Message) {
-    match msg.role {
+    match &msg.role {
         Role::User => {
             lines.push(Line::from(vec![
                 Span::styled(
@@ -210,6 +210,27 @@ fn push_message_lines(lines: &mut Vec<Line<'static>>, msg: &crate::app::Message)
                 Span::styled("sys    ", Style::default().fg(Color::Yellow)),
                 Span::styled(msg.text.clone(), Style::default().fg(Color::DarkGray)),
             ]));
+        }
+        Role::Agent(id) => {
+            let label = format!("{:<7}", &id[..id.len().min(7)]);
+            let label_style = Style::default().fg(Color::Green).add_modifier(Modifier::BOLD);
+            let mut text_lines = msg.text.lines();
+            if let Some(first) = text_lines.next() {
+                lines.push(Line::from(vec![
+                    Span::styled(label.clone(), label_style),
+                    Span::raw(first.to_string()),
+                ]));
+            }
+            for rest in text_lines {
+                lines.push(Line::from(vec![
+                    Span::raw("       "),
+                    Span::raw(rest.to_string()),
+                ]));
+            }
+            // If the text ends with a newline, the final empty segment needs a blank line.
+            if msg.text.ends_with('\n') {
+                lines.push(Line::from(""));
+            }
         }
     }
 }

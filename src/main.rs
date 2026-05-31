@@ -790,9 +790,11 @@ fn handle_session_event(
     match ev {
         SessionEvent::Chunk { goal_id, text } => {
             app.append_goal_log(&goal_id, &text);
+            app.append_agent_message(&goal_id, &text);
             app.current_session_text.entry(goal_id).or_default().push_str(&text);
         }
         SessionEvent::Done { goal_id } => {
+            app.finalize_agent_message(&goal_id);
             let session_text = app.current_session_text.remove(&goal_id).unwrap_or_default();
             // Reload goals — any session may have written TOML files.
             if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
