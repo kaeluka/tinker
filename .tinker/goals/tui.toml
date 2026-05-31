@@ -1,5 +1,5 @@
 id = "tui"
-summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); per-session conversation view (user inputs + agent output per session; system notifications global; full history loads on switch); auto-follow scroll; active-agent tag (<goal-id>>); /<goal-id> switches active session; each agent's messages labeled with goal-id; modal trigger-reason dialog | triggers: TUI layout/rendering changes; scroll behavior; agent-switch UX; message label rendering; per-session filtering"
+summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); per-session conversation view; queue visibility (dim ▶ running; dim [N] queued; full listing in goal-text region); auto-follow scroll; active-agent tag (<goal-id>>); /<goal-id> switches active session; each agent's messages labeled with goal-id; modal trigger-reason dialog | triggers: TUI layout/rendering changes; queue display; scroll behavior; agent-switch UX; message label rendering; per-session filtering"
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left
@@ -44,6 +44,21 @@ under the cursor. New content keeps the view pinned to the bottom;
 scrolling up disables auto-follow until the user scrolls back down,
 where it re-engages.
 
+**Queue visibility.** When goals have running or pending sessions,
+the goal list marks them: a distinct glyph (`▶`) for the
+currently-running goal, a bracketed integer (`[1]`, `[2]`) for each
+goal's next queued position. A goal with several pending invocations
+shows only its *next* index — never multiple numbers — so the list
+stays uncluttered. Markers render dim/grey so they don't dominate
+the goal name. When a marked goal is selected, the goal-text region
+appends a section beneath the description listing every pending
+invocation for that goal in queue order — running first, then queued
+— each line carrying its glyph or index and trigger reason. In the
+idle state (empty queue, nothing running) no markers appear and the
+goal-text region shows only the description. The queue surface is
+read-only: the user observes running and pending work without any
+controls to cancel or reorder.
+
 **Manual triggers.** When the user triggers a goal by hand — Enter
 in the goal list — a modal text-input dialog collects the trigger
 reason.
@@ -75,6 +90,13 @@ Tend's startup output is not rendered because it is internal
 scaffolding, not conversation. The user opened tinker to type
 something, not to read tend orienting itself.
 
+Queue markers render dim for the same reason — they are ambient
+status, and a bright marker would compete with the goal name that
+carries the actual meaning. The queue surface is read-only by
+deliberate choice: the user wanted to see what is running without
+being able to cancel or reorder it. Queue control is a separate
+concern, deferred until there is a real need.
+
 ## SCOPE
 - In scope: the two-column layout at fixed 25%/50%/25% right-side
   proportions; live streaming of conversation and session output;
@@ -84,15 +106,19 @@ something, not to read tend orienting itself.
   loaded on session switch); mouse-wheel scrolling with auto-follow;
   keyboard goal-list navigation with edge scrolling; the modal
   trigger-reason dialog; bold trigger reasons in the session log;
-  the active-session input-prompt tag and message routing; each
-  agent's messages labeled with the goal-id; `/<goal-id>` slash
-  commands that switch the active session to any entry in the session
+  queue visibility markers in the goal list (dim `▶` running, dim
+  `[N]` queued; only first position shown per goal); full running
+  and queued listing in the goal-text region for the selected goal; the
+  active-session input-prompt tag and message routing; each agent's
+  messages labeled with the goal-id; `/<goal-id>` slash commands
+  that switch the active session to any entry in the session
   registry; suppression of tend's startup output from the
   conversation pane (before the user's first message).
 - Out of scope: themes, syntax highlighting, layout configurability,
-  syncing the interface to a remote viewer; queue display (queue
-  infrastructure removed); tool-call dim rendering (removed due to
-  rendering artifacts).
+  syncing the interface to a remote viewer; any interactive
+  manipulation of running sessions (cancel, reorder, pause) — the
+  queue surface is read-only; tool-call dim rendering (removed due
+  to rendering artifacts).
 
 """
 parent_id = ""

@@ -97,8 +97,7 @@ pub enum LogEvent {
         y: usize,
     },
     TuiQueueChanged {
-        queue_len: usize,
-        running_goal_id: Option<String>,
+        running_goal_ids: Vec<String>,
     },
 }
 
@@ -224,8 +223,8 @@ fn apply_to_state(entry: &LogEntry, state: &mut StateSnapshot) -> bool {
             }
             true
         }
-        LogEvent::TuiQueueChanged { running_goal_id, .. } => {
-            if running_goal_id.is_none() {
+        LogEvent::TuiQueueChanged { running_goal_ids, .. } => {
+            if running_goal_ids.is_empty() {
                 state.queue.retain(|e| e.status != "running");
             }
             true
@@ -415,8 +414,7 @@ mod tests {
             (
                 "tui_queue_changed",
                 LogEvent::TuiQueueChanged {
-                    queue_len: 0,
-                    running_goal_id: None,
+                    running_goal_ids: vec![],
                 },
             ),
         ];

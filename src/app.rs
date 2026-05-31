@@ -1,6 +1,17 @@
 use crate::goal::Goal;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::path::PathBuf;
+
+/// A goal agent session waiting to run.
+#[derive(Debug, Clone)]
+pub struct GoalQueueEntry {
+    pub goal_id: String,
+    /// Formatted message to deliver to the session when it starts.
+    pub message: String,
+    /// Short trigger reason for TUI display (may equal message for keyboard triggers).
+    pub display_reason: String,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Role {
@@ -109,9 +120,11 @@ pub struct App {
     pub tinker_dirs: Vec<PathBuf>,
     pub parse_errors: Vec<(PathBuf, String)>,
     pub selected_goal: usize,
-    pub active_goal_id: Option<String>,
+    /// Goal sessions currently running, mapped to the reason they were triggered.
+    pub running_sessions: HashMap<String, Option<String>>,
+    /// Goal agents waiting for the current session to finish (serial execution order).
+    pub goal_queue: VecDeque<GoalQueueEntry>,
     pub goal_logs: HashMap<String, String>,
-    pub active_goal_reason: Option<String>,
     pub user_has_interacted: bool,
     pub phase: Phase,
     /// How many times we've asked tend to fix a parse error in this
@@ -141,8 +154,8 @@ impl App {
             tinker_dirs: vec![],
             parse_errors: vec![],
             selected_goal: 0,
-            active_goal_id: None,
-            active_goal_reason: None,
+            running_sessions: HashMap::new(),
+            goal_queue: VecDeque::new(),
             goal_logs: HashMap::new(),
             user_has_interacted: false,
             phase: Phase::Initializing,

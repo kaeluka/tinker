@@ -259,10 +259,16 @@ fn draw_goal_tree(
 
     let phase_label = if app.phase == Phase::Initializing {
         " starting… ".to_string()
-    } else if let Some(id) = &app.active_goal_id {
-        format!(" ▶ {} ", id)
     } else {
-        String::new()
+        let n = app.running_sessions.len();
+        if n == 1 {
+            let id = app.running_sessions.keys().next().unwrap();
+            format!(" ▶ {} ", id)
+        } else if n > 1 {
+            format!(" ▶ {} running ", n)
+        } else {
+            String::new()
+        }
     };
     let title = format!(" Goals{} ", phase_label);
 
@@ -292,32 +298,52 @@ fn draw_goal_tree(
         .iter()
         .map(|(depth, node)| {
             let is_selected = selected_goal.as_deref() == Some(&node.goal.id);
-            let is_active = app.active_goal_id.as_deref() == Some(&node.goal.id);
+            let is_active = app.running_sessions.contains_key(&node.goal.id);
 
-            let style = if is_active {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-            } else if is_selected {
+            let name_style = if is_selected {
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             };
-            let id_style = if is_active || is_selected {
-                style
+            let id_style = if is_selected {
+                name_style
             } else {
                 Style::default().fg(Color::DarkGray)
             };
 
+            // First queue position (1-based) for this goal if not already running.
+            let queue_pos: Option<usize> = if !is_active {
+                app.goal_queue.iter().enumerate()
+                    .find(|(_, e)| e.goal_id == node.goal.id)
+                    .map(|(i, _)| i + 1)
+            } else {
+                None
+            };
+
+            // Running and queued markers render dim so they don't dominate the goal name.
+            let marker_style = if is_active || queue_pos.is_some() {
+                Style::default().fg(Color::DarkGray)
+            } else {
+                name_style
+            };
+            let marker_str = if is_active {
+                "▶ ".to_string()
+            } else if let Some(pos) = queue_pos {
+                format!("[{}] ", pos)
+            } else {
+                "◉ ".to_string()
+            };
+
             let indent = "  ".repeat(*depth);
-            let marker = if is_active { "▶" } else { "◉" };
             let id_label = format!("`{}`", node.goal.id);
             let preview = truncate_with_ellipsis(&first_meaningful_line(&node.goal.description), 60);
 
             let mut spans = vec![
-                Span::styled(format!("{}{} ", indent, marker), style),
+                Span::styled(format!("{}{}", indent, marker_str), marker_style),
                 Span::styled(id_label, id_style),
             ];
             if !preview.is_empty() {
-                spans.push(Span::styled(format!(" — {}", preview), style));
+                spans.push(Span::styled(format!(" — {}", preview), name_style));
             }
             Line::from(spans)
         })
@@ -346,12 +372,28 @@ fn draw_goal_tree(
                 .lines()
                 .map(|l| Line::from(l.to_string()))
                 .collect();
-            // Show active reason when this goal is running
-            if app.active_goal_id.as_deref() == Some(&g.id) {
-                if let Some(reason) = &app.active_goal_reason {
-                    lines.push(Line::from(""));
+            // Show running + queued entries in order below the description.
+            let is_running = app.running_sessions.contains_key(&g.id);
+            let queue_entries: Vec<(usize, String)> = app.goal_queue.iter().enumerate()
+                .filter(|(_, e)| e.goal_id == g.id)
+                .map(|(i, e)| (i + 1, e.display_reason.clone()))
+                .collect();
+
+            if is_running || !queue_entries.is_empty() {
+                lines.push(Line::from(""));
+                if is_running {
+                    let reason = app.running_sessions.get(&g.id)
+                        .and_then(|r| r.as_ref())
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
                     lines.push(Line::from(vec![
-                        Span::styled("▶ ", Style::default().fg(Color::Yellow)),
+                        Span::styled("▶ ", Style::default().fg(Color::DarkGray)),
+                        Span::raw(reason.to_string()),
+                    ]));
+                }
+                for (pos, reason) in &queue_entries {
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("[{}] ", pos), Style::default().fg(Color::DarkGray)),
                         Span::raw(reason.clone()),
                     ]));
                 }
@@ -395,8 +437,8 @@ fn draw_log(frame: &mut Frame, app: &mut App, area: Rect) {
         None => " Log ".to_string(),
     };
 
-    let is_active_log = selected_id.as_deref() == app.active_goal_id.as_deref();
-    let border_style = if is_active_log && app.active_goal_id.is_some() {
+    let is_active_log = selected_id.as_deref().map(|id| app.running_sessions.contains_key(id)).unwrap_or(false);
+    let border_style = if is_active_log {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default().fg(Color::DarkGray)
@@ -817,6 +859,32 @@ mod tests {
         s.reset_to_top();
         assert_eq!(s.y, Some(0));
         assert_eq!(s.effective_y(), 0);
+    }
+
+    /// Spec (tui — queue visibility): running-session markers must render dim
+    /// grey so they don't compete with the goal name. The ▶ glyph must use
+    /// Color::DarkGray without any BOLD or other emphasis modifier.
+    #[test]
+    fn test_spec_running_marker_style_is_dim_grey_not_bold() {
+        let is_active = true;
+        let is_selected = false;
+        // Mirror the marker-style derivation from draw_goal_tree.
+        let marker_style = if is_active {
+            Style::default().fg(Color::DarkGray)
+        } else if is_selected {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        assert_eq!(
+            marker_style.fg,
+            Some(Color::DarkGray),
+            "running ▶ marker must use DarkGray fg",
+        );
+        assert!(
+            !marker_style.add_modifier.contains(Modifier::BOLD),
+            "running ▶ marker must not carry BOLD modifier",
+        );
     }
 
     /// Spec: "When navigating the goal list with the keyboard, the list

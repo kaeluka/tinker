@@ -510,15 +510,14 @@ async fn run_loop(
 
         // Drain session events (all agents unified)
         {
-            let active_before = app.lock().unwrap().active_goal_id.clone();
+            let running_before: std::collections::HashSet<String> = app.lock().unwrap().running_sessions.keys().cloned().collect();
             while let Ok(ev) = session_rx.try_recv() {
                 handle_session_event(&mut app.lock().unwrap(), ev, &goal_spawn_tx, &session_senders, fs.as_ref(), &log);
             }
-            let active_after = app.lock().unwrap().active_goal_id.clone();
-            if active_after != active_before {
+            let running_after: Vec<String> = app.lock().unwrap().running_sessions.keys().cloned().collect();
+            if running_after.iter().cloned().collect::<std::collections::HashSet<_>>() != running_before {
                 log.emit("tui", logger::LogEvent::TuiQueueChanged {
-                    queue_len: 0,
-                    running_goal_id: active_after,
+                    running_goal_ids: running_after,
                 });
             }
         }
@@ -640,26 +639,37 @@ async fn run_loop(
                         a.goals.iter().any(|g| g.id == id)
                     };
                     if goal_exists {
-                        let sys_msg = {
-                            let id_ref = &id;
-                            format!(
-                                "triggered: `{}`{}",
-                                id_ref,
-                                reason.as_ref().map(|r| format!(": {}", r)).unwrap_or_default(),
-                            )
-                        };
-                        {
+                        let reason_str = reason.clone().unwrap_or_default();
+                        let sys_msg = format!(
+                            "triggered: `{}`{}",
+                            id,
+                            reason.as_ref().map(|r| format!(": {}", r)).unwrap_or_default(),
+                        );
+                        let is_interactive = matches!(id.as_str(), "tend" | "rummage" | "jog");
+                        let should_spawn = {
                             let mut a = app.lock().unwrap();
                             a.push_system_message(&sys_msg);
-                            a.active_goal_id = Some(id.clone());
-                            a.active_goal_reason = reason.clone();
-                        }
+                            if !is_interactive && is_goal_agent_running(&a.running_sessions) {
+                                a.goal_queue.push_back(app::GoalQueueEntry {
+                                    goal_id: id.clone(),
+                                    message: reason_str.clone(),
+                                    display_reason: reason_str.clone(),
+                                });
+                                false
+                            } else {
+                                if !is_interactive {
+                                    a.running_sessions.insert(id.clone(), reason);
+                                }
+                                true
+                            }
+                        };
                         log.emit("dispatcher", logger::LogEvent::TinkerSystemMessageReceived { content: sys_msg });
-                        let dispatch_msg = reason.unwrap_or_default();
-                        let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
-                            goal_id: id,
-                            message: dispatch_msg,
-                        });
+                        if should_spawn {
+                            let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
+                                goal_id: id,
+                                message: reason_str,
+                            });
+                        }
                     }
                 }
                 KeyAction::None => {}
@@ -739,6 +749,11 @@ fn parse_at_commands(text: &str, known_ids: &[&str]) -> Vec<(String, String)> {
 /// Deliver peer consultations collected from a completed agent reply.
 /// Routes to the session registry for known agents; triggers lazy spawn via
 /// `goal_spawn_tx` for goal IDs not yet in the registry.
+/// Returns true if any autonomous goal agent (not tend/rummage/jog) is currently running.
+fn is_goal_agent_running(running_sessions: &std::collections::HashMap<String, std::option::Option<String>>) -> bool {
+    running_sessions.keys().any(|id| !matches!(id.as_str(), "tend" | "rummage" | "jog"))
+}
+
 fn dispatch_peer_consultations(
     app: &mut App,
     sender: &str,
@@ -752,14 +767,30 @@ fn dispatch_peer_consultations(
         let sys = format!("@{} → @{}: {}", sender, recipient, msg);
         app.push_system_message(&sys);
         log.emit(sender, logger::LogEvent::TinkerSystemMessageReceived { content: sys });
-        if let Some(tx) = session_senders.get(recipient) {
-            let _ = tx.try_send(formatted);
-        } else if app.goals.iter().any(|g| &g.id == recipient) {
-            // Goal agent not yet spawned — request lazy start.
-            let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
+        let is_goal_agent = !matches!(recipient.as_str(), "tend" | "rummage" | "jog")
+            && app.goals.iter().any(|g| &g.id == recipient);
+
+        if is_goal_agent && is_goal_agent_running(&app.running_sessions) {
+            // Another goal agent is running — queue for serial execution.
+            let display_reason = msg.lines().next().unwrap_or("").to_string();
+            app.goal_queue.push_back(app::GoalQueueEntry {
                 goal_id: recipient.clone(),
                 message: formatted,
+                display_reason,
             });
+        } else {
+            if let Some(tx) = session_senders.get(recipient) {
+                let _ = tx.try_send(formatted);
+            } else if app.goals.iter().any(|g| &g.id == recipient) {
+                let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
+                    goal_id: recipient.clone(),
+                    message: formatted,
+                });
+            }
+            if is_goal_agent {
+                let reason = msg.lines().next().unwrap_or("").to_string();
+                app.running_sessions.entry(recipient.clone()).or_insert(Some(reason));
+            }
         }
     }
 }
@@ -863,11 +894,9 @@ fn handle_session_event(
                     app.phase = Phase::Idle;
                 }
             } else {
-                // Non-tend session done — clear active tracking if applicable.
-                if app.active_goal_id.as_deref() == Some(&goal_id) {
-                    app.active_goal_id = None;
-                    app.active_goal_reason = None;
-                }
+                // Non-tend session done — remove from running set, then drain queue.
+                app.running_sessions.remove(&goal_id);
+                drain_goal_queue(app, session_senders, goal_spawn_tx);
             }
             let known_ids = known_agent_ids(session_senders, &app.goals);
             let consultations = parse_at_commands(&session_text, &known_ids);
@@ -889,10 +918,28 @@ fn handle_session_event(
             };
             app.push_system_message(&msg);
             log.emit("cleanup", logger::LogEvent::TinkerSystemMessageReceived { content: msg });
-            if app.active_goal_id.as_deref() == Some(&goal_id) {
-                app.active_goal_id = None;
-                app.active_goal_reason = None;
-            }
+            app.running_sessions.remove(&goal_id);
+            drain_goal_queue(app, session_senders, goal_spawn_tx);
+        }
+    }
+}
+
+/// Pop the next queued goal agent and start it. Does nothing if the queue is empty.
+fn drain_goal_queue(
+    app: &mut App,
+    session_senders: &HashMap<String, mpsc::Sender<String>>,
+    goal_spawn_tx: &mpsc::Sender<SpawnGoalRequest>,
+) {
+    if let Some(entry) = app.goal_queue.pop_front() {
+        let reason = if entry.display_reason.is_empty() { None } else { Some(entry.display_reason) };
+        app.running_sessions.insert(entry.goal_id.clone(), reason);
+        if let Some(tx) = session_senders.get(&entry.goal_id) {
+            let _ = tx.try_send(entry.message);
+        } else {
+            let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
+                goal_id: entry.goal_id,
+                message: entry.message,
+            });
         }
     }
 }
@@ -2237,6 +2284,145 @@ mod tests {
                 matches!(&m.role, Role::Agent(id) if id == "tend") && m.text.contains("hello user")
             }),
             "post-interaction chunk must appear in conversation pane",
+        );
+    }
+
+    // spec (tui — queue visibility): when another goal agent is already running,
+    // a new @-dispatch must go to the queue, not start immediately.
+    #[test]
+    fn test_spec_at_dispatch_queues_when_goal_agent_already_running() {
+        let (msg_tx, _msg_rx) = mpsc::channel::<String>(8);
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (senders, _, _) = make_test_session_senders(&msg_tx);
+
+        let mut app = App::new();
+        for id in ["goal-a", "goal-b"] {
+            app.goals.push(goal::Goal {
+                id: id.into(), summary: String::new(), description: String::new(),
+                parent_id: String::new(), children: vec![], related: vec![], tier: None, source_path: None,
+            });
+        }
+        // Mark goal-a as already running.
+        app.running_sessions.insert("goal-a".into(), Some("first task".into()));
+
+        let consultations = vec![("goal-b".to_string(), "second task".to_string())];
+        dispatch_peer_consultations(
+            &mut app, "tend", &consultations, &senders, &spawn_tx, &logger::noop_sender(),
+        );
+
+        assert!(
+            !app.running_sessions.contains_key("goal-b"),
+            "goal-b must not be added to running_sessions while goal-a is running",
+        );
+        assert_eq!(app.goal_queue.len(), 1, "goal-b must be in the queue");
+        assert_eq!(app.goal_queue[0].goal_id, "goal-b");
+    }
+
+    // spec (tui — queue visibility): drain_goal_queue starts the next entry
+    // from the queue when the current session finishes.
+    #[test]
+    fn test_spec_drain_goal_queue_starts_next_entry() {
+        let (msg_tx, _msg_rx) = mpsc::channel::<String>(8);
+        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (senders, _, _) = make_test_session_senders(&msg_tx);
+
+        let mut app = App::new();
+        app.goal_queue.push_back(app::GoalQueueEntry {
+            goal_id: "goal-b".into(),
+            message: "do the work".into(),
+            display_reason: "reason-b".into(),
+        });
+
+        drain_goal_queue(&mut app, &senders, &spawn_tx);
+
+        assert!(
+            app.running_sessions.contains_key("goal-b"),
+            "drained entry must be inserted into running_sessions",
+        );
+        assert_eq!(app.goal_queue.len(), 0, "queue must be empty after drain");
+        let req = spawn_rx.try_recv().expect("drain must spawn the next goal");
+        assert_eq!(req.goal_id, "goal-b");
+    }
+
+    // spec (tui — queue visibility): @-dispatching to an autonomous goal agent
+    // must add it to running_sessions so the dim ▶ marker appears in the goal list.
+    #[test]
+    fn test_spec_at_dispatch_adds_goal_agent_to_running_sessions() {
+        let (msg_tx, _msg_rx) = mpsc::channel::<String>(8);
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (senders, _, _) = make_test_session_senders(&msg_tx);
+
+        let mut app = App::new();
+        app.goals.push(goal::Goal {
+            id: "tui".into(),
+            summary: String::new(),
+            description: String::new(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            source_path: None,
+        });
+
+        let consultations = vec![("tui".to_string(), "implement queue markers".to_string())];
+        dispatch_peer_consultations(
+            &mut app, "rummage", &consultations, &senders, &spawn_tx, &logger::noop_sender(),
+        );
+
+        assert!(
+            app.running_sessions.contains_key("tui"),
+            "autonomous goal agent dispatched via @ must appear in running_sessions",
+        );
+        let reason = app.running_sessions["tui"].as_deref().unwrap_or("");
+        assert!(
+            reason.contains("implement queue markers"),
+            "reason stored must reflect the dispatch message",
+        );
+    }
+
+    // spec (tui — queue visibility): @-dispatching to interactive chat agents
+    // (tend, rummage, jog) must NOT add them to running_sessions — they are not
+    // goal agents and the ▶ marker must not appear for them.
+    #[test]
+    fn test_spec_at_dispatch_skips_interactive_agents_in_running_sessions() {
+        let (msg_tx, _msg_rx) = mpsc::channel::<String>(8);
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (senders, _, _) = make_test_session_senders(&msg_tx);
+
+        let mut app = App::new();
+        // Add rummage as a goal (it has a goal file) to ensure the goal-existence
+        // check alone is not sufficient to skip it.
+        app.goals.push(goal::Goal {
+            id: "rummage".into(),
+            summary: String::new(),
+            description: String::new(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            source_path: None,
+        });
+
+        let consultations = vec![
+            ("tend".to_string(), "what does the user want".to_string()),
+            ("rummage".to_string(), "check the code".to_string()),
+            ("jog".to_string(), "verify alignment".to_string()),
+        ];
+        dispatch_peer_consultations(
+            &mut app, "some-agent", &consultations, &senders, &spawn_tx, &logger::noop_sender(),
+        );
+
+        assert!(
+            !app.running_sessions.contains_key("tend"),
+            "tend must not appear in running_sessions when dispatched via @",
+        );
+        assert!(
+            !app.running_sessions.contains_key("rummage"),
+            "rummage must not appear in running_sessions when dispatched via @",
+        );
+        assert!(
+            !app.running_sessions.contains_key("jog"),
+            "jog must not appear in running_sessions when dispatched via @",
         );
     }
 
