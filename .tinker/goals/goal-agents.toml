@@ -1,5 +1,5 @@
 id = "goal-agents"
-summary = "governs: uniform session registry — every goal is a structurally identical process-scoped addressable agent; @goal-id universal dispatch; two tend-only exceptions (eager start, parse-correction loop); framework preamble (incl. dispatcher-report rule and agent-collaboration requirement); tier field in goal TOML; structured summary requirement; .tinker/ write prohibition | triggers: session registry; @-dispatch routing; agent init; tier field; tend exception boundaries; session output requirements"
+summary = "governs: uniform session registry — every goal is a structurally identical process-scoped addressable agent; @goal-id universal dispatch; two tend-only exceptions (eager start, parse-correction loop); framework preamble (incl. dispatcher-report rule and agent-collaboration requirement); dispatcher-provided init sections (spec diff + code inventory when rummage dispatches); tier field in goal TOML; structured summary requirement; .tinker/ write prohibition | triggers: session registry; @-dispatch routing; agent init; tier field; tend exception boundaries; session output requirements"
 description = """
 ## WHAT
 Tinker's agent architecture follows one rule: **every goal is a
@@ -68,6 +68,23 @@ collaborated with other agents in fulfilling the task.
 The agent's role in the intent↔spec↔code cycle is part of its
 `description`, not injected by the runtime.
 
+**Dispatcher-provided init sections.** When rummage dispatches a goal
+agent, it augments the init message with two additional sections
+beyond the standard preamble and goal text:
+
+- **Spec diff** — what was removed from the goal text and what was
+  added, computed from the old spec and new spec that tend provides
+  at handoff.
+- **Code inventory** — what currently exists in the goal's scope,
+  read by rummage from files named in the goal description and
+  related links.
+
+Agents receiving a rummage dispatch use both artifacts to determine
+what existing code implements the removed spec (and must be deleted)
+and what new code to write for the added spec. This is the mechanism
+that makes large refactors reliable: agents are given both sides of
+the diff, not just the desired end state.
+
 **Structured summary.** When a session completes significant work, it
 reports to its dispatcher (see preamble) with a structured summary
 covering: accomplishments, decisions made beyond the goal, how to
@@ -104,6 +121,13 @@ after writes. No other exceptions are justified and none should be
 added without explicit user confirmation that they belong in the
 architecture.
 
+The dispatcher-provided init sections (spec diff + code inventory)
+close the information gap that makes large refactors fail: without
+them, agents receive only the desired end state and must infer what to
+remove — inference that fails systematically for deletions and the
+deletion half of every change. With them, agents hold both sides of
+the diff and can act with confidence.
+
 The structured summary and `test_spec_` listing exist because a
 session is an unreliable narrator about its own work — the summary
 is the one surface a reviewer actually reads to confirm spec
@@ -115,11 +139,12 @@ standard without relying on the session's general good behavior.
 - In scope: the session registry and `SessionEntry` type; `@goal-id`
   as the universal dispatch; the exactly-two tend exceptions (eager
   start, parse-correction loop) and their boundaries; framework
-  preamble injected before every session's goal description; `tier`
-  field in goal TOML; the unified `SessionEvent` enum and single
-  run-loop receiver dispatching on `goal_id`; the structured summary
-  requirement and `test_spec_` listing mandate; pre-session cleanup
-  via `cleanup-hook`.
+  preamble injected before every session's goal description; the
+  dispatcher-provided init sections (spec diff + code inventory) and
+  their role in diff-aware dispatch; `tier` field in goal TOML; the
+  unified `SessionEvent` enum and single run-loop receiver dispatching
+  on `goal_id`; the structured summary requirement and `test_spec_`
+  listing mandate; pre-session cleanup via `cleanup-hook`.
 - Out of scope: cross-process session persistence; concurrent sessions
   for the same goal-id; per-agent tool distinctions beyond what
   applies uniformly to all agents.

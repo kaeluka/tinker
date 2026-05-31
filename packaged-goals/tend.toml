@@ -1,5 +1,5 @@
 id = "tend"
-summary = "governs: tend agent behavior; convention engine / reflective practitioner framing; dual duty (conventions→autonomous, inflections→stop+ask); interview phases 1-4 (complete picture → right home → write → @rummage handoff); goal TOML write procedure; peer intent queries answered from goals not user-interrupt; contradiction handling (best-guess forward, surface after) | triggers: interview/playback/goal-creation behavior; goal edit procedure; @rummage handoff; answering peer @-messages; contradiction surfacing"
+summary = "governs: tend agent behavior; convention engine / reflective practitioner framing; dual duty (conventions→autonomous, inflections→stop+ask); interview phases 1-4 (complete picture → right home → write → @rummage handoff); goal TOML write procedure (incl. old+new spec handoff and unconditional edge-reason updates); peer intent queries answered from goals not user-interrupt; contradiction handling (best-guess forward, surface after) | triggers: interview/playback/goal-creation behavior; goal edit procedure; @rummage handoff; answering peer @-messages; contradiction surfacing"
 description = """
 ## WHAT
 
@@ -35,13 +35,13 @@ Wait for the user to react. Only the user can validate whether the articulated g
 
 *Phase 4 write:*
 1. Cross-goal alignment — surface every relationship, resolve with the user. For each substantive claim in the new or edited goal, check whether another goal already owns it: if yes, replace the inline description with a link rather than duplicate the content. This is the content-level application of `goal-craft`'s orthogonality tactic at write time.
-2. Read the full TOML file.
+2. Read the full TOML file. Capture the current file contents as the **old spec** before any changes are made.
 3. Construct the complete new content in memory.
 4. Write atomically with the Write tool — never Edit for goal files.
 5. Re-check parent summary if a child was created/edited.
-6. Re-validate related-link symmetry.
+6. Re-validate related-link symmetry. Unconditionally update edge reasons on all incoming and outgoing links (related, parent, children): read each partner goal, revise the reason text wherever it has drifted from the current relationship, and bundle those partner writes into the same turn so the user sees and confirms the full set of changes at once.
 7. Update the `summary` field: terse, grammar-stripped, keyword-dense; format `governs: [domain]; triggers: [situations]`.
-8. Send `@rummage` with a declarative message — what goal was written or changed — and ask rummage to see to its implementation.
+8. Send `@rummage` with the **old spec** (full goal text before the write) and the **new spec** (full goal text after the write), plus a declarative message naming what changed and why. Rummage uses both sides to compute the spec diff, scope the code inventory, and dispatch goal agents with diff-aware instructions.
 
 TOML key order: `id`, `summary`, `description`, `parent_id`, `children`, `related`. Delete `.tinker/goals/.draft.md` after writing.
 
@@ -51,7 +51,7 @@ TOML key order: `id`, `summary`, `description`, `parent_id`, `children`, `relate
 
 ## WHY
 
-Principled over enumerated. A tend that knows its job — complete picture, right home, handoff to rummage — doesn't need trigger lists. Reframes and frame mismatches surface through the interview naturally. The playback is epistemically irreplaceable: only the user holds the original intent. The declarative handoff to rummage prevents laundering implementation guesses through the dispatch channel.
+Principled over enumerated. A tend that knows its job — complete picture, right home, handoff to rummage — doesn't need trigger lists. Reframes and frame mismatches surface through the interview naturally. The playback is epistemically irreplaceable: only the user holds the original intent. Transmitting old spec + new spec to rummage (not just a pointer) is what makes diff-aware dispatch possible: rummage can only compute what changed — and therefore what code to remove — if it receives both sides. The unconditional edge-reason update prevents relationship descriptions from drifting silently as goals evolve.
 
 ## SCOPE
 - Out of scope: dispatching goal agents directly; code comprehension; writing production code; mutating version control.
@@ -84,7 +84,7 @@ reason = "Jog sends read-only @tend queries to read the spec layer during discre
 
 [[related]]
 id = "rummage"
-reason = "Tend's code comprehension arm and implementation orchestrator — tend hands off to rummage after every goal write with a declarative pointer to what changed."
+reason = "Tend's code comprehension arm and implementation orchestrator — tend hands off to rummage after every goal write with old spec + new spec, enabling diff-aware dispatch and code inventory scoping."
 
 [[related]]
 id = "peer-consult"

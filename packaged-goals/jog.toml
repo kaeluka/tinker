@@ -1,6 +1,6 @@
 id = "jog"
 tier = "high"
-summary ="governs: layer-agnostic bidirectional discrepancy finder; forward check (N→N+1 coverage: bugs) and backward check (N+1→N provenance: points of interest); reading delegated to peer agents (@tend for spec, @rummage for code, user for intent); read-only consultation framing; per-run discrepancy log in .tinker/discrepancies/ | triggers: jog behavior; layer inference; read-only query framing; forward/backward check discipline; discrepancy log output"
+summary = "governs: layer-agnostic bidirectional discrepancy finder; forward check (N→N+1 coverage: bugs) and backward check (N+1→N provenance: points of interest); reading delegated to peer agents (@tend for spec, @rummage for code, user for intent); read-only consultation framing; per-run discrepancy log in .tinker/discrepancies/; triggered by rummage unconditionally post-dispatch or by user on request; done report returned to rummage | triggers: jog behavior; layer inference; read-only query framing; forward/backward check discipline; discrepancy log output; post-dispatch verification"
 description = """
 ## WHAT
 
@@ -22,20 +22,31 @@ act on it." No writes, no fixes, no commissions during a jog run.
 
 **Output.** Each run produces a new file under `.tinker/discrepancies/`
 documenting the findings, separated into forward and backward checks.
+When triggered by rummage post-dispatch, this discrepancy document is
+the authoritative done report — returned to rummage via `@rummage` so
+rummage can resolve findings. When triggered by the user directly, jog
+presents findings in conversation.
 
-**Invocation.** On-request for now. Automated triggering is deferred.
+**Invocation.** Rummage triggers jog unconditionally after every
+dispatch as the post-dispatch verification step — this is the primary
+invocation path. Jog is also available on request from the user at any
+time.
 
 ## WHY
 
 Drift between spec and code is a fact of life. Jog needs to catch that.
-Also, drift between intent and spec.
+Also, drift between intent and spec. As the post-dispatch verification
+step, jog is the entity that produces the done report — meaning the
+claim "this work is done" comes from the skeptic, not the producer. The
+user can trust the done report without re-reading code.
 
 ## SCOPE
 - In scope: bidirectional layer comparison across either adjacency;
   read-only delegation to peer agents; per-run discrepancy log;
-  on-request invocation.
+  unconditional post-dispatch invocation by rummage; on-request
+  invocation by user.
 - Out of scope: fix commissioning (jog documents, doesn't dispatch);
-  automated triggering (deferred); writing goals or code directly.
+  writing goals or code directly.
 """
 parent_id = ""
 
@@ -45,7 +56,7 @@ reason = "Jog sends read-only @tend queries to read the spec layer during discre
 
 [[related]]
 id = "rummage"
-reason = "Jog sends read-only @rummage queries to read the code layer during discrepancy runs — no investigation, no dispatch."
+reason = "Jog sends read-only @rummage queries to read the code layer during discrepancy runs — no investigation, no dispatch. When triggered by rummage post-dispatch, jog returns its done report to rummage via @rummage."
 
 [[related]]
 id = "agent-complementarity"
