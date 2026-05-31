@@ -203,6 +203,7 @@ fn build_node(goal: &Goal, all: &[Goal], depth: usize) -> GoalNode {
 
 /// Builds a full-text listing of all goals for use with --tend-full-goal-context.
 /// Goals are rendered in tree order with their complete description text.
+#[cfg(test)]
 pub fn build_full_text_index(goals: &[Goal]) -> String {
     let tree = build_tree(goals);
     let mut result = String::new();
@@ -210,6 +211,7 @@ pub fn build_full_text_index(goals: &[Goal]) -> String {
     result
 }
 
+#[cfg(test)]
 fn walk_full_text(nodes: &[GoalNode], out: &mut String, depth: usize) {
     for node in nodes {
         let heading = "#".repeat(depth + 3);

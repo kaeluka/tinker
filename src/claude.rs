@@ -59,6 +59,12 @@ impl ClaudeRunner {
         }
     }
 
+    // Test-only constructors: production wires the Claude backend with plain
+    // `ClaudeRunner::new` (persona arrives via the goal-session init message,
+    // not `--system-prompt`; no tool denials). The `system_prompt`/
+    // `disallowed_tools` fields and their `--system-prompt`/`--disallowedTools`
+    // wiring stay live so these builders preserve backend-parity coverage.
+    #[cfg(test)]
     pub fn with_system_prompt(model: impl Into<String>, system_prompt: impl Into<String>) -> Self {
         Self {
             model: model.into(),
@@ -69,6 +75,7 @@ impl ClaudeRunner {
 
     /// Deny a set of tools for every invocation of this runner.
     /// Passed as `--disallowedTools <tool> ...` to the Claude CLI.
+    #[cfg(test)]
     pub fn with_denied_tools(mut self, tools: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.disallowed_tools = tools.into_iter().map(|t| t.into()).collect();
         self

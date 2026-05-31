@@ -29,43 +29,9 @@ use goal_session::SessionEvent;
 use opencode::{RealOpenCodeRunner, GOAL_MODEL as OPENCODE_GOAL_MODEL, TINKER_MODEL as OPENCODE_TINKER_MODEL, SCHEDULER_MODEL as OPENCODE_SCHEDULER_MODEL};
 use claude::{ClaudeRunner, GOAL_MODEL as CLAUDE_GOAL_MODEL, TINKER_MODEL as CLAUDE_TINKER_MODEL, SCHEDULER_MODEL as CLAUDE_SCHEDULER_MODEL};
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::{io, path::{Path, PathBuf}, sync::{Arc, Mutex}, time::Duration};
+use std::{io, path::PathBuf, sync::{Arc, Mutex}, time::Duration};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
-
-#[derive(Debug)]
-enum TendEvent {
-    SessionId(String),
-    Text(String),
-    Done,
-}
-
-async fn send_message(
-    oc: Arc<dyn OpenCodeRunner>,
-    message: &str,
-    session_id: Option<&str>,
-    work_dir: &Path,
-    tx: mpsc::Sender<TendEvent>,
-) -> anyhow::Result<String> {
-    let tx_sid = tx.clone();
-    let tx_txt = tx.clone();
-    let full_reply: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
-    let full_reply_clone = full_reply.clone();
-    let on_sid: Box<dyn FnMut(String) + Send> = Box::new(move |sid: String| {
-        let _ = tx_sid.try_send(TendEvent::SessionId(sid));
-    });
-    let on_chunk: Box<dyn FnMut(String) + Send> = Box::new(move |chunk: String| {
-        full_reply_clone.lock().unwrap().push_str(&chunk);
-        let _ = tx_txt.try_send(TendEvent::Text(chunk));
-    });
-    let res = oc.run(message, session_id, work_dir, on_sid, on_chunk).await;
-    if let Err(e) = &res {
-        let _ = tx.try_send(TendEvent::Text(format!("\n[Error: {}]\n", e)));
-    }
-    let _ = tx.send(TendEvent::Done).await;
-    let reply = full_reply.lock().unwrap().clone();
-    res.map(|_| reply)
-}
 
 const AGENT_FRONTMATTER: &str = "---\ndescription: >-\n  Tinker agent.\nmode: primary\n---\n";
 
@@ -74,22 +40,13 @@ fn packaged_tend_goal() -> Goal {
     toml::from_str(TOML).expect("packaged tend.toml must be valid Goal TOML")
 }
 
+/// Assembles the full tend persona (generic frontmatter + goal description) as
+/// it reaches the model through `session_init_message`. Test-only: production
+/// installs the generic `AGENT_FRONTMATTER` agent file and delivers the
+/// description via the goal-session init message like every other goal agent.
+#[cfg(test)]
 fn tend_agent_content() -> String {
     format!("{}{}", AGENT_FRONTMATTER, packaged_tend_goal().description)
-}
-
-fn tend_agent_content_full_context() -> String {
-    let full = tend_agent_content();
-    suppress_compact_index_section(&full)
-}
-
-fn suppress_compact_index_section(content: &str) -> String {
-    let section_start = "## Goal index\n";
-    let keep_from = "**Write protocol for `summary`.**";
-    match (content.find(section_start), content.find(keep_from)) {
-        (Some(s), Some(e)) if e > s => format!("{}{}", &content[..s], &content[e..]),
-        _ => content.to_string(),
-    }
 }
 
 fn tend_init_prompt(goals_summary: &str) -> String {
@@ -205,17 +162,12 @@ async fn goal_agent_loop(
 
         let full_output: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
         let full_output_clone = full_output.clone();
-        let tx_sid = session_tx.clone();
-        let gid_sid = goal_id.clone();
         let tx_chunk = session_tx.clone();
         let gid_chunk = goal_id.clone();
 
-        let on_sid: Chunk = Box::new(move |sid: String| {
-            let _ = tx_sid.try_send(SessionEvent::LlmSessionId {
-                goal_id: gid_sid.clone(),
-                session_id: sid,
-            });
-        });
+        // The session id is captured from `oc.run`'s return value below; the
+        // callback itself is a no-op.
+        let on_sid: Chunk = Box::new(|_sid: String| {});
         let on_chunk: Chunk = Box::new(move |chunk: String| {
             full_output_clone.lock().unwrap().push_str(&chunk);
             let _ = tx_chunk.try_send(SessionEvent::Chunk {
@@ -836,7 +788,6 @@ fn handle_session_event(
     log: &logger::LogSender,
 ) {
     match ev {
-        SessionEvent::LlmSessionId { .. } => {}
         SessionEvent::Chunk { goal_id, text } => {
             app.append_goal_log(&goal_id, &text);
             app.current_session_text.entry(goal_id).or_default().push_str(&text);
@@ -1154,13 +1105,13 @@ mod tests {
 
     // spec: goal-agents — SummaryReady was a transitional SessionEvent variant
     // that routed goal-session summaries to tend via the event channel. Goal agents
-    // now @tend directly, so the variant has been removed. This exhaustive-match
-    // test compiles only when SummaryReady is absent from SessionEvent.
+    // now @tend directly, so the variant has been removed. LlmSessionId is likewise
+    // gone: the session id is captured from the runner's return value, not an event.
+    // This exhaustive-match test compiles only while both variants stay absent.
     #[test]
     fn test_spec_summary_ready_variant_removed() {
         let evt = SessionEvent::Done { goal_id: "x".into() };
         match evt {
-            SessionEvent::LlmSessionId { .. } => {}
             SessionEvent::Chunk { .. } => {}
             SessionEvent::Done { .. } => {}
             SessionEvent::CleanupBlocked { .. } => {}

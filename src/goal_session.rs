@@ -1,8 +1,15 @@
-use crate::cap::OpenCodeRunner;
 use crate::goal::Goal;
+// Used only by the test-only `run_goal`/`run_silent` fixtures below; production
+// runs sessions through `goal_agent_loop` in `main.rs`.
+#[cfg(test)]
+use crate::cap::OpenCodeRunner;
+#[cfg(test)]
 use anyhow::Result;
+#[cfg(test)]
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::sync::{Arc, Mutex};
+#[cfg(test)]
 use tokio::sync::mpsc;
 
 /// Shared VCS-mutation rule, used by the tinker prompt and by the
@@ -37,6 +44,7 @@ what exists, do it without hesitation. The human owns the Intent \
 /// control character (\x01) never appears in normal LLM output.
 pub const TRIGGER_REASON_MARKER: char = '\x01';
 
+#[cfg(test)]
 pub const SUMMARY_REQUEST: &str = "\
 Provide a structured summary of this session with four parts:
 
@@ -54,8 +62,6 @@ Provide a structured summary of this session with four parts:
 /// `session_rx` channel in the run loop.
 #[derive(Debug)]
 pub enum SessionEvent {
-    /// The LLM session ID returned by the first run (used for in-process resumption).
-    LlmSessionId { goal_id: String, session_id: String },
     /// A streamed text chunk from the LLM.
     Chunk { goal_id: String, text: String },
     /// The session has finished processing the current message.
@@ -200,10 +206,12 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
 }
 
 /// Backward-compat alias used by goal-session logging before compact_index was added.
+#[cfg(test)]
 pub(crate) fn goal_init_message(goal: &Goal, reason: Option<&str>) -> String {
     session_init_message(goal, reason, "[]")
 }
 
+#[cfg(test)]
 pub async fn run_silent(
     oc: &dyn OpenCodeRunner,
     message: &str,
@@ -226,6 +234,11 @@ pub async fn run_silent(
 /// is the concatenated text of every chunk the model produced during the main
 /// session (before the summary request), and `summary` is the structured
 /// summary collected at the end. Both are used by the logger for observability.
+///
+/// Superseded in production by `goal_agent_loop` in `main.rs`, which runs every
+/// session (tend, rummage, jog, and goal agents) through a persistent per-goal
+/// loop. Retained as a test fixture for the fresh-session / no-resumption spec.
+#[cfg(test)]
 pub async fn run_goal(
     goal: Goal,
     reason: Option<String>,
@@ -251,14 +264,7 @@ pub async fn run_goal(
     let full_output_clone = full_output.clone();
     let tx_txt = tx.clone();
     let gid2 = goal_id.clone();
-    let tx_sid = tx.clone();
-    let gid3 = goal_id.clone();
-    let on_sid: Box<dyn FnMut(String) + Send> = Box::new(move |sid: String| {
-        let _ = tx_sid.try_send(SessionEvent::LlmSessionId {
-            goal_id: gid3.clone(),
-            session_id: sid,
-        });
-    });
+    let on_sid: Box<dyn FnMut(String) + Send> = Box::new(|_sid: String| {});
     let on_chunk: Box<dyn FnMut(String) + Send> = Box::new(move |chunk: String| {
         full_output_clone.lock().unwrap().push_str(&chunk);
         let _ = tx_txt.try_send(SessionEvent::Chunk {

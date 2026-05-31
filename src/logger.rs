@@ -56,22 +56,6 @@ impl Default for StateSnapshot {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LogEvent {
-    TinkerSessionStarted {
-        system_prompt_chars: usize,
-        goal_list_hash: String,
-        backend: String,
-    },
-    TinkerTurnStart,
-    TinkerTurnEnd {
-        duration_ms: u64,
-        backend: String,
-    },
-    TinkerUserMessageReceived {
-        text: String,
-    },
-    TinkerReplyEmitted {
-        text: String,
-    },
     TinkerSystemMessageReceived {
         content: String,
     },
@@ -98,10 +82,6 @@ pub enum LogEvent {
         goal_id: String,
         outcome: String,
         duration_ms: u64,
-    },
-    RunCommandEmitted {
-        goal_id: String,
-        reason: String,
     },
     GoalFileChanged {
         path: String,
@@ -149,6 +129,7 @@ impl LogSender {
 }
 
 /// No-op sender for tests and contexts that don't need logging.
+#[cfg(test)]
 pub fn noop_sender() -> LogSender {
     let (tx, _rx) = mpsc::unbounded_channel();
     LogSender { tx }
@@ -394,7 +375,7 @@ mod tests {
         let entry = LogEntry {
             ts: "2026-05-20T10:00:00Z".to_string(),
             source: "tinker".to_string(),
-            event: LogEvent::TinkerTurnStart,
+            event: LogEvent::TinkerSystemMessageReceived { content: "ready".to_string() },
         };
         let json = serde_json::to_string(&entry).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -403,7 +384,7 @@ mod tests {
         assert!(val.get("source").is_some(), "log line must have 'source' field");
         assert_eq!(val["ts"], "2026-05-20T10:00:00Z");
         assert_eq!(val["source"], "tinker");
-        assert_eq!(val["kind"], "tinker_turn_start");
+        assert_eq!(val["kind"], "tinker_system_message_received");
     }
 
     // spec (tinker-introspection): event kinds serialize as snake_case
@@ -412,11 +393,9 @@ mod tests {
     fn test_spec_event_kinds_are_snake_case() {
         let cases: &[(&str, LogEvent)] = &[
             (
-                "tinker_session_started",
-                LogEvent::TinkerSessionStarted {
-                    system_prompt_chars: 100,
-                    goal_list_hash: "abc".to_string(),
-                    backend: "claude".to_string(),
+                "tinker_system_message_received",
+                LogEvent::TinkerSystemMessageReceived {
+                    content: "hello".to_string(),
                 },
             ),
             (
@@ -494,11 +473,13 @@ mod tests {
         );
     }
 
-    // spec (tinker-introspection): message-level events carry full text.
+    // spec (tinker-introspection): message-level events carry full, untruncated
+    // text. System-message events carry their `content` verbatim; finished-session
+    // events carry the entire transcript in `full_output`.
     #[test]
     fn test_spec_message_events_carry_full_text() {
-        let text = "Complete user message content.".to_string();
-        let event = LogEvent::TinkerUserMessageReceived { text: text.clone() };
+        let content = "Complete system message content.".to_string();
+        let event = LogEvent::TinkerSystemMessageReceived { content: content.clone() };
         let entry = LogEntry {
             ts: "2026-05-20T00:00:00Z".to_string(),
             source: "tinker".to_string(),
@@ -506,18 +487,28 @@ mod tests {
         };
         let json = serde_json::to_string(&entry).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(val["text"], text);
+        assert_eq!(val["content"], content);
 
-        let reply = "Full assistant reply.".to_string();
-        let event2 = LogEvent::TinkerReplyEmitted { text: reply.clone() };
+        let transcript = "Full session transcript across many turns.".to_string();
+        let event2 = LogEvent::GoalSessionFinished {
+            goal_id: "tend".to_string(),
+            exit_status: "clean".to_string(),
+            duration_ms: 1,
+            files_modified_count: 0,
+            files_modified: vec![],
+            tool_calls: 0,
+            summary_chars: 0,
+            full_output: transcript.clone(),
+            backend: "claude".to_string(),
+        };
         let entry2 = LogEntry {
             ts: "2026-05-20T00:00:00Z".to_string(),
-            source: "tinker".to_string(),
+            source: "goal_session".to_string(),
             event: event2,
         };
         let json2 = serde_json::to_string(&entry2).unwrap();
         let val2: serde_json::Value = serde_json::from_str(&json2).unwrap();
-        assert_eq!(val2["text"], reply);
+        assert_eq!(val2["full_output"], transcript);
     }
 
     // spec (tinker-introspection): tinker_system_message_received
@@ -599,8 +590,11 @@ mod tests {
         assert_eq!(state.focus, "tree");
 
         // Non-state events return false
-        let changed3 = apply_to_state(&entry(LogEvent::TinkerTurnStart), &mut state);
-        assert!(!changed3, "TinkerTurnStart must not mark state dirty");
+        let changed3 = apply_to_state(
+            &entry(LogEvent::TinkerSystemMessageReceived { content: "x".to_string() }),
+            &mut state,
+        );
+        assert!(!changed3, "TinkerSystemMessageReceived must not mark state dirty");
     }
 
     // spec (tinker-introspection): count_tool_calls counts lines starting
