@@ -1,5 +1,5 @@
 id = "goal-agents"
-summary = "governs: uniform session registry — every goal is a structurally identical process-scoped addressable agent; @goal-id universal dispatch; two tend-only exceptions (eager start + startup-silence message + TUI suppression; parse-correction loop); framework preamble (incl. dispatcher-report rule and agent-collaboration requirement); dispatcher-provided init sections (spec diff + code inventory when rummage dispatches); tier field in goal TOML; structured summary requirement; .tinker/ write prohibition | triggers: session registry; @-dispatch routing; agent init; tier field; tend exception boundaries; session output requirements"
+summary = "governs: uniform session registry — every goal is a structurally identical process-scoped addressable agent; @goal-id universal dispatch; two tend-only exceptions (eager start + startup-silence message + TUI suppression; parse-correction loop); serial goal-agent queue (one at a time; tend/rummage/jog excluded); shared-file + cleanup-hook race rationale for serialization; framework preamble (incl. dispatcher-report rule and agent-collaboration requirement); dispatcher-provided init sections (spec diff + code inventory when rummage dispatches); tier field in goal TOML; structured summary requirement; .tinker/ write prohibition | triggers: session registry; @-dispatch routing; agent init; tier field; tend exception boundaries; session output requirements; serial queue behavior"
 description = """
 ## WHAT
 Tinker's agent architecture follows one rule: **every goal is a
@@ -27,6 +27,19 @@ justified:
 
 Everything else is identical across all agents: the same event types,
 the same routing, the same lifecycle, the same `@`-dispatch protocol.
+
+**Goal agent serialization.** Goal agents (all sessions except tend,
+rummage, and jog) run one at a time. A serial queue holds pending
+dispatches; the next agent starts only after the current one finishes.
+Two hazards require global serialization rather than per-goal-id
+gating: (1) goal agents routinely write the same shared source files —
+concurrent writes produce corrupt output because neither agent knows
+the other is active; (2) the cleanup hook scans for investigation
+markers before each session's first LLM turn — concurrent starts race
+on that scan, and the second agent can delete markers the first session
+legitimately wrote. Tend, rummage, and jog are excluded from the queue
+because they never write source files and don't trigger the cleanup
+hook.
 
 **Framework preamble.** Before its goal description, every session
 receives a standard runtime-injected preamble:
@@ -143,6 +156,15 @@ compliance. Requiring the session to account for every
 `test_spec_` function systemically enforces the tests-as-guardrails
 standard without relying on the session's general good behavior.
 
+Goal agents are serialized globally (not just per-goal-id) because
+the two hazards — shared file writes and the cleanup-hook race — apply
+across any pair of concurrently running agents, not only same-goal
+pairs. The constraint is coarser than strictly necessary: agents
+working on unrelated files could safely overlap. Per-file conflict
+detection would allow that, but the simpler invariant (one at a time,
+always) is correct without requiring the runtime to model file
+ownership.
+
 ## SCOPE
 - In scope: the session registry and `SessionEntry` type; `@goal-id`
   as the universal dispatch; the exactly-two tend exceptions (eager
@@ -153,10 +175,12 @@ standard without relying on the session's general good behavior.
   their role in diff-aware dispatch; `tier` field in goal TOML; the
   unified `SessionEvent` enum and single run-loop receiver dispatching
   on `goal_id`; the structured summary requirement and `test_spec_`
-  listing mandate; pre-session cleanup via `cleanup-hook`.
-- Out of scope: cross-process session persistence; concurrent sessions
-  for the same goal-id; per-agent tool distinctions beyond what
-  applies uniformly to all agents.
+  listing mandate; pre-session cleanup via `cleanup-hook`; serial
+  goal-agent queue (one active goal agent at a time).
+- Out of scope: cross-process session persistence; concurrent goal
+  agents (globally serialized — see serialization rationale above);
+  per-agent tool distinctions beyond what applies uniformly to all
+  agents.
 - Sessions must not write to `.tinker/goals/`, `.tinker/notes/`, or
   `.tinker/state/` — these directories are tend-owned. Reading goal
   files is allowed and expected; writing would let a session silently
