@@ -60,6 +60,11 @@ Five tactics govern the content:
    if claims don't fit together, the prose fails and the
    contradiction surfaces where a list would have hidden it.
 
+6. **Stick to what the user said.** The goal file only contains things
+   the user actually demanded. It sticks closely to language the user
+   was actually using. Synthesis, yes. But no filling of gaps, painting
+   in broad strokes.
+
 These rules are enforced read-time, not by a mechanical write step.
 Tend cites this goal when it surfaces a candidate violation during
 an interview or cross-goal alignment — a claim without a clear

@@ -164,11 +164,19 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
          the agent's role. You cannot write a useful message without knowing what that \
          agent does and what it needs.\n\
          \n\
-         **Two shared resources available to all agents.**\n\
-         - `@tend` — for intent and *should*: what the user wants, what a goal means, \
-         whether a behavior is intentional. Tend holds the goal tree and conversation history.\n\
-         - `@rummage` — for code reality and *is*: what the code actually does, how a flow \
-         works, whether an implementation matches a spec.\n\
+         **Three shared agents — route questions to the right one; don't substitute \
+         goal-file reads for agent consultation.**\n\
+         - `@tend` — intent and *should*: what the user wants, what a goal means, whether \
+         a behavior is intentional. Tend holds the goal tree and conversation history.\n\
+         - `@rummage` — code reality and *is*: what the code actually does, how a flow \
+         works, whether an implementation matches a spec. Questions about system behavior \
+         go here — reading a goal file cannot substitute.\n\
+         - `@jog` — discrepancy finding: spots gaps between two sources (spec vs. code, \
+         goal vs. behavior). Use when you need to know whether two layers agree.\n\
+         \n\
+         Reading a goal file tells you what an agent is *responsible for* — enough to write \
+         a useful message to it. It does not answer questions the agent is better positioned \
+         to answer.\n\
          \n\
          ## Your goal\n\
          \n\
@@ -619,16 +627,17 @@ mod tests {
         );
     }
 
-    // spec: goal-agents preamble — two shared resources (@tend for intent/should,
-    // @rummage for code-reality/is) must be named in the preamble so every agent
-    // knows when to consult them without having to read the respective goal files.
+    // spec: goal-agents preamble — three shared agents (@tend for intent/should,
+    // @rummage for code-reality/is, @jog for discrepancy finding) must be named
+    // as routing rules, not merely "available", so every agent knows when to
+    // consult them and that goal-file reads don't substitute for agent queries.
     #[test]
-    fn test_spec_preamble_includes_tend_rummage_shared_resources() {
+    fn test_spec_preamble_includes_shared_agent_routing_rules() {
         let goal = make_goal("widget", "build a widget");
         let msg = session_init_message(&goal, None, "[]");
         assert!(
-            msg.contains("Two shared resources available to all agents"),
-            "preamble must name the two shared-resource heading"
+            msg.contains("Three shared agents"),
+            "preamble must frame shared agents as a routing rule, not availability"
         );
         assert!(
             msg.contains("@tend") && msg.contains("intent") && msg.contains("should"),
@@ -637,6 +646,14 @@ mod tests {
         assert!(
             msg.contains("@rummage") && msg.contains("code reality") && msg.contains("is"),
             "preamble must describe @rummage as the code-reality/*is* resource"
+        );
+        assert!(
+            msg.contains("@jog") && msg.contains("discrepancy"),
+            "preamble must describe @jog as the discrepancy-finding resource"
+        );
+        assert!(
+            msg.contains("don't substitute") || msg.contains("does not answer"),
+            "preamble must explicitly warn against substituting file reads for agent queries"
         );
     }
 

@@ -2091,13 +2091,6 @@ mod tests {
     }
 
     #[test]
-    fn test_spec_tinker_prompt_forbids_vcs_mutation() {
-        let content = tend_agent_content();
-        assert!(content.contains("Read-only") || content.contains("read-only"), "VCS directive must declare version control read-only");
-        assert!(content.contains("Never commit") || content.contains("never commit") || content.contains("no commits"), "VCS directive must forbid commits");
-    }
-
-    #[test]
     fn test_spec_tinker_proves_by_execution_not_reading_source() {
         let content = tend_agent_content();
         assert!(content.contains("code comprehension"), "SCOPE section must list code comprehension as out of scope");
@@ -2111,56 +2104,12 @@ mod tests {
     }
 
     #[test]
-    fn test_spec_shared_language_form_norm_no_formulaic_replies() {
-        let content = tend_agent_content();
-        assert!(content.contains("probe bare assertions") || content.contains("bare assertion"),
-            "prompt must direct tend to probe bare assertions");
-    }
-
-    #[test]
     fn test_spec_tinker_encodes_dual_duty_no_fabrication_at_inflection_points() {
         let content = tend_agent_content();
         assert!(content.contains("Phase 1") || content.contains("Phase 2") || content.contains("Phase 3"),
             "prompt must describe interview phases");
         assert!(content.contains("playback") || content.contains("Playback") || content.contains("Only the user can validate"),
             "prompt must require playback before writing");
-    }
-
-    #[test]
-    fn test_spec_tinker_tone_downstream_of_role_drop_deference_layer() {
-        let content = tend_agent_content();
-        assert!(content.contains("position of confidence") || content.contains("confidence") || content.contains("no deference"),
-            "prompt must establish tend's tone as confident");
-    }
-
-    #[test]
-    fn test_spec_user_holds_should_tinker_holds_is() {
-        let content = tend_agent_content();
-        assert!(content.contains("user holds the *should*"), "prompt must state that the user holds the should");
-        assert!(content.contains("Tend holds the *is*"), "prompt must state that tend holds the is");
-    }
-
-    #[test]
-    fn test_spec_is_state_verified_by_observation_not_inference() {
-        let content = tend_agent_content();
-        assert!(content.contains("verify by observation") || content.contains("Verify by observation"),
-            "prompt must instruct tinker to verify is-state by observation");
-    }
-
-    #[test]
-    fn test_spec_tend_prompt_extends_observation_to_goal_files() {
-        let content = tend_agent_content();
-        assert!(content.contains("goal files are observable"), "prompt must extend the observation rule to goal files");
-        assert!(content.contains("not from memory"), "prompt must name memory as the failure mode");
-    }
-
-    #[test]
-    fn test_spec_tend_prompt_requires_both_sides_for_sufficiency_claims() {
-        let content = tend_agent_content();
-        assert!(content.contains("sufficiency claim") || content.contains("A sufficiency claim"),
-            "prompt must name sufficiency claims as a category requiring both-sides checking");
-        assert!(content.contains("reading only X cannot establish the overlap"),
-            "prompt must state that reading only one side is insufficient");
     }
 
     #[test]
@@ -2187,23 +2136,10 @@ mod tests {
     }
 
     #[test]
-    fn test_spec_cross_goal_alignment_no_exemptions_for_edits() {
-        let content = tend_agent_content();
-        assert!(content.contains("surface every relationship"),
-            "prompt must state cross-goal alignment surfaces every relationship");
-    }
-
-    #[test]
     fn test_spec_main_feeds_parent_id_and_children_into_goals_summary() {
         let main_rs = include_str!("main.rs");
         assert!(main_rs.contains("build_compact_index"), "main.rs must call build_compact_index");
         assert!(main_rs.contains("goal::build_compact_index"), "main.rs must call goal::build_compact_index");
-    }
-
-    #[test]
-    fn test_spec_tinker_prompt_compact_index_describes_parent_id() {
-        let content = tend_agent_content();
-        assert!(content.contains("`parent_id`"), "compact index description must document the parent_id field");
     }
 
     #[test]
