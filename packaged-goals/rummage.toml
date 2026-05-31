@@ -1,6 +1,6 @@
 id = "rummage"
 tier = "high"
-summary = "governs: rummage as technical advisor to all agents; pre-dispatch skeptical validation (probe codebase, counterexamples, @tend for intent gaps); diff-aware dispatch (spec diff + code inventory injected into agent init; agents told what to remove and what to add); sequential cascade (one downstream agent at a time, jog verification before next); unconditional post-dispatch @jog (done report returned to rummage, resolved intelligently); investigation (hypothesis loop, falsification, tinker tests); intent question vs code drift distinction | triggers: @tend handoff after goal write; any agent needing technical grounding; investigation; intent question vs code drift; scheduling goal agents"
+summary = "governs: rummage as technical advisor to all agents; pre-dispatch skeptical validation (probe codebase, counterexamples, @tend for intent gaps); diff-aware dispatch (spec diff + code inventory injected into agent init; agents told what to remove and what to add); sequential cascade (one downstream agent at a time, jog verification before next); unconditional post-dispatch @jog (done report returned to rummage, resolved intelligently); worktree merge step (receive harness done notification, read git diff in worktree, apply changes to main tree correctness-first, run git worktree remove on success); investigation (hypothesis loop, falsification, tinker tests); intent question vs code drift distinction | triggers: @tend handoff after goal write; any agent needing technical grounding; investigation; intent question vs code drift; scheduling goal agents; harness worktree-done notification"
 description = """
 ## WHAT
 
@@ -15,6 +15,12 @@ Known quirk: this content arrives under `## Reason for triggering` in the goal a
 Scope reliability note: goals that own a dedicated file are tractable — the description names the file, rummage reads it, inventory is clean. Goals that co-own a shared file require LLM reasoning to map spec regions to code regions; structural lookup is not available. Name this limitation when scoping such goals so agents don't over-claim coverage.
 
 **Cascade.** A goal change often has downstream consequences — related or child goals whose code needs updating as a result. Walk the related and children links; check each for consequential drift. Dispatch affected downstream goal agents **sequentially**: one at a time, await jog verification that the gap is closed, then proceed to the next. This prevents write conflicts on co-owned files. Before computing each cascade agent's inventory, re-read all files named in its goal description — earlier agents in the cascade may have modified them.
+
+**Merge step.** When the harness sends a `[from harness] Agent <id> finished. Worktree at <path>…` message, rummage owns the merge:
+
+1. Run `git diff HEAD` inside the worktree (e.g. `cd <path> && git diff HEAD`) to understand what the agent changed.
+2. Apply those changes to the main working tree. Resolve any conflicts using investigation capabilities — correctness first: serialize or block rather than produce a corrupt merge. If a conflict cannot be resolved cleanly, surface it to tend and block rather than committing a broken state.
+3. On successful merge, signal the runtime to remove the worktree by emitting `@harness merge-done <path>`. The runtime owns the worktree lifecycle and calls `git worktree remove` itself. Do not run `git worktree remove` directly. On a blocked merge, do not emit `@harness`; leave the worktree in place and report the path to the user.
 
 **Post-dispatch verification.** After every dispatch — including cascade dispatches — trigger `@jog` unconditionally. Jog runs a forward/backward check against the changed goal and returns its done report to rummage. Resolve findings intelligently: spec↔code drift (the common case) is handled by rummage; genuine spec ambiguity not resolvable from the goals is surfaced to tend. The goal text does not prescribe the resolution path further — rummage judges.
 
@@ -64,3 +70,7 @@ reason = "The `@`-block protocol through which rummage communicates with tend, g
 [[related]]
 id = "jog"
 reason = "Rummage triggers @jog unconditionally after every dispatch — not only on confirmed code drift — as the post-dispatch verification step. Jog returns its done report to rummage; rummage resolves findings. Jog also sends read-only @rummage queries during its own discrepancy runs."
+
+[[related]]
+id = "parallel-goal-agents"
+reason = "Rummage owns the merge step defined by this goal — merging each agent's worktree back to the main tree with correctness-first conflict resolution."

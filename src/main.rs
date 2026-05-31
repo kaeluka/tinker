@@ -3,6 +3,7 @@ mod cap;
 mod claude;
 mod cleanup;
 mod config;
+mod gitops;
 mod goal;
 mod goal_session;
 mod logger;
@@ -14,7 +15,8 @@ mod test_utils;
 
 use anyhow::Result;
 use app::{App, Focus, Phase};
-use cap::{Chunk, Filesystem, OpenCodeRunner};
+use cap::{Chunk, Filesystem, GitOps, OpenCodeRunner};
+use gitops::RealGitOps;
 use realfs::RealFilesystem;
 use crossterm::{
     event::{
@@ -201,7 +203,7 @@ async fn goal_agent_loop(
                     full_output: output,
                     backend: backend_name.clone(),
                 });
-                let _ = session_tx.send(SessionEvent::Done { goal_id: goal_id.clone() }).await;
+                let _ = session_tx.send(SessionEvent::Done { goal_id: goal_id.clone(), crashed: false }).await;
             }
             Err(e) => {
                 log.emit("goal_session", logger::LogEvent::GoalSessionFinished {
@@ -217,7 +219,7 @@ async fn goal_agent_loop(
                 });
                 // Clear session_id so next message starts a fresh session.
                 llm_session_id = None;
-                let _ = session_tx.send(SessionEvent::Done { goal_id: goal_id.clone() }).await;
+                let _ = session_tx.send(SessionEvent::Done { goal_id: goal_id.clone(), crashed: true }).await;
             }
         }
     }
@@ -239,6 +241,7 @@ fn print_help() {
 async fn main() -> Result<()> {
     // Composition root: real capability implementations live here only.
     let fs: Arc<dyn Filesystem> = Arc::new(RealFilesystem);
+    let git_ops: Arc<dyn GitOps> = Arc::new(RealGitOps);
 
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--help" || a == "-h") {
@@ -408,6 +411,7 @@ async fn main() -> Result<()> {
         oc_cleanup_runner,
         fs.clone(),
         work_dir.clone(),
+        git_ops,
         session_tx,
         log,
         backend_name,
@@ -432,6 +436,7 @@ async fn run_loop(
     oc_cleanup_runner: Arc<dyn OpenCodeRunner>,
     fs: Arc<dyn Filesystem>,
     work_dir: std::path::PathBuf,
+    git_ops: Arc<dyn GitOps>,
     session_tx: mpsc::Sender<SessionEvent>,
     log: logger::LogSender,
     backend_name: &str,
@@ -440,6 +445,10 @@ async fn run_loop(
     // Session registry: maps goal_id → message channel sender.
     // Tend is pre-populated (eager start); all other sessions start lazily.
     let mut session_senders: HashMap<String, mpsc::Sender<String>> = HashMap::new();
+    // Worktree tracking: goal_id → worktree path, populated on successful worktree creation.
+    let mut worktree_paths: HashMap<String, PathBuf> = HashMap::new();
+    // Channel to receive worktree-ready notifications from spawned tasks.
+    let (wt_ready_tx, mut wt_ready_rx) = mpsc::channel::<(String, PathBuf)>(32);
 
     // Eager-start tend: find its goal, spawn goal_agent_loop, send the initial trigger.
     {
@@ -474,10 +483,17 @@ async fn run_loop(
         // Draw
         terminal.draw(|f| tui::draw(f, &mut app.lock().unwrap()))?;
 
+        // Drain worktree-ready notifications: record successful worktree creations.
+        while let Ok((goal_id, wt_path)) = wt_ready_rx.try_recv() {
+            worktree_paths.insert(goal_id, wt_path);
+        }
+
         // Drain lazy goal-agent spawn requests. For each request:
         // - If the goal is already in the registry: route the message.
         // - If not: create a channel, register it, spawn a persistent task.
+        //   Non-interactive goal agents get a fresh git worktree as their work_dir.
         while let Ok(req) = goal_spawn_rx.try_recv() {
+            let is_interactive = matches!(req.goal_id.as_str(), "tend" | "rummage" | "jog");
             if let Some(tx) = session_senders.get(&req.goal_id) {
                 let _ = tx.try_send(req.message);
             } else {
@@ -485,7 +501,6 @@ async fn run_loop(
                 if let Some(goal) = goal {
                     let (msg_tx_goal, msg_rx_goal) = mpsc::channel::<String>(16);
                     session_senders.insert(req.goal_id.clone(), msg_tx_goal.clone());
-                    let _ = msg_tx_goal.try_send(req.message);
                     let oc_for_goal = match goal.tier.as_deref() {
                         Some("high") => oc_goal_high.clone(),
                         _ => oc_goal.clone(),
@@ -493,17 +508,53 @@ async fn run_loop(
                     let session_tx_goal = session_tx.clone();
                     let oc_cleanup_goal = oc_cleanup_runner.clone();
                     let fs_goal = fs.clone();
-                    let work_dir_goal = work_dir.clone();
                     let app_ref_goal = app.clone();
                     let log_goal = log.clone();
                     let backend_goal = backend_name.to_string();
-                    tokio::spawn(async move {
-                        goal_agent_loop(
-                            goal, msg_rx_goal, session_tx_goal,
-                            oc_for_goal, oc_cleanup_goal, fs_goal,
-                            work_dir_goal, app_ref_goal, log_goal, backend_goal,
-                        ).await;
-                    });
+
+                    if !is_interactive {
+                        // Non-interactive goal agent: create a fresh git worktree.
+                        let unique = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_nanos();
+                        let wt_path = std::env::temp_dir()
+                            .join(format!("tinker-{}-{}", req.goal_id, unique));
+                        let git_ops_clone = git_ops.clone();
+                        let work_dir_clone = work_dir.clone();
+                        let wt_ready_tx_clone = wt_ready_tx.clone();
+                        let first_message = req.message;
+                        let goal_id_clone = goal.id.clone();
+                        let session_tx_err = session_tx.clone();
+                        tokio::spawn(async move {
+                            if let Err(_) = git_ops_clone.worktree_add(&work_dir_clone, &wt_path).await {
+                                // Worktree creation failed — agent cannot run.
+                                let _ = session_tx_err.send(SessionEvent::Done {
+                                    goal_id: goal_id_clone,
+                                    crashed: true,
+                                }).await;
+                                return;
+                            }
+                            let _ = wt_ready_tx_clone.try_send((goal.id.clone(), wt_path.clone()));
+                            let _ = msg_tx_goal.try_send(first_message);
+                            goal_agent_loop(
+                                goal, msg_rx_goal, session_tx_goal,
+                                oc_for_goal, oc_cleanup_goal, fs_goal,
+                                wt_path, app_ref_goal, log_goal, backend_goal,
+                            ).await;
+                        });
+                    } else {
+                        // Interactive agent: runs in the main work_dir.
+                        let work_dir_goal = work_dir.clone();
+                        let _ = msg_tx_goal.try_send(req.message);
+                        tokio::spawn(async move {
+                            goal_agent_loop(
+                                goal, msg_rx_goal, session_tx_goal,
+                                oc_for_goal, oc_cleanup_goal, fs_goal,
+                                work_dir_goal, app_ref_goal, log_goal, backend_goal,
+                            ).await;
+                        });
+                    }
                 }
             }
         }
@@ -512,7 +563,52 @@ async fn run_loop(
         {
             let running_before: std::collections::HashSet<String> = app.lock().unwrap().running_sessions.keys().cloned().collect();
             while let Ok(ev) = session_rx.try_recv() {
+                // Compute worktree disposition before handle_session_event so we
+                // still have the path. Three cases:
+                //   success Done  → send path to rummage for merge
+                //   crashed Done  → remove worktree directly (nothing to merge)
+                //   CleanupBlocked → remove worktree directly (agent never ran)
+                enum WtAction { SendToRummage(String, PathBuf), RemoveDirectly(PathBuf) }
+                let wt_action: Option<WtAction> = match &ev {
+                    SessionEvent::Done { goal_id, crashed }
+                        if !matches!(goal_id.as_str(), "tend" | "rummage" | "jog") =>
+                    {
+                        worktree_paths.remove(goal_id.as_str()).map(|wt| {
+                            if *crashed { WtAction::RemoveDirectly(wt) }
+                            else { WtAction::SendToRummage(goal_id.clone(), wt) }
+                        })
+                    }
+                    SessionEvent::CleanupBlocked { goal_id, .. }
+                        if !matches!(goal_id.as_str(), "tend" | "rummage" | "jog") =>
+                    {
+                        worktree_paths.remove(goal_id.as_str()).map(WtAction::RemoveDirectly)
+                    }
+                    _ => None,
+                };
                 handle_session_event(&mut app.lock().unwrap(), ev, &goal_spawn_tx, &session_senders, fs.as_ref(), &log);
+                match wt_action {
+                    Some(WtAction::SendToRummage(goal_id, wt_path)) => {
+                        if let Some(rummage_tx) = session_senders.get("rummage") {
+                            let msg = format!(
+                                "[from harness] Agent `{}` finished. Worktree at {}. Merge to main, then send `@harness merge-done {}` to trigger cleanup.",
+                                goal_id, wt_path.display(), wt_path.display()
+                            );
+                            let _ = rummage_tx.try_send(msg);
+                        }
+                    }
+                    Some(WtAction::RemoveDirectly(wt_path)) => {
+                        let git_ops_rm = git_ops.clone();
+                        tokio::spawn(async move { let _ = git_ops_rm.worktree_remove(&wt_path).await; });
+                    }
+                    None => {}
+                }
+            }
+            // Drain @harness merge-done signals: rummage signals the runtime when
+            // a merge is complete so the runtime can remove the worktree.
+            let to_remove = std::mem::take(&mut app.lock().unwrap().pending_worktree_removals);
+            for wt_path in to_remove {
+                let git_ops_rm = git_ops.clone();
+                tokio::spawn(async move { let _ = git_ops_rm.worktree_remove(&wt_path).await; });
             }
             let running_after: Vec<String> = app.lock().unwrap().running_sessions.keys().cloned().collect();
             if running_after.iter().cloned().collect::<std::collections::HashSet<_>>() != running_before {
@@ -646,30 +742,18 @@ async fn run_loop(
                             reason.as_ref().map(|r| format!(": {}", r)).unwrap_or_default(),
                         );
                         let is_interactive = matches!(id.as_str(), "tend" | "rummage" | "jog");
-                        let should_spawn = {
+                        {
                             let mut a = app.lock().unwrap();
                             a.push_system_message(&sys_msg);
-                            if !is_interactive && is_goal_agent_running(&a.running_sessions) {
-                                a.goal_queue.push_back(app::GoalQueueEntry {
-                                    goal_id: id.clone(),
-                                    message: reason_str.clone(),
-                                    display_reason: reason_str.clone(),
-                                });
-                                false
-                            } else {
-                                if !is_interactive {
-                                    a.running_sessions.insert(id.clone(), reason);
-                                }
-                                true
+                            if !is_interactive {
+                                a.running_sessions.insert(id.clone(), reason);
                             }
-                        };
-                        log.emit("dispatcher", logger::LogEvent::TinkerSystemMessageReceived { content: sys_msg });
-                        if should_spawn {
-                            let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
-                                goal_id: id,
-                                message: reason_str,
-                            });
                         }
+                        log.emit("dispatcher", logger::LogEvent::TinkerSystemMessageReceived { content: sys_msg });
+                        let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
+                            goal_id: id,
+                            message: reason_str,
+                        });
                     }
                 }
                 KeyAction::None => {}
@@ -749,11 +833,7 @@ fn parse_at_commands(text: &str, known_ids: &[&str]) -> Vec<(String, String)> {
 /// Deliver peer consultations collected from a completed agent reply.
 /// Routes to the session registry for known agents; triggers lazy spawn via
 /// `goal_spawn_tx` for goal IDs not yet in the registry.
-/// Returns true if any autonomous goal agent (not tend/rummage/jog) is currently running.
-fn is_goal_agent_running(running_sessions: &std::collections::HashMap<String, std::option::Option<String>>) -> bool {
-    running_sessions.keys().any(|id| !matches!(id.as_str(), "tend" | "rummage" | "jog"))
-}
-
+/// All non-interactive goal agents are dispatched unconditionally in parallel.
 fn dispatch_peer_consultations(
     app: &mut App,
     sender: &str,
@@ -763,6 +843,14 @@ fn dispatch_peer_consultations(
     log: &logger::LogSender,
 ) {
     for (recipient, msg) in consultations {
+        // @harness is a runtime-internal signal — handle without routing to any session.
+        if recipient == "harness" {
+            if let Some(path_str) = msg.trim().strip_prefix("merge-done ") {
+                app.pending_worktree_removals.push(std::path::PathBuf::from(path_str.trim()));
+            }
+            continue;
+        }
+
         let formatted = format!("[from {}] {}\n\nReply via @{}.", sender, msg, sender);
         let sys = format!("@{} → @{}: {}", sender, recipient, msg);
         app.push_system_message(&sys);
@@ -770,27 +858,17 @@ fn dispatch_peer_consultations(
         let is_goal_agent = !matches!(recipient.as_str(), "tend" | "rummage" | "jog")
             && app.goals.iter().any(|g| &g.id == recipient);
 
-        if is_goal_agent && is_goal_agent_running(&app.running_sessions) {
-            // Another goal agent is running — queue for serial execution.
-            let display_reason = msg.lines().next().unwrap_or("").to_string();
-            app.goal_queue.push_back(app::GoalQueueEntry {
+        if let Some(tx) = session_senders.get(recipient) {
+            let _ = tx.try_send(formatted);
+        } else if app.goals.iter().any(|g| &g.id == recipient) {
+            let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
                 goal_id: recipient.clone(),
                 message: formatted,
-                display_reason,
             });
-        } else {
-            if let Some(tx) = session_senders.get(recipient) {
-                let _ = tx.try_send(formatted);
-            } else if app.goals.iter().any(|g| &g.id == recipient) {
-                let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
-                    goal_id: recipient.clone(),
-                    message: formatted,
-                });
-            }
-            if is_goal_agent {
-                let reason = msg.lines().next().unwrap_or("").to_string();
-                app.running_sessions.entry(recipient.clone()).or_insert(Some(reason));
-            }
+        }
+        if is_goal_agent {
+            let reason = msg.lines().next().unwrap_or("").to_string();
+            app.running_sessions.entry(recipient.clone()).or_insert(Some(reason));
         }
     }
 }
@@ -806,6 +884,10 @@ fn known_agent_ids<'a>(
         if !ids.contains(&g.id.as_str()) {
             ids.push(g.id.as_str());
         }
+    }
+    // "harness" is a runtime-internal recipient for merge-done signals from rummage.
+    if !ids.contains(&"harness") {
+        ids.push("harness");
     }
     ids
 }
@@ -832,7 +914,7 @@ fn handle_session_event(
             }
             app.current_session_text.entry(goal_id).or_default().push_str(&text);
         }
-        SessionEvent::Done { goal_id } => {
+        SessionEvent::Done { goal_id, crashed: _ } => {
             app.finalize_agent_message(&goal_id);
             let session_text = app.current_session_text.remove(&goal_id).unwrap_or_default();
             // Reload goals — any session may have written TOML files.
@@ -889,14 +971,14 @@ fn handle_session_event(
                 }
                 app.correction_attempts = 0;
                 if app.phase == Phase::Initializing {
-                    app.push_system_message("Tend ready. Ask me to add a goal.");
-                    log.emit("harness", logger::LogEvent::TinkerSystemMessageReceived { content: "Tend ready. Ask me to add a goal.".to_string() });
+                    app.push_system_message(
+                        "You're talking to tend, the planning agent. /rummage switches to code understanding, TAB moves focus to the goal view.",
+                    );
+                    log.emit("harness", logger::LogEvent::TinkerSystemMessageReceived { content: "You're talking to tend, the planning agent. /rummage switches to code understanding, TAB moves focus to the goal view.".to_string() });
                     app.phase = Phase::Idle;
                 }
             } else {
-                // Non-tend session done — remove from running set, then drain queue.
                 app.running_sessions.remove(&goal_id);
-                drain_goal_queue(app, session_senders, goal_spawn_tx);
             }
             let known_ids = known_agent_ids(session_senders, &app.goals);
             let consultations = parse_at_commands(&session_text, &known_ids);
@@ -919,27 +1001,6 @@ fn handle_session_event(
             app.push_system_message(&msg);
             log.emit("cleanup", logger::LogEvent::TinkerSystemMessageReceived { content: msg });
             app.running_sessions.remove(&goal_id);
-            drain_goal_queue(app, session_senders, goal_spawn_tx);
-        }
-    }
-}
-
-/// Pop the next queued goal agent and start it. Does nothing if the queue is empty.
-fn drain_goal_queue(
-    app: &mut App,
-    session_senders: &HashMap<String, mpsc::Sender<String>>,
-    goal_spawn_tx: &mpsc::Sender<SpawnGoalRequest>,
-) {
-    if let Some(entry) = app.goal_queue.pop_front() {
-        let reason = if entry.display_reason.is_empty() { None } else { Some(entry.display_reason) };
-        app.running_sessions.insert(entry.goal_id.clone(), reason);
-        if let Some(tx) = session_senders.get(&entry.goal_id) {
-            let _ = tx.try_send(entry.message);
-        } else {
-            let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
-                goal_id: entry.goal_id,
-                message: entry.message,
-            });
         }
     }
 }
@@ -1167,10 +1228,12 @@ mod tests {
     // This exhaustive-match test compiles only while both variants stay absent.
     #[test]
     fn test_spec_summary_ready_variant_removed() {
-        let evt = SessionEvent::Done { goal_id: "x".into() };
+        // Exhaustive match ensures LlmSessionId and SummaryReady stay absent,
+        // and that Done carries the crashed field.
+        let evt = SessionEvent::Done { goal_id: "x".into(), crashed: false };
         match evt {
             SessionEvent::Chunk { .. } => {}
-            SessionEvent::Done { .. } => {}
+            SessionEvent::Done { crashed: _, .. } => {}
             SessionEvent::CleanupBlocked { .. } => {}
         }
     }
@@ -1250,8 +1313,8 @@ mod tests {
         let needle_fs = "std::fs::";
         // Files that legitimately host raw effects: `opencode.rs` and `claude.rs`
         // own the subprocess builders (Real OpenCode and Claude runners);
-        // `realfs.rs` owns the Filesystem capability.
-        let cmd_allowed = ["opencode.rs", "claude.rs"];
+        // `gitops.rs` owns the git worktree capability; `realfs.rs` owns Filesystem.
+        let cmd_allowed = ["opencode.rs", "claude.rs", "gitops.rs"];
         let fs_allowed = ["realfs.rs"];
 
         for entry in std::fs::read_dir(&src).unwrap() {
@@ -2223,12 +2286,12 @@ mod tests {
         );
     }
 
-    // spec (tui — queue visibility): when another goal agent is already running,
-    // a new @-dispatch must go to the queue, not start immediately.
+    // spec (parallel-goal-agents): when another goal agent is already running,
+    // a new @-dispatch must still go to spawn immediately — no serial queue.
     #[test]
-    fn test_spec_at_dispatch_queues_when_goal_agent_already_running() {
+    fn test_spec_at_dispatch_spawns_when_goal_agent_already_running() {
         let (msg_tx, _msg_rx) = mpsc::channel::<String>(8);
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
         let (senders, _, _) = make_test_session_senders(&msg_tx);
 
         let mut app = App::new();
@@ -2246,38 +2309,13 @@ mod tests {
             &mut app, "tend", &consultations, &senders, &spawn_tx, &logger::noop_sender(),
         );
 
-        assert!(
-            !app.running_sessions.contains_key("goal-b"),
-            "goal-b must not be added to running_sessions while goal-a is running",
-        );
-        assert_eq!(app.goal_queue.len(), 1, "goal-b must be in the queue");
-        assert_eq!(app.goal_queue[0].goal_id, "goal-b");
-    }
-
-    // spec (tui — queue visibility): drain_goal_queue starts the next entry
-    // from the queue when the current session finishes.
-    #[test]
-    fn test_spec_drain_goal_queue_starts_next_entry() {
-        let (msg_tx, _msg_rx) = mpsc::channel::<String>(8);
-        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
-        let (senders, _, _) = make_test_session_senders(&msg_tx);
-
-        let mut app = App::new();
-        app.goal_queue.push_back(app::GoalQueueEntry {
-            goal_id: "goal-b".into(),
-            message: "do the work".into(),
-            display_reason: "reason-b".into(),
-        });
-
-        drain_goal_queue(&mut app, &senders, &spawn_tx);
-
+        // goal-b must be dispatched immediately in parallel, not queued.
+        let req = spawn_rx.try_recv().expect("goal-b must be spawned immediately even though goal-a is running");
+        assert_eq!(req.goal_id, "goal-b");
         assert!(
             app.running_sessions.contains_key("goal-b"),
-            "drained entry must be inserted into running_sessions",
+            "goal-b must appear in running_sessions immediately on dispatch",
         );
-        assert_eq!(app.goal_queue.len(), 0, "queue must be empty after drain");
-        let req = spawn_rx.try_recv().expect("drain must spawn the next goal");
-        assert_eq!(req.goal_id, "goal-b");
     }
 
     // spec (tui — queue visibility): @-dispatching to an autonomous goal agent
@@ -2359,6 +2397,157 @@ mod tests {
         assert!(
             !app.running_sessions.contains_key("jog"),
             "jog must not appear in running_sessions when dispatched via @",
+        );
+    }
+
+    // spec (parallel-goal-agents): dispatch_peer_consultations must NOT gate on
+    // any "is a goal agent already running?" check. Two concurrent non-interactive
+    // dispatches must both go to spawn immediately — neither is queued.
+    #[test]
+    fn test_spec_dispatch_no_queue_gating_two_concurrent_agents() {
+        let (msg_tx, _) = mpsc::channel::<String>(8);
+        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
+        let (senders, _, _) = make_test_session_senders(&msg_tx);
+
+        let mut app = App::new();
+        for id in ["goal-a", "goal-b"] {
+            app.goals.push(goal::Goal {
+                id: id.into(),
+                summary: String::new(),
+                description: "".into(),
+                parent_id: String::new(),
+                children: vec![],
+                related: vec![],
+                tier: None,
+                source_path: None,
+            });
+        }
+        // Simulate goal-a already running.
+        app.running_sessions.insert("goal-a".into(), Some("reason a".into()));
+
+        let consultations = vec![("goal-b".to_string(), "start b in parallel".to_string())];
+        dispatch_peer_consultations(
+            &mut app,
+            "tend",
+            &consultations,
+            &senders,
+            &spawn_tx,
+            &logger::noop_sender(),
+        );
+
+        // goal-b must be spawned immediately even though goal-a is running.
+        let req = spawn_rx.try_recv().expect("goal-b must be dispatched immediately, not queued");
+        assert_eq!(req.goal_id, "goal-b");
+        assert!(req.message.contains("start b in parallel"));
+    }
+
+    // spec (parallel-goal-agents): GitOps trait is declared in cap.rs with
+    // worktree_add and worktree_remove methods.
+    #[test]
+    fn test_spec_gitops_trait_in_cap() {
+        let cap_rs = include_str!("cap.rs");
+        assert!(cap_rs.contains("trait GitOps"), "cap.rs must declare GitOps trait");
+        assert!(cap_rs.contains("worktree_add"), "GitOps must declare worktree_add");
+        assert!(cap_rs.contains("worktree_remove"), "GitOps must declare worktree_remove");
+    }
+
+    // spec (parallel-goal-agents): the run_loop spawn handler creates a git worktree
+    // for non-interactive agents and passes it as work_dir to goal_agent_loop.
+    #[test]
+    fn test_spec_worktree_path_used_for_non_interactive_agents() {
+        let main_rs = include_str!("main.rs");
+        assert!(
+            main_rs.contains("worktree_add"),
+            "run_loop must call git_ops.worktree_add before spawning a non-interactive agent",
+        );
+        assert!(
+            main_rs.contains("worktree_paths"),
+            "run_loop must track worktree paths by goal_id for Done-event notification",
+        );
+        assert!(
+            main_rs.contains("tinker-"),
+            "worktree temp-dir name must include a 'tinker-' prefix",
+        );
+    }
+
+    // spec (parallel-goal-agents): Done event for a non-interactive agent delivers
+    // the worktree path to rummage so it can merge and clean up.
+    #[test]
+    fn test_spec_done_event_delivers_worktree_path_to_rummage() {
+        let main_rs = include_str!("main.rs");
+        assert!(
+            main_rs.contains("[from harness]"),
+            "harness must send [from harness] message to rummage on agent Done",
+        );
+        assert!(
+            main_rs.contains("Worktree at"),
+            "harness Done message must include 'Worktree at' with the path",
+        );
+        assert!(
+            main_rs.contains("@harness merge-done"),
+            "harness Done message must tell rummage to emit @harness merge-done when done",
+        );
+    }
+
+    // spec (parallel-goal-agents): SessionEvent::Done carries a `crashed` field so
+    // the run_loop can distinguish a successful turn (send worktree to rummage) from
+    // a crashed turn (remove worktree directly, nothing to merge).
+    #[test]
+    fn test_spec_done_event_has_crashed_field() {
+        // Exhaustive construction — compile error if field is removed.
+        let _ok  = SessionEvent::Done { goal_id: "x".into(), crashed: false };
+        let _err = SessionEvent::Done { goal_id: "x".into(), crashed: true  };
+    }
+
+    // spec (parallel-goal-agents): a crashed Done event must not send the worktree
+    // to rummage — the run_loop must take the RemoveDirectly path instead.
+    #[test]
+    fn test_spec_crashed_done_takes_remove_directly_path() {
+        let main_rs = include_str!("main.rs");
+        assert!(
+            main_rs.contains("WtAction::RemoveDirectly"),
+            "run_loop must define a RemoveDirectly worktree action",
+        );
+        assert!(
+            main_rs.contains("crashed: true") && main_rs.contains("WtAction::RemoveDirectly(wt)"),
+            "run_loop must route crashed Done events to RemoveDirectly",
+        );
+    }
+
+    // spec (parallel-goal-agents): CleanupBlocked must remove the worktree directly
+    // (the agent never ran, so there is nothing to merge).
+    #[test]
+    fn test_spec_cleanup_blocked_removes_worktree_directly() {
+        let main_rs = include_str!("main.rs");
+        assert!(
+            main_rs.contains("SessionEvent::CleanupBlocked") && main_rs.contains("WtAction::RemoveDirectly"),
+            "CleanupBlocked handler must use RemoveDirectly to clean up the worktree",
+        );
+    }
+
+    // spec (parallel-goal-agents): "harness" must appear in known_agent_ids so that
+    // @harness blocks in rummage's output are parsed and routed to the runtime handler.
+    #[test]
+    fn test_spec_harness_known_agent_id() {
+        let main_rs = include_str!("main.rs");
+        assert!(
+            main_rs.contains("\"harness\""),
+            "known_agent_ids must include \"harness\" as a static entry",
+        );
+    }
+
+    // spec (parallel-goal-agents): @harness dispatch pushes the path to
+    // app.pending_worktree_removals; the run_loop drains it and calls worktree_remove.
+    #[test]
+    fn test_spec_harness_dispatch_populates_pending_removals() {
+        let main_rs = include_str!("main.rs");
+        assert!(
+            main_rs.contains("pending_worktree_removals"),
+            "dispatch_peer_consultations must push to pending_worktree_removals on @harness",
+        );
+        assert!(
+            main_rs.contains("merge-done"),
+            "harness handler must parse 'merge-done <path>' from the @harness message",
         );
     }
 

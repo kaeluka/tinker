@@ -1,17 +1,6 @@
 use crate::goal::Goal;
 use std::collections::HashMap;
-use std::collections::VecDeque;
 use std::path::PathBuf;
-
-/// A goal agent session waiting to run.
-#[derive(Debug, Clone)]
-pub struct GoalQueueEntry {
-    pub goal_id: String,
-    /// Formatted message to deliver to the session when it starts.
-    pub message: String,
-    /// Short trigger reason for TUI display (may equal message for keyboard triggers).
-    pub display_reason: String,
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Role {
@@ -122,8 +111,6 @@ pub struct App {
     pub selected_goal: usize,
     /// Goal sessions currently running, mapped to the reason they were triggered.
     pub running_sessions: HashMap<String, Option<String>>,
-    /// Goal agents waiting for the current session to finish (serial execution order).
-    pub goal_queue: VecDeque<GoalQueueEntry>,
     pub goal_logs: HashMap<String, String>,
     pub user_has_interacted: bool,
     pub phase: Phase,
@@ -143,6 +130,9 @@ pub struct App {
     /// Tracks the index in `messages` of the current in-progress agent turn
     /// for each session, so incoming chunks can append to that slot in-place.
     pub agent_msg_idx: HashMap<String, usize>,
+    /// Worktree paths queued for removal after rummage signals merge-done via
+    /// `@harness merge-done <path>`. Drained each event-loop tick.
+    pub pending_worktree_removals: Vec<PathBuf>,
 }
 
 impl App {
@@ -155,7 +145,6 @@ impl App {
             parse_errors: vec![],
             selected_goal: 0,
             running_sessions: HashMap::new(),
-            goal_queue: VecDeque::new(),
             goal_logs: HashMap::new(),
             user_has_interacted: false,
             phase: Phase::Initializing,
@@ -178,6 +167,7 @@ impl App {
             modal: None,
             active_session: "tend".to_string(),
             agent_msg_idx: HashMap::new(),
+            pending_worktree_removals: Vec::new(),
         }
     }
 

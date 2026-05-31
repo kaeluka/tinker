@@ -70,3 +70,7 @@ reason = "The `tinker-test-case:` marker this hook detects and cleans is defined
 [[related]]
 id = "rummage"
 reason = "Rummage is the active investigator that writes scratch tests, fuzz harnesses, and instrumentation marked with `tinker-test-case:`. This hook removes those traces before each goal session runs."
+
+[[related]]
+id = "parallel-goal-agents"
+reason = "With worktree-per-dispatch execution, this hook must run inside the worktree before the agent's first turn, not in the main working tree."

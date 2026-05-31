@@ -311,25 +311,13 @@ fn draw_goal_tree(
                 Style::default().fg(Color::DarkGray)
             };
 
-            // First queue position (1-based) for this goal if not already running.
-            let queue_pos: Option<usize> = if !is_active {
-                app.goal_queue.iter().enumerate()
-                    .find(|(_, e)| e.goal_id == node.goal.id)
-                    .map(|(i, _)| i + 1)
-            } else {
-                None
-            };
-
-            // Running and queued markers render dim so they don't dominate the goal name.
-            let marker_style = if is_active || queue_pos.is_some() {
+            let marker_style = if is_active {
                 Style::default().fg(Color::DarkGray)
             } else {
                 name_style
             };
             let marker_str = if is_active {
                 "▶ ".to_string()
-            } else if let Some(pos) = queue_pos {
-                format!("[{}] ", pos)
             } else {
                 "◉ ".to_string()
             };
@@ -372,31 +360,16 @@ fn draw_goal_tree(
                 .lines()
                 .map(|l| Line::from(l.to_string()))
                 .collect();
-            // Show running + queued entries in order below the description.
-            let is_running = app.running_sessions.contains_key(&g.id);
-            let queue_entries: Vec<(usize, String)> = app.goal_queue.iter().enumerate()
-                .filter(|(_, e)| e.goal_id == g.id)
-                .map(|(i, e)| (i + 1, e.display_reason.clone()))
-                .collect();
-
-            if is_running || !queue_entries.is_empty() {
+            if app.running_sessions.contains_key(&g.id) {
+                let reason = app.running_sessions.get(&g.id)
+                    .and_then(|r| r.as_ref())
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
                 lines.push(Line::from(""));
-                if is_running {
-                    let reason = app.running_sessions.get(&g.id)
-                        .and_then(|r| r.as_ref())
-                        .map(|s| s.as_str())
-                        .unwrap_or("");
-                    lines.push(Line::from(vec![
-                        Span::styled("▶ ", Style::default().fg(Color::DarkGray)),
-                        Span::raw(reason.to_string()),
-                    ]));
-                }
-                for (pos, reason) in &queue_entries {
-                    lines.push(Line::from(vec![
-                        Span::styled(format!("[{}] ", pos), Style::default().fg(Color::DarkGray)),
-                        Span::raw(reason.clone()),
-                    ]));
-                }
+                lines.push(Line::from(vec![
+                    Span::styled("▶ ", Style::default().fg(Color::DarkGray)),
+                    Span::raw(reason.to_string()),
+                ]));
             }
             lines
         }

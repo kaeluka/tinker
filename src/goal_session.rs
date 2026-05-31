@@ -65,7 +65,8 @@ pub enum SessionEvent {
     /// A streamed text chunk from the LLM.
     Chunk { goal_id: String, text: String },
     /// The session has finished processing the current message.
-    Done { goal_id: String },
+    /// `crashed` is true when the LLM runner returned an error for this turn.
+    Done { goal_id: String, crashed: bool },
     /// Cleanup of tinker-test-case markers failed before this goal session
     /// could start. `dirty_files` lists files still containing markers;
     /// `error` is set when cleanup itself errored before it could finish.
@@ -284,7 +285,7 @@ pub async fn run_goal(
         .run(&message, None, &work_dir, on_sid, on_chunk)
         .await?;
 
-    let _ = tx.send(SessionEvent::Done { goal_id: goal_id.clone() }).await;
+    let _ = tx.send(SessionEvent::Done { goal_id: goal_id.clone(), crashed: false }).await;
 
     // Intra-dispatch continuity: the structured-summary request continues
     // the same LLM conversation as the main work, so the summary can refer

@@ -28,6 +28,15 @@ pub trait OpenCodeRunner: Send + Sync {
     ) -> Result<String>;
 }
 
+/// Capability for git worktree operations.
+#[async_trait]
+pub trait GitOps: Send + Sync {
+    /// Create a new detached worktree at `dest` rooted at the git repo under `base`.
+    async fn worktree_add(&self, base: &Path, dest: &Path) -> Result<()>;
+    /// Remove the worktree at `path`. Runs from the process cwd (the main repo root).
+    async fn worktree_remove(&self, path: &Path) -> Result<()>;
+}
+
 /// Capability for filesystem operations on goal storage.
 pub trait Filesystem: Send + Sync {
     fn read_to_string(&self, path: &Path) -> Result<String>;

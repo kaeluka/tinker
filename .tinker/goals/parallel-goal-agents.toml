@@ -1,0 +1,51 @@
+id = "parallel-goal-agents"
+summary = "governs: worktree-per-dispatch parallel execution model; runtime worktree lifecycle (create on dispatch; failure→runtime removes directly; post-merge→rummage signals @harness merge-done, runtime removes); rummage-owned merge (correctness first); cleanup-hook runs inside worktree | triggers: parallel agent execution; worktree infrastructure; merge strategy; dispatch throughput; worktree cleanup path"
+description = """
+## WHAT
+
+Goal agents run in parallel: each dispatch creates a fresh git
+worktree, the agent works there, and rummage merges the result back
+to the main working tree when the agent finishes. Rummage owns the
+merge — it decides ordering, resolves conflicts using its
+investigation capabilities, and applies a correctness-first rule: it
+will serialize or block rather than produce a corrupt merge.
+
+The runtime is responsible for the worktree lifecycle: create a
+worktree before dispatch, and call `worktree_remove` to clean it up.
+Cleanup path splits by outcome: on agent failure (`CleanupBlocked` or
+crash), the runtime detects this directly and removes the worktree
+immediately. On successful completion, rummage signals the runtime via
+`@harness merge-done <path>` once the merge is done; the runtime
+intercepts that signal and removes the worktree.
+
+The cleanup hook runs inside the worktree before the agent's first
+LLM turn — the scan must target the worktree's file tree, not the
+main working tree.
+
+## WHY
+
+The cascade chain — dispatch one agent, wait, run jog verification,
+dispatch the next — is the throughput bottleneck when rummage has
+multiple agents to run. Worktrees remove the shared-file hazard that
+forced serialization. Rummage is the right owner of the merge because
+it already knows what each agent was supposed to do, what files it
+touched, and how to investigate conflicts.
+
+## SCOPE
+- In scope: worktree lifecycle (create per dispatch, cleanup on
+  completion or failure); rummage merge step (ordering, conflict
+  resolution, correctness-first rule); parallel dispatch replacing the
+  serial goal-agent queue.
+- Out of scope: parallelism for tend, rummage, or jog (already
+  concurrent, don't write source files); cross-process worktree
+  persistence.
+"""
+parent_id = "goal-agents"
+
+[[related]]
+id = "rummage"
+reason = "Rummage owns the merge step — merges each agent's worktree back to the main tree, resolves conflicts using its investigation capabilities, and controls execution ordering with correctness first."
+
+[[related]]
+id = "cleanup-hook"
+reason = "The cleanup hook must run inside the worktree before the agent's first turn, not in the main working tree."
