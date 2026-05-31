@@ -360,7 +360,7 @@ mod tests {
         // otherwise running tinker against itself mangles its own source.
         let fs = crate::realfs::RealFilesystem;
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        for name in ["src/cleanup.rs", "src/tend.rs", "src/rummage.rs"] {
+        for name in ["src/cleanup.rs", "src/main.rs"] {
             let content = fs.read_to_string(&root.join(name)).unwrap();
             assert!(
                 !file_contains_marker(&content),

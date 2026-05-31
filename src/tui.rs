@@ -129,41 +129,13 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let (prompt, prompt_style): (String, Style) = match app.active_session.as_str() {
-        "tend" => {
-            if app.phase == Phase::Initializing || app.tend_tasks > 0 {
-                ("… ".to_string(), Style::default().fg(Color::DarkGray))
-            } else {
-                ("tend> ".to_string(), Style::default().fg(Color::Yellow))
-            }
-        }
-        "rummage" => {
-            if app.rummage_tasks > 0 {
-                ("… ".to_string(), Style::default().fg(Color::DarkGray))
-            } else {
-                ("rummage> ".to_string(), Style::default().fg(Color::Magenta))
-            }
-        }
-        "jog" => {
-            if app.jog_tasks > 0 {
-                ("… ".to_string(), Style::default().fg(Color::DarkGray))
-            } else {
-                ("jog> ".to_string(), Style::default().fg(Color::Blue))
-            }
-        }
-        id => (format!("{}> ", id), Style::default().fg(Color::Cyan)),
-    };
-    let input_locked = match app.active_session.as_str() {
-        "tend" => app.tend_tasks > 0 || app.phase == Phase::Initializing,
-        "rummage" => app.rummage_tasks > 0,
-        "jog" => app.jog_tasks > 0,
-        _ => false,
-    };
-    let input_text_style = if input_locked {
-        Style::default().fg(Color::DarkGray)
+    let (prompt, prompt_style) = if app.phase == Phase::Initializing {
+        ("… ".to_string(), Style::default().fg(Color::DarkGray))
     } else {
-        Style::default()
+        (format!("{}> ", app.active_session), Style::default().fg(Color::Cyan))
     };
+    let input_locked = app.phase == Phase::Initializing;
+    let input_text_style = if input_locked { Style::default().fg(Color::DarkGray) } else { Style::default() };
     let cursor = if !input_locked { "█" } else { "" };
 
     let max_input = (inner.height / 2).max(1);
@@ -183,15 +155,6 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut lines: Vec<Line> = vec![];
     for msg in &app.messages {
         push_message_lines(&mut lines, msg);
-    }
-    if !app.current_assistant_text.is_empty() {
-        push_assistant_text(&mut lines, &app.current_assistant_text);
-    }
-    if !app.rummage_current_text.is_empty() {
-        push_rummage_text(&mut lines, &app.rummage_current_text);
-    }
-    if !app.jog_current_text.is_empty() {
-        push_jog_text(&mut lines, &app.jog_current_text);
     }
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
     let total = paragraph.line_count(msg_area.width);
@@ -242,105 +205,12 @@ fn push_message_lines(lines: &mut Vec<Line<'static>>, msg: &crate::app::Message)
                 Span::raw(msg.text.clone()),
             ]));
         }
-        Role::Assistant => {
-            push_assistant_text(lines, &msg.text);
-        }
-        Role::RummageAssistant => {
-            push_rummage_text(lines, &msg.text);
-        }
-        Role::JogAssistant => {
-            push_jog_text(lines, &msg.text);
-        }
         Role::System => {
             lines.push(Line::from(vec![
                 Span::styled("sys    ", Style::default().fg(Color::Yellow)),
                 Span::styled(msg.text.clone(), Style::default().fg(Color::DarkGray)),
             ]));
         }
-    }
-}
-
-fn push_rummage_text(lines: &mut Vec<Line<'static>>, text: &str) {
-    for (i, line) in text.lines().enumerate() {
-        if i == 0 {
-            lines.push(Line::from(vec![
-                Span::styled(
-                    "rummage",
-                    Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                Span::raw(line.to_string()),
-            ]));
-        } else {
-            lines.push(Line::from(vec![
-                Span::raw("       "),
-                Span::raw(line.to_string()),
-            ]));
-        }
-    }
-}
-
-fn push_jog_text(lines: &mut Vec<Line<'static>>, text: &str) {
-    for (i, line) in text.lines().enumerate() {
-        if i == 0 {
-            lines.push(Line::from(vec![
-                Span::styled(
-                    "jog    ",
-                    Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(line.to_string()),
-            ]));
-        } else {
-            lines.push(Line::from(vec![
-                Span::raw("       "),
-                Span::raw(line.to_string()),
-            ]));
-        }
-    }
-}
-
-fn push_assistant_text(lines: &mut Vec<Line<'static>>, text: &str) {
-    let mut in_tool_call = false;
-    let mut label_rendered = false;
-    for raw_line in text.lines() {
-        push_assistant_text_segment(lines, raw_line, &mut in_tool_call, &mut label_rendered);
-    }
-}
-
-fn push_assistant_text_segment(
-    lines: &mut Vec<Line<'static>>,
-    line: &str,
-    in_tool_call: &mut bool,
-    label_rendered: &mut bool,
-) {
-    if line.starts_with("→ ") {
-        *in_tool_call = true;
-        lines.push(Line::from(vec![
-            Span::raw("       "),
-            Span::styled(line.to_string(), Style::default().fg(Color::DarkGray)),
-        ]));
-    } else if *in_tool_call && line.trim().is_empty() {
-        *in_tool_call = false;
-        lines.push(Line::from(vec![
-            Span::raw("       "),
-            Span::raw(""),
-        ]));
-    } else if *in_tool_call {
-        // Skip rendering subsequent lines of a tool call payload (crop to first line)
-    } else if !*label_rendered {
-        *label_rendered = true;
-        lines.push(Line::from(vec![
-            Span::styled(
-                "tend   ",
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(line.to_string()),
-        ]));
-    } else {
-        lines.push(Line::from(vec![
-            Span::raw("       "),
-            Span::raw(line.to_string()),
-        ]));
     }
 }
 
@@ -879,176 +749,6 @@ mod tests {
             "selected goal {} not visible at offset {} (height 3)",
             app.selected_goal,
             offset
-        );
-    }
-
-/// Spec (rummage / tui): rummage messages (Role::RummageAssistant) must be
-    /// rendered with a `rummage` speaker label in magenta+bold, not the tinker
-    /// green label, so the user always knows which agent is speaking.
-    #[test]
-    fn test_spec_rummage_messages_rendered_with_magenta_rummage_label() {
-        use crate::app::Message;
-        let msg = Message {
-            role: Role::RummageAssistant,
-            text: "Oh freddled gruntbuggly\nthy micturations are to me".to_string(),
-        };
-        let mut lines: Vec<Line> = vec![];
-        push_message_lines(&mut lines, &msg);
-        assert!(!lines.is_empty(), "rummage message must produce lines");
-        // First line must carry the `rummage` label span.
-        let label_span = lines[0].spans.iter().find(|s| s.content == "rummage");
-        assert!(label_span.is_some(), "first line must have a 'rummage' label span");
-        let label = label_span.unwrap();
-        assert_eq!(label.style.fg, Some(Color::Magenta), "rummage label must be Magenta");
-        assert!(
-            label.style.add_modifier.contains(Modifier::BOLD),
-            "rummage label must be bold",
-        );
-        // Second line (continuation) must NOT repeat the label.
-        assert!(
-            !lines[1].spans.iter().any(|s| s.content == "rummage"),
-            "continuation lines must not repeat the rummage label",
-        );
-    }
-
-    /// Spec (tui): tend messages (Role::Assistant) must be rendered with a
-    /// `tend` speaker label in green+bold, not the old "tinker" label.
-    #[test]
-    fn test_spec_tend_messages_rendered_with_tend_label() {
-        use crate::app::Message;
-        let msg = Message {
-            role: Role::Assistant,
-            text: "The failing test is in src/lib.rs\nLine 42 is the culprit.".to_string(),
-        };
-        let mut lines: Vec<Line> = vec![];
-        push_message_lines(&mut lines, &msg);
-        assert!(!lines.is_empty(), "tend message must produce lines");
-        let label_span = lines[0].spans.iter().find(|s| s.content.trim() == "tend");
-        assert!(label_span.is_some(), "first line must have a 'tend' label span");
-        let label = label_span.unwrap();
-        assert_eq!(label.style.fg, Some(Color::Green), "tend label must be Green");
-        assert!(
-            label.style.add_modifier.contains(Modifier::BOLD),
-            "tend label must be bold",
-        );
-        assert!(
-            !lines[0].spans.iter().any(|s| s.content.trim() == "tinker"),
-            "tend label must not use the old 'tinker' name",
-        );
-        assert!(
-            !lines[1].spans.iter().any(|s| s.content.trim() == "tend"),
-            "continuation lines must not repeat the tend label",
-        );
-    }
-
-    /// Spec (tui): "The conversation pane's input prompt carries a tag naming
-    /// the currently active agent." When active_agent is Rummage, the prompt
-    /// string must contain `rummage>`.
-    #[test]
-    fn test_spec_rummage_prompt_tag_in_tui_source() {
-        let tui_rs = include_str!("tui.rs");
-        assert!(
-            tui_rs.contains("rummage>"),
-            "TUI source must contain the rummage> prompt tag string",
-        );
-        assert!(
-            tui_rs.contains("tend>"),
-            "TUI source must contain the tend> prompt tag string",
-        );
-    }
-
-    /// Spec (jog / tui): jog messages (Role::JogAssistant) must be rendered
-    /// with a `jog    ` speaker label in blue+bold so the user knows which agent
-    /// is speaking.
-    #[test]
-    fn test_spec_jog_messages_rendered_with_blue_jog_label() {
-        use crate::app::Message;
-        let msg = Message {
-            role: Role::JogAssistant,
-            text: "What do you believe this feature does?\nAnd why is that the right behavior?".to_string(),
-        };
-        let mut lines: Vec<Line> = vec![];
-        push_message_lines(&mut lines, &msg);
-        assert!(!lines.is_empty(), "jog message must produce lines");
-        let label_span = lines[0].spans.iter().find(|s| s.content.trim() == "jog");
-        assert!(label_span.is_some(), "first line must have a 'jog' label span");
-        let label = label_span.unwrap();
-        assert_eq!(label.style.fg, Some(Color::Blue), "jog label must be Blue");
-        assert!(
-            label.style.add_modifier.contains(Modifier::BOLD),
-            "jog label must be bold",
-        );
-        assert!(
-            !lines[1].spans.iter().any(|s| s.content.trim() == "jog"),
-            "continuation lines must not repeat the jog label",
-        );
-    }
-
-    /// Spec (jog / tui): The TUI source must contain the `jog>` prompt tag string.
-    #[test]
-    fn test_spec_jog_prompt_tag_in_tui_source() {
-        let tui_rs = include_str!("tui.rs");
-        assert!(
-            tui_rs.contains("jog>"),
-            "TUI source must contain the jog> prompt tag string",
-        );
-    }
-
-    /// Spec (tui): "All orchestrator tool calls (bash, read, edit, etc.) shown
-    /// in the conversation pane are rendered in a grey/dim style to reduce
-    /// visual noise. Their payloads are summarized (cropped to the first line)."
-    /// Lines starting with `→ ` must render in DarkGray; subsequent payload
-    /// lines (before the next blank) must be omitted entirely.
-    #[test]
-    fn test_spec_tool_calls_rendered_grey_and_cropped() {
-        let text = "tinker said something\n→ bash echo hello\npayload line 2\n\nnormal text";
-        let mut lines: Vec<Line> = vec![];
-        push_assistant_text(&mut lines, text);
-
-        // Find the tool-call span (the `→ bash echo hello` line).
-        let tool_line = lines.iter().find(|l| {
-            l.spans.iter().any(|s| s.content.contains("→ bash echo hello"))
-        });
-        assert!(tool_line.is_some(), "tool call line must be rendered");
-        let tool_span = tool_line.unwrap().spans.iter()
-            .find(|s| s.content.contains("→ bash echo hello"))
-            .unwrap();
-        assert_eq!(
-            tool_span.style.fg,
-            Some(Color::DarkGray),
-            "tool call line must be DarkGray, got {:?}",
-            tool_span.style.fg,
-        );
-
-        // Payload line must be suppressed.
-        assert!(
-            !lines.iter().any(|l| l.spans.iter().any(|s| s.content.contains("payload line 2"))),
-            "tool call payload line must be cropped (not rendered)",
-        );
-
-        // Text after the blank following the tool call must still appear.
-        assert!(
-            lines.iter().any(|l| l.spans.iter().any(|s| s.content.contains("normal text"))),
-            "text after the tool call must still be rendered",
-        );
-    }
-
-    // spec (tui): when a tend reply opens with a tool call, the "tend" label must
-    // appear on the first prose line, not on the tool-call line (which would leave
-    // all real content unlabeled).
-    #[test]
-    fn test_spec_tend_label_appears_after_leading_tool_call() {
-        let text = "→ read src/lib.rs\npayload skipped\n\nHere is what I found.";
-        let mut lines: Vec<Line> = vec![];
-        push_assistant_text(&mut lines, text);
-        let label_line = lines.iter().find(|l| {
-            l.spans.iter().any(|s| s.content.trim() == "tend")
-        });
-        assert!(label_line.is_some(), "tend label must appear even when reply opens with a tool call");
-        let label_line = label_line.unwrap();
-        assert!(
-            label_line.spans.iter().any(|s| s.content.contains("Here is what I found.")),
-            "tend label must be on the first prose line, not the tool-call line",
         );
     }
 

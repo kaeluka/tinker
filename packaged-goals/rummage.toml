@@ -1,5 +1,6 @@
 id = "rummage"
-summary = "governs: rummage as technical advisor to all agents; pre-dispatch skeptical validation (probe codebase, counterexamples, @tend for intent gaps, dispatch with step-by-step instructions); investigation (hypothesis loop, falsification, tinker tests); intent question surface / code drift: mandatory @tend consult (ownership + goal compliance) before failing test + dispatch + jog verification | triggers: @tend handoff after goal write; any agent needing technical grounding; investigation; intent question vs code drift; scheduling goal agents"
+tier = "high"
+summary ="governs: rummage as technical advisor to all agents; pre-dispatch skeptical validation (probe codebase, counterexamples, @tend for intent gaps, dispatch with step-by-step instructions); investigation (hypothesis loop, falsification, tinker tests); intent question surface / code drift: mandatory @tend consult (ownership + goal compliance) before failing test + dispatch + jog verification | triggers: @tend handoff after goal write; any agent needing technical grounding; investigation; intent question vs code drift; scheduling goal agents"
 description = """
 ## WHAT
 

@@ -1,5 +1,5 @@
 id = "shared-language"
-summary = "governs: vocabulary standard for all user-facing surfaces (tend chat, session messages, READMEs, human-targeted comments); vocabulary.txt (tend owns/writes silently, sessions read); form norm (minimum viable shape, no unrequested tables/lists); LLM-targeted artifacts exempt | triggers: any user-facing output; deciding whether/how to use technical term; form of replies"
+summary = "governs: vocabulary standard for all user-facing surfaces (tend chat, session messages, READMEs, human-targeted comments); known = term in any goal or introduced by user in conversation; anchor unknown terms on first use; form norm (minimum viable shape, no unrequested tables/lists); LLM-targeted artifacts exempt | triggers: any user-facing output; deciding whether/how to use technical term; form of replies"
 description = """
 ## WHAT
 Tend uses shared vocabulary in every user-facing surface it
@@ -34,16 +34,11 @@ that shape. Formulaic template replies violate this rule regardless
 of length. Rummage's investigation documents are exempt — those
 grow as understanding does, by design.
 
-What counts as "known" is tracked in a persistent vocabulary file
-at `.tinker/state/vocabulary.txt` (the directory is created at
-startup). Tend fully owns this file: it updates the file silently
-via its file tools, never asks permission, and never mentions the
-file to the user. A term enters the file when the user explicitly
-mentions it, or when it is formally written into a goal. Goal
-sessions read the vocabulary file but never write to it; a session
-needing a term not yet in the file anchors it to a known concept on
-first use, same rule as tend chat. There is one vocabulary file,
-shared across all surfaces — no separate "doc vocabulary."
+What counts as "known" is determined by the goal tree: a term that
+appears in any goal file is in shared vocabulary. A term the user
+introduces during conversation is also known. Any other technical
+term must be anchored to a known architectural or feature concept
+on first use.
 
 ## WHY
 If tend assumes the user knows the internal codebase layout, it
@@ -63,17 +58,14 @@ what they receive is their only window into what's happening.
 ## SCOPE
 - In scope: tend chat; user-facing session messages; READMEs,
   guides, and other human-readable documentation goal sessions
-  write into the tree; human-targeted code comments; the persistent
-  `.tinker/state/vocabulary.txt` file and its startup-created
-  directory; deeper-technical documentation sections provided each
-  technical term is anchored on first use; the conversational form
-  norm (minimum viable shape; no unrequested tables, lists, or
-  multi-paragraph surveys; rummage documents exempt).
+  write into the tree; human-targeted code comments; deeper-technical
+  documentation sections provided each technical term is anchored
+  on first use; the conversational form norm (minimum viable shape;
+  no unrequested tables, lists, or multi-paragraph surveys; rummage
+  documents exempt).
 - Out of scope: artifacts authored for LLM consumption (e.g.
   `AGENTS.md`); implementation comments aimed at future LLM agents;
-  goal file contents themselves (LLM-consumed by goal sessions);
-  automated hooks to manage the vocabulary file (tend manages it
-  by hand).
+  goal file contents themselves (LLM-consumed by goal sessions).
 """
 parent_id = ""
 

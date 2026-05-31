@@ -1,5 +1,6 @@
 id = "jog"
-summary = "governs: layer-agnostic bidirectional discrepancy finder; forward check (N→N+1 coverage: bugs) and backward check (N+1→N provenance: points of interest); reading delegated to peer agents (@tend for spec, @rummage for code, user for intent); read-only consultation framing; per-run discrepancy log in .tinker/discrepancies/ | triggers: jog behavior; layer inference; read-only query framing; forward/backward check discipline; discrepancy log output"
+tier = "high"
+summary ="governs: layer-agnostic bidirectional discrepancy finder; forward check (N→N+1 coverage: bugs) and backward check (N+1→N provenance: points of interest); reading delegated to peer agents (@tend for spec, @rummage for code, user for intent); read-only consultation framing; per-run discrepancy log in .tinker/discrepancies/ | triggers: jog behavior; layer inference; read-only query framing; forward/backward check discipline; discrepancy log output"
 description = """
 ## WHAT
 

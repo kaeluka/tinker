@@ -5,9 +5,6 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Role {
     User,
-    Assistant,
-    RummageAssistant,
-    JogAssistant,
     System,
 }
 
@@ -106,32 +103,19 @@ pub enum Phase {
 
 pub struct App {
     pub messages: Vec<Message>,
-    pub current_assistant_text: String,
     pub input: String,
     pub goals: Vec<Goal>,
-    /// All `.tinker` directories discovered at startup (cwd + ancestors).
     pub tinker_dirs: Vec<PathBuf>,
-    /// Currently-failing TOML files: (path, short error). Used to deduplicate
-    /// system messages so each new failure is announced once.
     pub parse_errors: Vec<(PathBuf, String)>,
     pub selected_goal: usize,
     pub active_goal_id: Option<String>,
     pub goal_logs: HashMap<String, String>,
-    pub tend_session_id: Option<String>,
-    /// How many tend LLM tasks are currently running or queued.
-    pub tend_tasks: usize,
-    /// Trigger reason for the currently-running goal session.
-    /// Cleared when the session finishes or is blocked.
     pub active_goal_reason: Option<String>,
-    /// Set to true after the user sends their first REPL message.
-    /// Once true, the cold-start scheduling filter is disabled.
     pub user_has_interacted: bool,
     pub phase: Phase,
     /// How many times we've asked tend to fix a parse error in this
     /// edit cycle. Reset on a fresh user message or a clean Done.
     pub correction_attempts: u8,
-    /// Per-session accumulated text since the last Done event. Used to
-    /// detect `@`-blocks for peer consultation routing. Cleared on Done.
     pub current_session_text: HashMap<String, String>,
     pub focus: Focus,
     pub should_quit: bool,
@@ -139,30 +123,15 @@ pub struct App {
     pub log_scroll: ScrollState,
     pub goal_text_scroll: ScrollState,
     pub goal_list_scroll: ScrollState,
-    /// When `Some`, the reason-prompt modal is open; all keys route to it
-    /// until submit/cancel. The previous `focus` is preserved unchanged.
     pub modal: Option<ModalState>,
     /// Which session currently receives the user's REPL input (goal-id string).
     pub active_session: String,
-    /// Streaming text buffer for the rummage agent (analogous to `current_assistant_text`).
-    pub rummage_current_text: String,
-    /// Rummage session ID for in-process turn resumption.
-    pub rummage_session_id: Option<String>,
-    /// How many rummage LLM tasks are currently running.
-    pub rummage_tasks: usize,
-    /// Streaming text buffer for the jog agent (analogous to `current_assistant_text`).
-    pub jog_current_text: String,
-    /// Jog session ID for in-process turn resumption.
-    pub jog_session_id: Option<String>,
-    /// How many jog LLM tasks are currently running.
-    pub jog_tasks: usize,
 }
 
 impl App {
     pub fn new() -> Self {
         Self {
             messages: vec![],
-            current_assistant_text: String::new(),
             input: String::new(),
             goals: vec![],
             tinker_dirs: vec![],
@@ -171,8 +140,6 @@ impl App {
             active_goal_id: None,
             active_goal_reason: None,
             goal_logs: HashMap::new(),
-            tend_session_id: None,
-            tend_tasks: 0,
             user_has_interacted: false,
             phase: Phase::Initializing,
             correction_attempts: 0,
@@ -193,50 +160,11 @@ impl App {
             },
             modal: None,
             active_session: "tend".to_string(),
-            rummage_current_text: String::new(),
-            rummage_session_id: None,
-            rummage_tasks: 0,
-            jog_current_text: String::new(),
-            jog_session_id: None,
-            jog_tasks: 0,
         }
     }
 
     pub fn push_user_message(&mut self, text: &str) {
         self.messages.push(Message { role: Role::User, text: text.to_string() });
-    }
-
-    pub fn append_assistant_chunk(&mut self, chunk: &str) {
-        self.current_assistant_text.push_str(chunk);
-    }
-
-    pub fn finalize_assistant_message(&mut self) {
-        if !self.current_assistant_text.is_empty() {
-            let text = std::mem::take(&mut self.current_assistant_text);
-            self.messages.push(Message { role: Role::Assistant, text });
-        }
-    }
-
-    pub fn append_rummage_chunk(&mut self, chunk: &str) {
-        self.rummage_current_text.push_str(chunk);
-    }
-
-    pub fn finalize_rummage_message(&mut self) {
-        if !self.rummage_current_text.is_empty() {
-            let text = std::mem::take(&mut self.rummage_current_text);
-            self.messages.push(Message { role: Role::RummageAssistant, text });
-        }
-    }
-
-    pub fn append_jog_chunk(&mut self, chunk: &str) {
-        self.jog_current_text.push_str(chunk);
-    }
-
-    pub fn finalize_jog_message(&mut self) {
-        if !self.jog_current_text.is_empty() {
-            let text = std::mem::take(&mut self.jog_current_text);
-            self.messages.push(Message { role: Role::JogAssistant, text });
-        }
     }
 
     pub fn push_system_message(&mut self, text: &str) {
