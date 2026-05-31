@@ -51,15 +51,19 @@ fn tend_agent_content() -> String {
 
 fn tend_init_prompt(goals_summary: &str) -> String {
     format!(
-        r#"## Current goals (compact index — pull full text on demand)
-{goals_summary}"#
+        "## Current goals (compact index — pull full text on demand)\n{goals_summary}\n\n\
+         ---\n\n\
+         **Startup.** This is a regular startup. Wait for the user's first instruction — \
+         produce no output, no greeting, no acknowledgement."
     )
 }
 
 fn tend_init_prompt_full_context(goals_summary: &str) -> String {
     format!(
-        r#"## Current goals (full text)
-{goals_summary}"#
+        "## Current goals (full text)\n{goals_summary}\n\n\
+         ---\n\n\
+         **Startup.** This is a regular startup. Wait for the user's first instruction — \
+         produce no output, no greeting, no acknowledgement."
     )
 }
 
@@ -790,7 +794,11 @@ fn handle_session_event(
     match ev {
         SessionEvent::Chunk { goal_id, text } => {
             app.append_goal_log(&goal_id, &text);
-            app.append_agent_message(&goal_id, &text);
+            // Suppress tend's startup output from the conversation pane until
+            // the user has typed their first message.
+            if goal_id != "tend" || app.user_has_interacted {
+                app.append_agent_message(&goal_id, &text);
+            }
             app.current_session_text.entry(goal_id).or_default().push_str(&text);
         }
         SessionEvent::Done { goal_id } => {
@@ -2156,6 +2164,68 @@ mod tests {
     fn test_spec_tinker_prompt_related_links_symmetric_both_list_each_other() {
         let content = tend_agent_content();
         assert!(content.contains("Re-validate related-link symmetry"), "prompt must include a 'Re-validate related-link symmetry' step");
+    }
+
+    // spec (tend, goal-agents): the startup-silence init prompt must instruct
+    // tend to produce no output on startup. Both compact and full-context variants
+    // must carry this instruction so the TUI suppression is paired with a
+    // corresponding model instruction, not just a rendering gate.
+    #[test]
+    fn test_spec_tend_startup_silence_prompt_instructs_no_output() {
+        let compact = tend_init_prompt("[]");
+        assert!(
+            compact.contains("no output") || compact.contains("produce no"),
+            "compact startup prompt must instruct tend to produce no output",
+        );
+        let full = tend_init_prompt_full_context("[]");
+        assert!(
+            full.contains("no output") || full.contains("produce no"),
+            "full-context startup prompt must instruct tend to produce no output",
+        );
+    }
+
+    // spec (tui, goal-agents): tend's startup chunks (before the user's first
+    // message) must NOT appear in the conversation pane (app.messages) but MUST
+    // still land in the session log (app.goal_logs). After the user interacts,
+    // chunks from tend flow into the conversation pane normally.
+    #[test]
+    fn test_spec_tend_startup_chunks_suppressed_until_user_interacted() {
+        use crate::app::Role;
+        use crate::goal_session::SessionEvent;
+
+        let mut app = App::new();
+        assert!(!app.user_has_interacted, "user_has_interacted must start false");
+
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let senders = HashMap::new();
+        let log = logger::noop_sender();
+
+        // Tend produces a startup chunk before the user has typed anything.
+        let ev = SessionEvent::Chunk { goal_id: "tend".to_string(), text: "hello startup".to_string() };
+        handle_session_event(&mut app, ev, &spawn_tx, &senders, &RealFilesystem, &log);
+
+        // Must land in goal_logs (session log pane).
+        assert!(
+            app.goal_logs.get("tend").map(|s| s.contains("hello startup")).unwrap_or(false),
+            "startup chunk must appear in goal_logs (log pane)",
+        );
+        // Must NOT appear in messages (conversation pane).
+        assert!(
+            !app.messages.iter().any(|m| matches!(&m.role, Role::Agent(id) if id == "tend")),
+            "startup chunk must not appear in conversation pane before user interaction",
+        );
+
+        // After the user sends their first message, tend's chunks appear normally.
+        app.user_has_interacted = true;
+        let ev2 = SessionEvent::Chunk { goal_id: "tend".to_string(), text: "hello user".to_string() };
+        handle_session_event(&mut app, ev2, &spawn_tx, &senders, &RealFilesystem, &log);
+
+        assert!(
+            app.messages.iter().any(|m| {
+                matches!(&m.role, Role::Agent(id) if id == "tend") && m.text.contains("hello user")
+            }),
+            "post-interaction chunk must appear in conversation pane",
+        );
     }
 
 }

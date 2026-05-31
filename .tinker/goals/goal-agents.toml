@@ -1,5 +1,5 @@
 id = "goal-agents"
-summary = "governs: uniform session registry — every goal is a structurally identical process-scoped addressable agent; @goal-id universal dispatch; two tend-only exceptions (eager start, parse-correction loop); framework preamble (incl. dispatcher-report rule and agent-collaboration requirement); dispatcher-provided init sections (spec diff + code inventory when rummage dispatches); tier field in goal TOML; structured summary requirement; .tinker/ write prohibition | triggers: session registry; @-dispatch routing; agent init; tier field; tend exception boundaries; session output requirements"
+summary = "governs: uniform session registry — every goal is a structurally identical process-scoped addressable agent; @goal-id universal dispatch; two tend-only exceptions (eager start + startup-silence message + TUI suppression; parse-correction loop); framework preamble (incl. dispatcher-report rule and agent-collaboration requirement); dispatcher-provided init sections (spec diff + code inventory when rummage dispatches); tier field in goal TOML; structured summary requirement; .tinker/ write prohibition | triggers: session registry; @-dispatch routing; agent init; tier field; tend exception boundaries; session output requirements"
 description = """
 ## WHAT
 Tinker's agent architecture follows one rule: **every goal is a
@@ -12,9 +12,14 @@ the runtime routes it to the named entry.
 
 Tend has exactly **two structural exceptions**, and no others are
 justified:
-1. **Starts eagerly** on process init — it must be ready before the
-   user types anything. All other sessions start lazily on first
-   `@goal-id` message.
+1. **Starts eagerly, with startup-silence.** Tend starts on process
+   init so it is ready before the user types anything. Immediately
+   after init, tend receives a startup-silence message: a single
+   prompt telling it this is a regular startup and to produce no
+   output — just await the user's first instruction. The TUI does not
+   render tend's response to this message in the conversation pane.
+   All other sessions start lazily on first `@goal-id` message and
+   receive no startup message.
 2. **Handles goal-file parse corrections** — when a goal write
    produces a malformed file, tend is re-queued with correction
    instructions (up to two attempts). No other agent triggers this
@@ -117,9 +122,12 @@ producing output in the same event stream.
 
 The two tend exceptions are real: the user must have something to
 talk to on startup, and goal-file integrity requires a corrective loop
-after writes. No other exceptions are justified and none should be
-added without explicit user confirmation that they belong in the
-architecture.
+after writes. The startup-silence message is part of the first
+exception — tend starts eagerly precisely because the user needs it
+ready, but without a silence instruction it would produce unsolicited
+output before the user has typed anything. No other exceptions are
+justified and none should be added without explicit user confirmation
+that they belong in the architecture.
 
 The dispatcher-provided init sections (spec diff + code inventory)
 close the information gap that makes large refactors fail: without
@@ -138,8 +146,9 @@ standard without relying on the session's general good behavior.
 ## SCOPE
 - In scope: the session registry and `SessionEntry` type; `@goal-id`
   as the universal dispatch; the exactly-two tend exceptions (eager
-  start, parse-correction loop) and their boundaries; framework
-  preamble injected before every session's goal description; the
+  start + startup-silence message + TUI suppression of startup output;
+  parse-correction loop) and their boundaries; framework preamble
+  injected before every session's goal description; the
   dispatcher-provided init sections (spec diff + code inventory) and
   their role in diff-aware dispatch; `tier` field in goal TOML; the
   unified `SessionEvent` enum and single run-loop receiver dispatching
@@ -174,7 +183,7 @@ reason = "the tier field added by this goal extends the goal TOML schema that go
 
 [[related]]
 id = "tui"
-reason = "the session registry and unified event stream change what the TUI renders; /<goal-id> switching and session log rendering are governed by tui."
+reason = "the session registry, unified event stream, and startup-silence message change what the TUI renders; /<goal-id> switching, session log rendering, and suppression of tend's startup output from the conversation pane are governed by tui."
 
 [[related]]
 id = "backends"
@@ -182,7 +191,7 @@ reason = "the session registry and unified runner task change the session manage
 
 [[related]]
 id = "tend"
-reason = "tend is the only agent with structural exceptions in the registry (eager start, parse-correction loop). Those two exceptions and nothing more are what make tend different from any other session entry."
+reason = "tend is the only agent with structural exceptions in the registry (eager start + startup-silence message + TUI suppression; parse-correction loop). Those two exceptions and nothing more are what make tend different from any other session entry."
 
 [[related]]
 id = "coding-standards"

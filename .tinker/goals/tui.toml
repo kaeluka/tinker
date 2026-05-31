@@ -1,5 +1,5 @@
 id = "tui"
-summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); queue markers (▶ running, [N] queued); auto-follow scroll; active-agent tag (<goal-id>>); /<goal-id> switches active session; each agent's messages labeled with goal-id; modal trigger-reason dialog; dim tool-call rendering | triggers: TUI layout/rendering changes; queue display; scroll behavior; agent-switch UX; message label rendering"
+summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); queue markers (▶ running, [N] queued); auto-follow scroll; active-agent tag (<goal-id>>); /<goal-id> switches active session; each agent's messages labeled with goal-id; modal trigger-reason dialog; dim tool-call rendering; startup output suppression (tend's startup response not rendered in conversation pane) | triggers: TUI layout/rendering changes; queue display; scroll behavior; agent-switch UX; message label rendering; startup output suppression"
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left
@@ -17,6 +17,11 @@ carry the goal-id as a label. Tend's tool calls (bash, read,
 edit, etc.) render in dim grey with payloads cropped to their first
 line, so multi-line output doesn't flood the thread. System messages
 from agent-to-agent exchanges also render in grey.
+
+Tend's startup output — produced in response to its startup-silence
+init message, before the user has typed anything — is not rendered
+in the conversation pane. The first entry the user sees is their own
+first message.
 
 In the goal list, only the list is selectable — the text beneath is
 read-and-scroll only. Keyboard navigation auto-scrolls the list so
@@ -73,6 +78,10 @@ is doing what it's doing. Queue markers render dim for the inverse
 reason — they're ambient status, and a bright marker would compete
 with the goal name that carries the actual meaning.
 
+Suppressing tend's startup output follows the same principle: that
+output is internal scaffolding, not conversation. The user opened
+tinker to type something, not to read tend orienting itself.
+
 The queue surface is read-only by deliberate choice: the user
 wanted to see what's queued without being able to cancel, reorder,
 or pause it. Queue control is a separate concern, deferred until
@@ -89,7 +98,8 @@ there's a real need.
   the goal-text region; the active-session input-prompt tag and
   message routing; each agent's messages labeled with the goal-id;
   `/<goal-id>` slash commands that switch the active session to any
-  entry in the session registry.
+  entry in the session registry; suppression of tend's startup output
+  from the conversation pane (before the user's first message).
 - Out of scope: themes, syntax highlighting, layout
   configurability, syncing the interface to a remote viewer; any
   interactive manipulation of the queue (cancel, reorder, pause,
@@ -101,7 +111,7 @@ children = []
 
 [[related]]
 id = "goal-agents"
-reason = "goal-agents defines the session registry that makes /<goal-id> switching universal. Every entry in the registry is a valid target for the active-session switch."
+reason = "goal-agents defines the session registry (making /<goal-id> switching universal) and specifies the startup-silence exception for tend. TUI suppression of tend's startup output from the conversation pane is governed here."
 
 [[related]]
 id = "coding-standards"
