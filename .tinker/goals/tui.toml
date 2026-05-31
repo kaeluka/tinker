@@ -1,5 +1,5 @@
 id = "tui"
-summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); queue markers (▶ running, [N] queued); auto-follow scroll; active-agent tag (<goal-id>>); /<goal-id> switches active session; each agent's messages labeled with goal-id; modal trigger-reason dialog; dim tool-call rendering; startup output suppression (tend's startup response not rendered in conversation pane) | triggers: TUI layout/rendering changes; queue display; scroll behavior; agent-switch UX; message label rendering; startup output suppression"
+summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); per-session conversation view (user inputs + agent output per session; system notifications global; full history loads on switch); auto-follow scroll; active-agent tag (<goal-id>>); /<goal-id> switches active session; each agent's messages labeled with goal-id; modal trigger-reason dialog | triggers: TUI layout/rendering changes; scroll behavior; agent-switch UX; message label rendering; per-session filtering"
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left
@@ -13,10 +13,16 @@ In the conversation, an input-prompt tag names the active session
 Any session in the registry can be activated with `/<goal-id>` —
 this includes tend, rummage, jog, and any goal agent. The active
 session receives whatever the user types next. Each agent's messages
-carry the goal-id as a label. Tend's tool calls (bash, read,
-edit, etc.) render in dim grey with payloads cropped to their first
-line, so multi-line output doesn't flood the thread. System messages
-from agent-to-agent exchanges also render in grey.
+carry the goal-id as a label.
+
+The conversation pane is a **per-session view**: each session has its
+own history of inputs the user sent to it, the session's responses,
+and system notifications. System notifications are global — they
+appear in every session's view. User inputs and agent output belong
+to the session they were exchanged with. Switching to a different
+session with `/<goal-id>` immediately loads that session's full
+accumulated conversation into the pane, then streams new output from
+that session going forward.
 
 Tend's startup output — produced in response to its startup-silence
 init message, before the user has typed anything — is not rendered
@@ -38,19 +44,6 @@ under the cursor. New content keeps the view pinned to the bottom;
 scrolling up disables auto-follow until the user scrolls back down,
 where it re-engages.
 
-**Queue visibility.** When goals have running or pending sessions,
-the goal list marks them: a distinct glyph (`▶`) for the
-currently-running goal, a bracketed integer (`[1]`, `[2]`) for each
-goal's next queued position. A goal with several pending
-invocations shows only its *next* index — never multiple numbers —
-so the list stays uncluttered. Markers render dim/grey so they
-don't dominate the goal name. When a marked goal is selected, the
-goal-text region appends a section beneath the description listing
-every pending invocation for that goal in queue order — running
-first, then queued — each line carrying its glyph or index and
-trigger reason. In the idle state (empty queue, nothing running) no
-markers appear and the goal-text region shows only the description.
-
 **Manual triggers.** When the user triggers a goal by hand — Enter
 in the goal list — a modal text-input dialog collects the trigger
 reason.
@@ -62,48 +55,44 @@ standing intent, and what the goal sessions are actually doing, all
 at once. The three-region layout keeps all of that visible without
 configuration.
 
+The per-session conversation view keeps the REPL focused: if output
+from all background sessions accumulated together, the thread the
+user is following would be buried. The conversation pane is a chat
+with one agent at a time; the session log pane is where background
+activity is observable. Switching sessions loads the full history so
+the user never loses context when returning to a previous thread.
+User inputs belong to the session they were sent to — not to a global
+transcript — because a message typed in the `tend>` context has no
+meaning in a `rummage>` thread.
+
 The `/<goal-id>` switching mechanism extends naturally from the
 original three named agents to the whole registry — any goal is
 directly addressable from the keyboard. The session log pane stays
 independent so the user can monitor a goal agent passively while
 conversing with a different session.
 
-The rendering choices serve legibility under live streaming. Tool
-calls and agent-to-agent system messages render dim because
-they're scaffolding, not the conversation the user is following;
-cropping tool payloads to one line keeps multi-line output from
-burying the thread. Trigger reasons render bold in the session log
-because they're the one piece of context explaining why a session
-is doing what it's doing. Queue markers render dim for the inverse
-reason — they're ambient status, and a bright marker would compete
-with the goal name that carries the actual meaning.
-
-Suppressing tend's startup output follows the same principle: that
-output is internal scaffolding, not conversation. The user opened
-tinker to type something, not to read tend orienting itself.
-
-The queue surface is read-only by deliberate choice: the user
-wanted to see what's queued without being able to cancel, reorder,
-or pause it. Queue control is a separate concern, deferred until
-there's a real need.
+Tend's startup output is not rendered because it is internal
+scaffolding, not conversation. The user opened tinker to type
+something, not to read tend orienting itself.
 
 ## SCOPE
 - In scope: the two-column layout at fixed 25%/50%/25% right-side
   proportions; live streaming of conversation and session output;
-  mouse-wheel scrolling with auto-follow; keyboard goal-list
-  navigation with edge scrolling; dim/cropped tool-call rendering;
-  grey rendering of agent-to-agent system messages; the modal
+  per-session conversation filtering (each session's view contains
+  the inputs sent to it and its responses; system notifications are
+  global and appear in every session's view; full accumulated history
+  loaded on session switch); mouse-wheel scrolling with auto-follow;
+  keyboard goal-list navigation with edge scrolling; the modal
   trigger-reason dialog; bold trigger reasons in the session log;
-  queue markers in the goal list and pending-invocation listing in
-  the goal-text region; the active-session input-prompt tag and
-  message routing; each agent's messages labeled with the goal-id;
-  `/<goal-id>` slash commands that switch the active session to any
-  entry in the session registry; suppression of tend's startup output
-  from the conversation pane (before the user's first message).
-- Out of scope: themes, syntax highlighting, layout
-  configurability, syncing the interface to a remote viewer; any
-  interactive manipulation of the queue (cancel, reorder, pause,
-  clear) — the queue surface is read-only.
+  the active-session input-prompt tag and message routing; each
+  agent's messages labeled with the goal-id; `/<goal-id>` slash
+  commands that switch the active session to any entry in the session
+  registry; suppression of tend's startup output from the
+  conversation pane (before the user's first message).
+- Out of scope: themes, syntax highlighting, layout configurability,
+  syncing the interface to a remote viewer; queue display (queue
+  infrastructure removed); tool-call dim rendering (removed due to
+  rendering artifacts).
 
 """
 parent_id = ""

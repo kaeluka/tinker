@@ -1024,6 +1024,7 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                 if let Some(id) = input.strip_prefix('/') {
                     if known_session_ids.iter().any(|&s| s == id) {
                         app.active_session = id.to_string();
+                        app.repl_scroll.y = None;
                         let msg = format!("switched to {} — type to chat, /<goal-id> to switch", id);
                         app.push_system_message(&msg);
                         log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: msg });
@@ -1033,11 +1034,10 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                     // Unknown slash command: fall through as ordinary input.
                 }
 
-                app.push_user_message(&input);
+                let session_id = app.active_session.clone();
+                app.push_user_message(&input, &session_id);
                 app.input.clear();
                 app.user_has_interacted = true;
-
-                let session_id = app.active_session.clone();
                 if session_id == "tend" {
                     app.correction_attempts = 0;
                 }
@@ -1435,6 +1435,18 @@ mod tests {
             app.messages.iter().any(|m| m.role == Role::System && m.text.contains("rummage")),
             "/rummage must emit a system message naming rummage",
         );
+    }
+
+    /// Spec (tui): switching session resets the REPL scroll to the tail so
+    /// the new session's most recent output is immediately visible.
+    #[test]
+    fn test_spec_session_switch_resets_repl_scroll() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.repl_scroll.y = Some(42);
+        app.input = "/rummage".into();
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.repl_scroll.y, None, "session switch must reset repl_scroll to follow-tail (None)");
     }
 
     // spec (rummage): `/tend` switches back from rummage to tend.

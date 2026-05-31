@@ -154,7 +154,13 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let mut lines: Vec<Line> = vec![];
     for msg in &app.messages {
-        push_message_lines(&mut lines, msg);
+        let visible = match &msg.role {
+            Role::System => true,
+            Role::User(id) | Role::Agent(id) => id == &app.active_session,
+        };
+        if visible {
+            push_message_lines(&mut lines, msg);
+        }
     }
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
     let total = paragraph.line_count(msg_area.width);
@@ -196,7 +202,7 @@ fn input_pane_layout(prompt: &str, input: &str, cursor: &str, width: u16, max: u
 
 fn push_message_lines(lines: &mut Vec<Line<'static>>, msg: &crate::app::Message) {
     match &msg.role {
-        Role::User => {
+        Role::User(_) => {
             lines.push(Line::from(vec![
                 Span::styled(
                     "you    ",
@@ -730,6 +736,73 @@ mod tests {
             Some(Color::DarkGray),
             "triggered: system message must be rendered in grey (DarkGray)",
         );
+    }
+
+    fn apply_filter<'a>(messages: &'a [&'a crate::app::Message], active_session: &str) -> Vec<Line<'static>> {
+        let mut lines: Vec<Line> = vec![];
+        for msg in messages {
+            let visible = match &msg.role {
+                Role::System => true,
+                Role::User(id) | Role::Agent(id) => id == active_session,
+            };
+            if visible {
+                push_message_lines(&mut lines, msg);
+            }
+        }
+        lines
+    }
+
+    /// Spec (tui): per-session view — Agent messages from inactive sessions
+    /// must not appear; active-session Agent messages must appear.
+    #[test]
+    fn test_spec_repl_filters_out_inactive_session_messages() {
+        let tend_agent = crate::app::Message {
+            role: Role::Agent("tend".to_string()),
+            text: "tend reply".to_string(),
+        };
+        let rummage_agent = crate::app::Message {
+            role: Role::Agent("rummage".to_string()),
+            text: "rummage reply".to_string(),
+        };
+        let lines = apply_filter(&[&tend_agent, &rummage_agent], "tend");
+        let has_tend = lines.iter().any(|l| l.spans.iter().any(|s| s.content.contains("tend reply")));
+        let has_rummage = lines.iter().any(|l| l.spans.iter().any(|s| s.content.contains("rummage reply")));
+        assert!(has_tend, "active session (tend) agent messages must appear");
+        assert!(!has_rummage, "inactive session (rummage) agent messages must not appear");
+    }
+
+    /// Spec (tui): System messages are global — they appear in every session's
+    /// view regardless of which session is active.
+    #[test]
+    fn test_spec_repl_shows_system_messages_in_all_sessions() {
+        let system_msg = crate::app::Message {
+            role: Role::System,
+            text: "system note".to_string(),
+        };
+        let lines = apply_filter(&[&system_msg], "rummage");
+        assert!(
+            lines.iter().any(|l| l.spans.iter().any(|s| s.content.contains("system note"))),
+            "System messages must appear regardless of active session",
+        );
+    }
+
+    /// Spec (tui): User messages are per-session — a user message sent to an
+    /// inactive session must not appear in the active session's view.
+    #[test]
+    fn test_spec_repl_hides_user_messages_from_inactive_sessions() {
+        let tend_user = crate::app::Message {
+            role: Role::User("tend".to_string()),
+            text: "tend input".to_string(),
+        };
+        let rummage_user = crate::app::Message {
+            role: Role::User("rummage".to_string()),
+            text: "rummage input".to_string(),
+        };
+        let lines = apply_filter(&[&tend_user, &rummage_user], "tend");
+        let has_tend = lines.iter().any(|l| l.spans.iter().any(|s| s.content.contains("tend input")));
+        let has_rummage = lines.iter().any(|l| l.spans.iter().any(|s| s.content.contains("rummage input")));
+        assert!(has_tend, "user message for active session (tend) must appear");
+        assert!(!has_rummage, "user message for inactive session (rummage) must not appear");
     }
 
     /// `reset_to_top` anchors at the top — used for the goal-description

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Role {
-    User,
+    User(String),
     System,
     Agent(String),
 }
@@ -168,8 +168,8 @@ impl App {
         }
     }
 
-    pub fn push_user_message(&mut self, text: &str) {
-        self.messages.push(Message { role: Role::User, text: text.to_string() });
+    pub fn push_user_message(&mut self, text: &str, session_id: &str) {
+        self.messages.push(Message { role: Role::User(session_id.to_string()), text: text.to_string() });
     }
 
     pub fn push_system_message(&mut self, text: &str) {
