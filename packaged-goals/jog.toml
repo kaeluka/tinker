@@ -59,8 +59,8 @@ id = "rummage"
 reason = "Jog sends read-only @rummage queries to read the code layer during discrepancy runs — no investigation, no dispatch. When triggered by rummage post-dispatch, jog returns its done report to rummage via @rummage."
 
 [[related]]
-id = "agent-complementarity"
-reason = "Jog's profile is named there as the layer-agnostic backward checker — bidirectional discrepancy finding via read-only delegation. Pull `agent-complementarity` when auditing whether a workload should route to jog."
+id = "goal-complementarity"
+reason = "Jog's domain is named there as one of the anchor boundaries. Pull `goal-complementarity` when auditing whether a workload should route to jog."
 
 [[related]]
 id = "shared-language"

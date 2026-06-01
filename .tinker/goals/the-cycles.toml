@@ -1,5 +1,5 @@
 id = "the-cycles"
-summary = "governs: intent↔spec↔code cycle (forward: generation; backward: verification); producer/skeptic axis (tend+goal-agents vs rummage+jog); adjacency ownership (intent↔spec: tend+jog; spec↔code: goal-agents+rummage); input-observability axis; agent-complementarity as design principle | triggers: understanding where agents fit in cycle; commissioning across adjacencies; framing new agents; auditing profile complementarity"
+summary = "governs: intent↔spec↔code cycle (forward: generation; backward: verification); producer/skeptic axis (tend+goal-agents vs rummage+jog); adjacency ownership (intent↔spec: tend+jog; spec↔code: goal-agents+rummage); input-observability axis; goal-complementarity as design principle | triggers: understanding where goals fit in cycle; commissioning across adjacencies; framing new goals; auditing domain complementarity"
 description = """
 ## WHAT
 The map of tinker's agents onto the intent↔spec↔code cycle. The
@@ -36,9 +36,9 @@ Two axes cross-cut all agents:
   input to operate. The dividing line is whether the agent's input
   layer requires drawing out human intent.
 
-The design principle governing how profiles are assigned and kept
-complementary lives in `agent-complementarity`. The session registry
-making every agent uniformly addressable lives in `goal-agents`.
+The design principle governing how goal domains are assigned and kept
+complementary lives in `goal-complementarity`. The session registry
+making every goal uniformly addressable lives in `goal-agents`.
 
 ## WHY
 This model was the framing every agent was designed against, yet it
@@ -70,7 +70,7 @@ and traced back to the intent that justified it.
   principle goals (`the-false-promise`, `creative-process`, and the
   rest) under this node — they are principles, not agents; profile
   complementarity as a design constraint (lives in
-  `agent-complementarity`).
+  `goal-complementarity`).
 """
 parent_id = ""
 
@@ -83,8 +83,8 @@ id = "user-system-interaction"
 reason = "This stack is the layered form of `user-system-interaction`'s should/is split: layer 1 (intent) is the user's *should*; layers 2–3 (spec, code) are the *is* tinker holds. The input-observability axis — which agents must work with the user because their inputs require drawing out human intent — is the agent-architecture consequence of that boundary."
 
 [[related]]
-id = "agent-complementarity"
-reason = "The complementarity principle governs how agent profiles are assigned and kept distinct across the cycle. `agent-complementarity` is the design constraint that makes the four-agent structure non-arbitrary. Asymmetric: `agent-complementarity` is a global goal and cannot carry a back-link to this project-local goal."
+id = "goal-complementarity"
+reason = "The complementarity principle governs how goal domains are assigned and kept distinct across the cycle. `goal-complementarity` is the design constraint that makes the four-goal structure non-arbitrary. Asymmetric: `goal-complementarity` is a global goal and cannot carry a back-link to this project-local goal."
 
 [[related]]
 id = "tend"

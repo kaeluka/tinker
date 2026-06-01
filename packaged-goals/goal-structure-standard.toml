@@ -108,5 +108,5 @@ id = "tend"
 reason = "The summary write protocol (terse, governs+triggers format, written on every goal creation and edit) is part of tend's write procedure. Both goals apply on every edit: this goal for structural integrity, tend for summary authoring."
 
 [[related]]
-id = "agent-complementarity"
-reason = "Goals are agents; the complementarity principle implies goals should be orthogonal — each owning a distinct domain, none encroaching on another's. This goal is where orthogonal placement is enforced structurally; `agent-complementarity` is the design rationale."
+id = "goal-complementarity"
+reason = "Goals are agents; the complementarity principle requires each to own a distinct domain. This goal is where orthogonal placement is enforced structurally; `goal-complementarity` is the design rationale."

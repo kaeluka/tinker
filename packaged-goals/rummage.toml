@@ -52,8 +52,8 @@ id = "tend"
 reason = "Rummage's intent-reading arm — consult @tend for intent question vs code drift disambiguation, ownership resolution, and intentionality checks. Tend also delivers old spec + new spec at handoff, which rummage uses to compute the spec diff."
 
 [[related]]
-id = "agent-complementarity"
-reason = "Rummage's profile is named there as the technical arm — skeptical analysis, investigation, code-reality grounding. Pull `agent-complementarity` when auditing whether a workload should route to rummage or stay with another agent."
+id = "goal-complementarity"
+reason = "Rummage's domain is named there as one of the anchor boundaries. Pull `goal-complementarity` when auditing whether a workload should route to rummage or stay with another goal."
 
 [[related]]
 id = "coding-standards"

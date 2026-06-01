@@ -73,8 +73,8 @@ id = "jog"
 reason = "jog participates as both sender and receiver of `@` messages alongside its existing deepening conversation with the user."
 
 [[related]]
-id = "agent-complementarity"
-reason = "`agent-complementarity` names the quality-routing principle that makes peer consultation worth doing: consulting an agent with a stronger profile for the workload produces better output than staying put. This channel is the runtime mechanism; that goal is the design rationale."
+id = "goal-complementarity"
+reason = "`goal-complementarity` is the design rationale for why consultation quality depends on domain gap: routing to a goal with a stronger domain for the workload produces better output. This channel is the runtime mechanism; that goal is the design rationale."
 
 [[related]]
 id = "coding-standards"
