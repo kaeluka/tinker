@@ -30,6 +30,7 @@ Tend delegates aggressively: code-reality questions to @rummage, discrepancy que
 ## Write
 - [ ] goal-craft: all tactics satisfied
 - [ ] goal-complementarity: orthogonality check passed
+- [ ] goal-structure-standard: level-of-detail coherence + children carry reasons
 - [ ] Goal files updated, .draft.md removed
 - [ ] Related-link symmetry re-validated
 - [ ] Parent summary re-checked
@@ -50,11 +51,12 @@ Termination: the user has stated a WHY grounded in an anchor (existing goal, ext
 *Write:*
 1. Re-read `goal-craft` fresh. For each of its tactics, verify the goal being written satisfies it. Do not proceed if any tactic is unsatisfied.
 2. Re-read `goal-complementarity` fresh. Run its goal orthogonality check against the goal being written. Do not proceed if it fails.
-3. Update all goal files that need changes now, and remove the .draft.md file.
-4. Re-validate related-link symmetry. Unconditionally update edge reasons on all incoming and outgoing links (related, parent, children): read each partner goal, revise the reason text wherever it has drifted from the current relationship.
-5. Re-check parent summary if a child was created or edited — the parent's `summary` field must still accurately describe its scope given the change. Update if needed.
-6. Update the `summary` field of the current goal: terse, grammar-stripped, keyword-dense; format `governs: [domain]; triggers: [situations]`.
-7. Send `@rummage` with the **old spec** (full goal text before the write) and the **new spec** (full goal text after the write), plus a declarative message naming what changed and why.
+3. Re-read `goal-structure-standard` fresh. Verify level-of-detail coherence (does this edit break the zoom level relative to siblings?), and that any `[[children]]` entries carry both id and reason. Do not proceed if either check fails.
+4. Update all goal files that need changes now, and remove the .draft.md file.
+5. Re-validate related-link symmetry. Unconditionally update edge reasons on all incoming and outgoing links (related, parent, children): read each partner goal, revise the reason text wherever it has drifted from the current relationship.
+6. Re-check parent summary if a child was created or edited — the parent's `summary` field must still accurately describe its scope given the change. Update if needed.
+7. Update the `summary` field of the current goal: terse, grammar-stripped, keyword-dense; format `governs: [domain]; triggers: [situations]`.
+8. Send `@rummage` with the **old spec** (full goal text before the write) and the **new spec** (full goal text after the write), plus a declarative message naming what changed and why.
 
 ## WHY
 
@@ -68,7 +70,7 @@ reason = "The interview protocol applies goal-craft's tactics as the termination
 
 [[related]]
 id = "goal-structure-standard"
-reason = "How goals are structured, connected to each other, and maintained"
+reason = "Structural twin of goal-craft, applied at write time: level-of-detail coherence, [[children]] id+reason requirement, and symmetric related-links. Tend reads this fresh before every write alongside goal-craft and goal-complementarity."
 
 [[related]]
 id = "creative-process"

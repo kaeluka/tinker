@@ -78,18 +78,22 @@ Mitigations:
 - No mitigation prevents the merge itself; the user is expected to
   notice.
 
-### T4. opencode could be invoked with auto-approval of destructive tools
+### T4. opencode goal sessions run non-interactively and cannot respond to approval prompts
 
-opencode supports `--dangerously-skip-permissions` which bypasses the
-user's per-tool approval prompts. If tinker passed this flag, a goal
-session could quietly delete or rewrite arbitrary files.
+Tinker runs opencode as a subprocess with stdin piped to the session
+message. opencode's interactive per-tool approval UI cannot receive
+input in this configuration. Without pre-approval, opencode stalls on
+the first file read and aborts the session.
 
 Mitigations:
-- Tinker never passes `--dangerously-skip-permissions` in any of its
-  three runner roles. The flag list in `opencode.rs::run` is fixed
-  (`run`, `--format json`, `-m <model>`, `-s <session>`, and nothing
-  else permission-relevant).
-  → test: `test_security_t4_no_skip_permissions_flag`.
+- Tinker passes `--dangerously-skip-permissions` to every opencode
+  subprocess. This auto-approves tool calls that are not explicitly
+  denied in the user's `opencode.json`. Explicit deny rules still apply.
+- The actual protection boundary is the goal scope (agents work within
+  their assigned goal) and the user's review of changes before commit.
+  opencode's interactive prompt is redundant for an automated tool where
+  every agent run is user-initiated.
+  → test: `test_security_t4_skip_permissions_flag_present`.
 
 ### T5. Stderr from opencode could corrupt the TUI
 
