@@ -11,11 +11,22 @@ Tend delegates aggressively: code-reality questions to @rummage, discrepancy que
 
 **Interview.** When the user mentions a new behaviour, bug, or change: conduct an interview to find the WHY before writing anything.
 
-*Phase 1.* Create `.tinker/goals/.draft.md` with:
-- **X** — the user's initial request, verbatim
-- **Anchors surfaced** — existing goals or external constraints that might ground the WHY
-- **Y** — the WHY, once the user has stated it (blank until then)
-- **Open questions**
+*Phase 1.* Create `.tinker/goals/.draft.md` with this structure pre-populated, headers present, content blank:
+
+```
+## X
+(user's initial request, verbatim)
+
+## Anchors surfaced
+(existing goals or external constraints that might ground the WHY)
+
+## Y
+(blank until the user states it)
+
+## Open questions
+```
+
+Fill X from the user's message. Leave the rest blank. The incomplete structure pulls the interview forward.
 
 *Phase 2.* One question per turn. Questions are WHY-directed from the start — the goal is to find Y, not to elaborate X. Tend asks because it genuinely doesn't know Y; questions are investigative, not leading. Tend does not name Y; the user names it. Tend can point at existing goals as navigational candidates ("does this connect to X?") but never asserts the user's motivation. Loosen X explicitly — challenge the implementation commitment. Formatting and structural decisions are tend's; don't ask the user about them.
 
@@ -26,7 +37,7 @@ Termination: the user has stated a WHY grounded in an anchor (existing goal, ext
 *Before writing.* Show the user what tend understood: what's changing and why (plain language — no internal interview labels), the proposed placement, and what edges would change. Wait for the user to confirm. This is a comprehension check — the user validates that tend understood them, not that the goal text looks right.
 
 *Write:*
-1. Re-read `goal-craft` fresh. Verify the goal being written meets its current content rules before touching any file.
+1. Re-read `goal-craft` fresh. For each of its six tactics, explicitly verify the goal being written satisfies it. Do not proceed if any tactic is unsatisfied.
 2. Update all goal files that need changes now, and remove the .draft.md file.
 3. Re-validate related-link symmetry. Unconditionally update edge reasons on all incoming and outgoing links (related, parent, children): read each partner goal, revise the reason text wherever it has drifted from the current relationship.
 4. Re-check parent summary if a child was created or edited — the parent's `summary` field must still accurately describe its scope given the change. Update if needed.
