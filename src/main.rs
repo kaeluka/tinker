@@ -726,6 +726,9 @@ async fn run_loop(
             match action {
                 KeyAction::Quit => break,
                 KeyAction::SendToSession(session_id, msg) => {
+                    if matches!(session_id.as_str(), "tend" | "rummage" | "jog") {
+                        app.lock().unwrap().running_sessions.insert(session_id.clone(), None);
+                    }
                     if let Some(tx) = session_senders.get(&session_id) {
                         let _ = tx.send(msg).await;
                     } else {
@@ -914,6 +917,9 @@ fn handle_session_event(
 ) {
     match ev {
         SessionEvent::Chunk { goal_id, text } => {
+            // Mark session as actively processing so the ▶ indicator appears.
+            // Applies to every session including interactive agents (tend/rummage/jog).
+            app.running_sessions.entry(goal_id.clone()).or_insert(None);
             app.append_goal_log(&goal_id, &text);
             // Suppress tend's startup output from the conversation pane until
             // the user has typed their first message.
@@ -924,6 +930,8 @@ fn handle_session_event(
         }
         SessionEvent::Done { goal_id, crashed: _ } => {
             app.finalize_agent_message(&goal_id);
+            // Clear the ▶ indicator for any session type, including interactive agents.
+            app.running_sessions.remove(&goal_id);
             let session_text = app.current_session_text.remove(&goal_id).unwrap_or_default();
             // Reload goals — any session may have written TOML files.
             if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
@@ -985,8 +993,6 @@ fn handle_session_event(
                     log.emit("harness", logger::LogEvent::TinkerSystemMessageReceived { content: "You're talking to tend, the planning agent. /rummage switches to code understanding, TAB moves focus to the goal view.".to_string() });
                     app.phase = Phase::Idle;
                 }
-            } else {
-                app.running_sessions.remove(&goal_id);
             }
             let known_ids = known_agent_ids(session_senders, &app.goals);
             let consultations = parse_at_commands(&session_text, &known_ids);
@@ -2294,6 +2300,52 @@ mod tests {
         );
     }
 
+    // spec (tui — queue visibility): for interactive agents, running_sessions is
+    // populated at submission time (SendToSession), not at first-chunk time. A
+    // Chunk event uses or_insert and remains idempotent. Done must remove the entry.
+    #[test]
+    fn test_spec_tend_chunk_adds_to_running_sessions() {
+        use crate::goal_session::SessionEvent;
+
+        let mut app = App::new();
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let senders = HashMap::new();
+        let log = logger::noop_sender();
+
+        assert!(
+            !app.running_sessions.contains_key("tend"),
+            "tend must not be in running_sessions before any chunk",
+        );
+
+        let chunk = SessionEvent::Chunk { goal_id: "tend".to_string(), text: "hi".to_string() };
+        handle_session_event(&mut app, chunk, &spawn_tx, &senders, &RealFilesystem, &log);
+
+        assert!(
+            app.running_sessions.contains_key("tend"),
+            "tend must appear in running_sessions while processing a response (chunk received)",
+        );
+
+        let done = SessionEvent::Done { goal_id: "tend".to_string(), crashed: false };
+        handle_session_event(&mut app, done, &spawn_tx, &senders, &RealFilesystem, &log);
+
+        assert!(
+            !app.running_sessions.contains_key("tend"),
+            "tend must be removed from running_sessions after Done",
+        );
+    }
+
+    // spec (tui — queue visibility): the SendToSession handler must insert
+    // interactive agents (tend, rummage, jog) into running_sessions at submission
+    // time so ▶ appears the moment the user sends a message, not at first chunk.
+    #[test]
+    fn test_spec_interactive_agent_running_sessions_on_submit() {
+        let src = include_str!("main.rs");
+        assert!(
+            src.contains("running_sessions.insert(session_id"),
+            "SendToSession handler must insert interactive session into running_sessions at submission time",
+        );
+    }
+
     // spec (parallel-goal-agents): when another goal agent is already running,
     // a new @-dispatch must still go to spawn immediately — no serial queue.
     #[test]
@@ -2363,8 +2415,9 @@ mod tests {
     }
 
     // spec (tui — queue visibility): @-dispatching to interactive chat agents
-    // (tend, rummage, jog) must NOT add them to running_sessions — they are not
-    // goal agents and the ▶ marker must not appear for them.
+    // (tend, rummage, jog) must NOT add them to running_sessions via the dispatch
+    // path. The ▶ marker appears only when a Chunk event arrives — i.e. the agent
+    // is actively generating a response — not merely because a message was routed.
     #[test]
     fn test_spec_at_dispatch_skips_interactive_agents_in_running_sessions() {
         let (msg_tx, _msg_rx) = mpsc::channel::<String>(8);

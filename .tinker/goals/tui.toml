@@ -1,5 +1,5 @@
 id = "tui"
-summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); per-session conversation view; queue visibility (dim ▶ running; dim [N] queued; full listing in goal-text region); auto-follow scroll; active-agent tag (<goal-id>>); /<goal-id> switches active session; each agent's messages labeled with goal-id; modal trigger-reason dialog | triggers: TUI layout/rendering changes; queue display; scroll behavior; agent-switch UX; message label rendering; per-session filtering"
+summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); per-session conversation view; queue visibility (dim ▶ running; dim [N] queued; no exemptions — interactive agents ▶ starts at message submission; goal agents ▶ starts at dispatch; both clear on Done; full listing in goal-text region); auto-follow scroll; active-agent tag (<goal-id>>); /<goal-id> switches active session; each agent's messages labeled with goal-id; modal trigger-reason dialog | triggers: TUI layout/rendering changes; queue display; scroll behavior; agent-switch UX; message label rendering; per-session filtering; ▶ timing trigger"
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left
@@ -47,7 +47,12 @@ where it re-engages.
 **Queue visibility.** When goals have running or pending sessions,
 the goal list marks them: a distinct glyph (`▶`) for the
 currently-running goal, a bracketed integer (`[1]`, `[2]`) for each
-goal's next queued position. A goal with several pending invocations
+goal's next queued position. Every session in the registry is subject
+to this indicator without exception. For interactive agents (tend,
+rummage, jog), ▶ appears the moment the user submits a message and
+clears on Done — the agent is actively working from submission, not
+from when the first response chunk arrives. For goal agents, ▶
+appears at dispatch time and clears on Done. A goal with several pending invocations
 shows only its *next* index — never multiple numbers — so the list
 stays uncluttered. Markers render dim/grey so they don't dominate
 the goal name. When a marked goal is selected, the goal-text region
@@ -107,8 +112,12 @@ concern, deferred until there is a real need.
   keyboard goal-list navigation with edge scrolling; the modal
   trigger-reason dialog; bold trigger reasons in the session log;
   queue visibility markers in the goal list (dim `▶` running, dim
-  `[N]` queued; only first position shown per goal); full running
-  and queued listing in the goal-text region for the selected goal; the
+  `[N]` queued; ▶ for interactive agents starts at message submission
+  and clears on Done; ▶ for goal agents starts at dispatch and clears
+  on Done; only first position shown per goal; applies to every
+  session in the registry without exception, including tend); full
+  running and queued listing in the goal-text region for the selected
+  goal; the
   active-session input-prompt tag and message routing; each agent's
   messages labeled with the goal-id; `/<goal-id>` slash commands
   that switch the active session to any entry in the session
