@@ -1,4 +1,5 @@
 id = "goal-craft"
+tier = "high"
 summary = "governs: goal content quality; five tactics: anchor test (sparseness), positive framing, orthogonality, goals-are-prompts (5 rules), synthesis-over-enumeration; WHAT/WHY/SCOPE schema; no DECISIONS/HOW sections | triggers: writing/editing any goal; candidate violation during interview/alignment; enumeration vs prose; negative framing detection"
 description = """
 ## WHAT
