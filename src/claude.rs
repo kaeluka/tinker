@@ -1,8 +1,8 @@
 //! Real `OpenCodeRunner` capability for the Claude CLI: shells out to `claude -p`.
 //!
 //! Implements the same trait as `opencode.rs` but using Claude's CLI instead.
-//! Model tiers use short aliases: opus (tinker), sonnet (goal sessions),
-//! haiku (scheduler).
+//! Model tiers: claude-opus-4-8 pinned for tend (high tier), short aliases
+//! for sonnet (goal sessions) and haiku (scheduler).
 
 use crate::cap::{Chunk, OpenCodeRunner};
 use anyhow::Result;
@@ -12,7 +12,7 @@ use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
-pub const TINKER_MODEL: &str = "opus";
+pub const TINKER_MODEL: &str = "claude-opus-4-8";
 pub const GOAL_MODEL: &str = "sonnet";
 pub const SCHEDULER_MODEL: &str = "haiku";
 
@@ -297,12 +297,12 @@ mod tests {
         assert!(args.iter().any(|a| a == "--verbose"));
     }
 
-    // spec (backends): model tier mapping is opus (tinker),
-    // sonnet (goal sessions), haiku (scheduler). The constants must use
-    // Claude's short aliases.
+    // spec (backends): high tier (tend) uses the pinned full model ID to
+    // avoid silent alias resolution to an unvalidated version. Mid and low
+    // tiers (goal sessions, scheduler) remain on short aliases.
     #[test]
-    fn test_spec_model_tier_constants_use_short_aliases() {
-        assert_eq!(TINKER_MODEL, "opus");
+    fn test_spec_model_tier_constants() {
+        assert_eq!(TINKER_MODEL, "claude-opus-4-8");
         assert_eq!(GOAL_MODEL, "sonnet");
         assert_eq!(SCHEDULER_MODEL, "haiku");
     }

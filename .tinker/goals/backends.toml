@@ -1,5 +1,5 @@
 id = "backends"
-summary = "governs: pluggable LLM backend abstraction (runner trait at composition root); opencode default (generic agent files for tend/rummage/jog installed at startup) vs claude --claude (--system-prompt, streaming JSON); per-backend model-tier defaults overridable via model-config | triggers: backend implementation; persona delivery between backends; adding third backend; startup flag changes"
+summary = "governs: pluggable LLM backend abstraction (runner trait at composition root); opencode default (generic agent files for tend/rummage/jog installed at startup) vs claude --claude (--system-prompt, streaming JSON); claude high tier pinned to claude-opus-4-8 (not opus alias) to avoid unvalidated model versions; per-backend model-tier defaults overridable via model-config | triggers: backend implementation; persona delivery between backends; adding third backend; startup flag changes; high-tier model pin"
 description = """
 ## WHAT
 Tinker runs against a **pluggable backend** — the LLM CLI it shells
@@ -24,11 +24,14 @@ personas its own way:
   fresh over stdin each run so tend's context stays current without
   rebuilding the file.
 
-- **claude** (`--claude`): maps roles to Opus (tend) and Sonnet
-  (goal sessions); passes each persona via `--system-prompt` instead
-  of an agent file; resumes sessions with `--resume <session-id>`;
-  parses streaming JSON (`--output-format stream-json --verbose`).
-  The backend choice is a boolean startup flag and is not persisted.
+- **claude** (`--claude`): maps roles to `claude-opus-4-8` (tend, high
+  tier) and `sonnet` (goal sessions, mid tier); the high tier uses a
+  pinned full model ID rather than the `opus` short alias because the
+  alias can silently resolve to an unvalidated model version. Passes
+  each persona via `--system-prompt` instead of an agent file; resumes
+  sessions with `--resume <session-id>`; parses streaming JSON
+  (`--output-format stream-json --verbose`). The backend choice is a
+  boolean startup flag and is not persisted.
 
 Which model fills each tier, per backend, is overridable at runtime
 through `model-config`, a `.tinker/config.toml` file; the per-backend
