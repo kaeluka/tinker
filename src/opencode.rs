@@ -110,9 +110,20 @@ impl OpenCodeRunner for RealOpenCodeRunner {
         let mut child = cmd.spawn()?;
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(message.as_bytes()).await?;
+            stdin.shutdown().await?;
         }
 
         let stdout = child.stdout.take().expect("stdout piped");
+        let mut stderr_lines = BufReader::new(child.stderr.take().expect("stderr piped")).lines();
+        let stderr_collector = tokio::spawn(async move {
+            let mut buf = String::new();
+            while let Ok(Some(line)) = stderr_lines.next_line().await {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            buf
+        });
+
         let mut lines = BufReader::new(stdout).lines();
         let mut returned_session_id = String::new();
         let mut sid_emitted = false;
@@ -163,6 +174,10 @@ impl OpenCodeRunner for RealOpenCodeRunner {
         }
 
         child.wait().await?;
+        let stderr_text = stderr_collector.await.unwrap_or_default();
+        if !stderr_text.is_empty() {
+            on_chunk(format!("\n\u{2030} stderr: {}\n", stderr_text.trim()));
+        }
         Ok(returned_session_id)
     }
 }
@@ -225,7 +240,7 @@ fn short_tool_summary(tool: &str, input: &serde_json::Value) -> String {
 }
 
 /// Build the complete `opencode run` subprocess command.
-/// Pure function extracted for testability — T5 stderr-nulling verified here.
+/// Pure function extracted for testability.
 pub fn opencode_command(
     model: Option<&str>,
     agent: Option<&str>,
@@ -236,7 +251,7 @@ pub fn opencode_command(
     cmd.args(opencode_args(model, agent, session_id));
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .current_dir(work_dir);
     cmd
 }
@@ -334,13 +349,12 @@ mod tests {
         assert!(args.iter().any(|a| a == "ses_x"));
     }
 
-    // security: \u{2192} security.md T5 — opencode subprocesses must drop stderr
-    // to prevent TUI alternate-screen corruption. The builder function
-    // `opencode_command` enforces this by construction (always passes
-    // Stdio::null() for stderr). The test below verifies the builder
-    // produces a structurally sound command with the expected flags.
+    // security: \u{2192} security.md T5 — opencode subprocess stderr is piped
+    // and captured so errors are visible in the session log rather than leaking
+    // to the terminal. The builder function `opencode_command` enforces this by
+    // construction (always passes Stdio::piped() for stderr).
     #[test]
-    fn test_security_t5_stderr_is_nulled() {
+    fn test_security_t5_stderr_is_captured() {
         use std::ffi::OsStr;
         let cmd = opencode_command(Some("t5-model"), None, None, Path::new("/tmp"));
         let args: Vec<&OsStr> = cmd.as_std().get_args().collect();

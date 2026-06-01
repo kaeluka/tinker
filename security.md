@@ -98,8 +98,12 @@ screen mode (raw terminal, no scrollback), unfiltered stderr would
 overwrite the rendered UI and break the user's ability to interact.
 
 Mitigations:
-- All opencode subprocesses are spawned with
-  `stderr(std::process::Stdio::null())`, dropping stderr entirely. Error
-  events arrive through opencode's structured `--format json` stream
-  instead, and are surfaced as system messages in the REPL.
-  → test: `test_security_t5_stderr_is_nulled`.
+- The opencode subprocess stderr is piped and captured. Any stderr content
+  is appended to the session's chunk stream so it appears in the session
+  log rather than leaking to the terminal. Error events also arrive through
+  opencode's structured `--format json` stream and are surfaced as system
+  messages in the REPL.
+  → test: `test_security_t5_stderr_is_captured`.
+- The Claude backend subprocess nulls stderr (stderr not captured); errors
+  are surfaced through the structured JSON stream.
+  → test (claude): `test_security_t5_stderr_is_nulled`.
