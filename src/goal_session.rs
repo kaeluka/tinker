@@ -123,7 +123,7 @@ fn build_neighborhood_table(goal: &Goal) -> String {
 /// 1. Identity — "You are the agent for goal `<id>`."
 /// 2. Navigation — compact goal index and on-demand pull path.
 /// 3. Message-passing semantics — how @goal-id routing works.
-/// 4. The goal's own description (WHAT/WHY/SCOPE).
+/// 4. The goal's own description (WHAT/WHY).
 /// 5. Rules (VCS, directory writes, ownership mandate).
 /// 6. Trigger reason (if present).
 pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &str) -> String {

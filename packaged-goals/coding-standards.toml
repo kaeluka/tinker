@@ -24,9 +24,9 @@ Two checks against the recent batch:
 
 2. **Spec-test coverage audit**, run in both directions. Goals no
    longer enumerate decisions in a `## DECISIONS` section —
-   load-bearing commitments are woven into each goal's WHAT/WHY/SCOPE
+   load-bearing commitments are woven into each goal's WHAT/WHY
    prose — so this is read-and-judge, not a mechanical list-walk.
-   - *Forward (claims → tests):* read each goal's WHAT/WHY/SCOPE,
+   - *Forward (claims → tests):* read each goal's WHAT/WHY,
      identify its load-bearing behavioral commitments (the things a
      session implemented that a test could pin), and check at least
      one `fn test_spec_*` covers each. Grep `fn test_spec_` across

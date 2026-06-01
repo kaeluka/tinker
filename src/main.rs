@@ -2170,7 +2170,7 @@ mod tests {
     #[test]
     fn test_spec_tinker_proves_by_execution_not_reading_source() {
         let content = tend_agent_content();
-        assert!(content.contains("code comprehension"), "SCOPE section must list code comprehension as out of scope");
+        assert!(content.contains("code comprehension"), "tend prompt must name code comprehension as out of scope");
     }
 
     #[test]
