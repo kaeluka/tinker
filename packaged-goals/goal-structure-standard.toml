@@ -48,8 +48,8 @@ edit: it re-checks the parent summary whenever a child is created or
 edited, and re-validates related-links on both sides. When an edit
 needs to touch a partner goal (to add, remove, or rephrase a
 back-pointing link), that partner edit happens in the **same write
-turn** and appears in the playback as one bundle, so the user
-confirms or overrides the whole thing together rather than through
+turn** and appears as one bundle in the placement sentence before writing, so the user
+can redirect the whole change together rather than through
 cascading multi-turn interviews.
 
 **Symmetry exception:** a packaged goal (shared across projects)
@@ -105,7 +105,7 @@ reason = "This goal produces code, which follows `coding-standards`. Asymmetric:
 
 [[related]]
 id = "tend"
-reason = "The summary write protocol (terse, governs+triggers format, written on every goal creation and edit) is part of tend's Phase 4 write procedure. Both goals apply on every edit: this goal for structural integrity, tend for summary authoring."
+reason = "The summary write protocol (terse, governs+triggers format, written on every goal creation and edit) is part of tend's write procedure. Both goals apply on every edit: this goal for structural integrity, tend for summary authoring."
 
 [[related]]
 id = "agent-complementarity"

@@ -47,9 +47,10 @@ Six tactics govern the content:
    Synthesis forces integration — contradictions surface where a list
    would hide them, and the goal reads as design rather than changelog.
 
-6. **Stick to what the user said.** The goal only contains what the
-   user actually demanded, in language close to theirs. Synthesis yes;
-   gap-filling no.
+6. **Synthesis adds form only.** Every claim in the goal traces to
+   something the user stated during the interview. The synthesis
+   integrates form; it does not add content. Close to the user's
+   language; gap-filling no.
 
 These rules are enforced read-time, not by a mechanical write step.
 Tend cites this goal when it surfaces a candidate violation during an
@@ -78,4 +79,4 @@ reason = "Structural twin at write-time. `goal-structure-standard` governs tree 
 
 [[related]]
 id = "tend"
-reason = "Tend enforces these rules during interview and edit-time cross-goal alignment. Goal-craft tactics apply to WHAT/WHY; tend's Phase 4 write procedure covers the summary field separately."
+reason = "Tend enforces these rules during interview and edit-time cross-goal alignment. Goal-craft tactics apply to WHAT/WHY; tend's write procedure covers the summary field separately."

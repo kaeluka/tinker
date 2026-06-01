@@ -2170,7 +2170,8 @@ mod tests {
     #[test]
     fn test_spec_tinker_proves_by_execution_not_reading_source() {
         let content = tend_agent_content();
-        assert!(content.contains("code comprehension"), "tend prompt must name code comprehension as out of scope");
+        assert!(content.contains("code-reality questions to @rummage") || content.contains("delegates aggressively"),
+            "tend prompt must require delegating code-reality questions to rummage rather than reading source directly");
     }
 
     #[test]
@@ -2185,8 +2186,8 @@ mod tests {
         let content = tend_agent_content();
         assert!(content.contains("Phase 1") || content.contains("Phase 2") || content.contains("Phase 3"),
             "prompt must describe interview phases");
-        assert!(content.contains("playback") || content.contains("Playback") || content.contains("Only the user can validate"),
-            "prompt must require playback before writing");
+        assert!(content.contains("genuinely doesn't know") || content.contains("user names it") || content.contains("investigative, not leading"),
+            "prompt must require WHY-directed investigation — tend does not name Y, the user does");
     }
 
     #[test]

@@ -63,4 +63,4 @@ reason = "This goal produces code, which follows `coding-standards` (capability-
 
 [[related]]
 id = "tend"
-reason = "tend's Phase 4 write procedure requires a `summary` field on every goal, written in a specific format; this affects what goal-storage must parse."
+reason = "tend's write procedure requires a `summary` field on every goal, written in a specific format; this affects what goal-storage must parse."
