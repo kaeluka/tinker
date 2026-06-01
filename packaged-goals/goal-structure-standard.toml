@@ -83,10 +83,10 @@ branch) that the containment hierarchy alone can't express.
 
 Per-link reasons on `[[children]]` entries match the design of
 `[[related]]` entries: agents navigate the goal graph by reading
-reasons and pulling full text only when warranted. Without a reason,
-a child ID is opaque — the agent must load the child to know whether
-it's relevant. With a reason, the same decision is made from the
-compact index, keeping navigation cheap.
+reasons and asking `@tend` for full text when warranted. Without a
+reason, a child ID is opaque — the agent must ask `@tend` to know
+whether it's relevant. With a reason, the same decision is made from
+the compact index, keeping navigation cheap.
 
 """
 parent_id = ""

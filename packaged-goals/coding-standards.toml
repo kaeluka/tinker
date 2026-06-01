@@ -26,12 +26,12 @@ Two checks against the recent batch:
    longer enumerate decisions in a `## DECISIONS` section —
    load-bearing commitments are woven into each goal's WHAT/WHY
    prose — so this is read-and-judge, not a mechanical list-walk.
-   - *Forward (claims → tests):* read each goal's WHAT/WHY,
+   - *Forward (claims → tests):* ask `@tend` for each goal's WHAT/WHY,
      identify its load-bearing behavioral commitments (the things a
      session implemented that a test could pin), and check at least
      one `fn test_spec_*` covers each. Grep `fn test_spec_` across
-     the codebase; cross-reference against `.tinker/goals/*.toml` and
-     `packaged-goals/*.toml`. A commitment with no covering test is a
+     the codebase and cross-reference against the goal commitments
+     `@tend` provided. A commitment with no covering test is a
      coverage gap.
    - *Reverse (tests → claims):* for each `fn test_spec_*`, confirm
      it still traces to a live commitment in some current goal. A

@@ -35,20 +35,45 @@ use std::{io, path::PathBuf, sync::{Arc, Mutex}, time::Duration};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
-const AGENT_FRONTMATTER: &str = "---\ndescription: >-\n  Tinker agent.\nmode: primary\n---\n";
+/// Frontmatter for goal-agent sessions (written to `tinker.md`).
+/// Allows all reads except tend-owned dirs; blocks all edits/writes to them.
+const GOAL_AGENT_FRONTMATTER: &str = "---\ndescription: >-\n  Tinker agent.\nmode: primary\n\
+permission:\n\
+  read:\n\
+    \"*\": allow\n\
+    \".tinker/goals/**\": deny\n\
+    \".tinker/notes/**\": deny\n\
+    \".tinker/state/**\": deny\n\
+  edit:\n\
+    \".tinker/**\": deny\n\
+  write:\n\
+    \".tinker/**\": deny\n\
+---\n";
+
+/// Frontmatter for the tend agent (written to `tend.md`).
+/// Allowlist: only `.tinker/goals/**` is accessible; everything else is blocked.
+const TEND_FRONTMATTER: &str = "---\ndescription: >-\n  Tinker agent.\nmode: primary\n\
+permission:\n\
+  read:\n\
+    \"*\": deny\n\
+    \".tinker/goals/**\": allow\n\
+  edit:\n\
+    \"*\": deny\n\
+    \".tinker/goals/**\": allow\n\
+  write:\n\
+    \"*\": deny\n\
+    \".tinker/goals/**\": allow\n\
+---\n";
 
 fn packaged_tend_goal() -> Goal {
     const TOML: &str = include_str!("../packaged-goals/tend.toml");
     toml::from_str(TOML).expect("packaged tend.toml must be valid Goal TOML")
 }
 
-/// Assembles the full tend persona (generic frontmatter + goal description) as
-/// it reaches the model through `session_init_message`. Test-only: production
-/// installs the generic `AGENT_FRONTMATTER` agent file and delivers the
-/// description via the goal-session init message like every other goal agent.
-#[cfg(test)]
+/// Assembles the full tend.md content written at startup: tend frontmatter
+/// (with path-scoped permission rules) followed by the tend goal description.
 fn tend_agent_content() -> String {
-    format!("{}{}", AGENT_FRONTMATTER, packaged_tend_goal().description)
+    format!("{}{}", TEND_FRONTMATTER, packaged_tend_goal().description)
 }
 
 fn tend_init_prompt(goals_summary: &str) -> String {
@@ -328,15 +353,18 @@ async fn main() -> Result<()> {
         primary_tinker_dir.join("state").join("runtime.json"),
     );
 
-    // Write one generic agent file for the high-tier runner. Skip when using
-    // Claude backend — the persona is passed via --system-prompt instead.
+    // Write agent files at startup (always overwrite). Skip for Claude backend —
+    // persona arrives via --system-prompt there, not agent files.
+    // tinker.md: used by all goal-agent sessions; denies .tinker/ dir access.
+    // tend.md: used by the tend session; restricts access to .tinker/goals/ only.
     if !use_claude {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("~"));
         let agent_dir = home.join(".config/opencode/agents");
         let _ = fs.mkdir_all(&agent_dir);
-        let _ = fs.write(&agent_dir.join("tinker.md"), AGENT_FRONTMATTER);
+        let _ = fs.write(&agent_dir.join("tinker.md"), GOAL_AGENT_FRONTMATTER);
+        let _ = fs.write(&agent_dir.join("tend.md"), &tend_agent_content());
     }
 
     // Discover all .tinker dirs from cwd up. Nearest first.
@@ -2122,15 +2150,18 @@ mod tests {
 
     #[test]
     fn test_spec_tinker_agent_does_not_deny_write_edit_bash() {
+        // Tend uses path-scoped permission rules (nested YAML), not flat tool-level
+        // denials. A flat `  write: deny` line would block all writes globally;
+        // path-scoped rules allow tend to write goal files while blocking everything else.
         let content = tend_agent_content();
         let after = content.strip_prefix("---\n").expect("agent file starts with frontmatter");
         let end = after.find("\n---").expect("frontmatter has closing delimiter");
         let frontmatter = &after[..end];
         for tool in ["write", "edit", "bash"] {
-            let denied_line = format!("  {}: deny", tool);
+            let flat_denied = format!("  {}: deny", tool);
             for line in frontmatter.lines() {
-                assert_ne!(line.trim_end(), denied_line.as_str(),
-                    "frontmatter must not deny `{}` — tinker relies on prompt-level marker rule, not permission denial", tool);
+                assert_ne!(line.trim_end(), flat_denied.as_str(),
+                    "frontmatter must use path-scoped rules, not a flat `{}` tool denial", tool);
             }
         }
     }
@@ -2211,6 +2242,39 @@ mod tests {
         let guard: String = ["if !agent_path", ".exists()"].concat();
         assert!(!main_rs.contains(&guard),
             "main.rs must not guard the agent-file write behind an existence check");
+    }
+
+    // spec: no-peek / tend-exemption — tinker.md (goal agents) must deny read/edit/write
+    // access to the .tinker/ dirs so the harness enforces what the prompt instructs.
+    #[test]
+    fn test_spec_tinker_md_denies_tinker_dir_access() {
+        assert!(GOAL_AGENT_FRONTMATTER.contains(".tinker/goals/**"),
+            "tinker.md must deny .tinker/goals/ access");
+        assert!(GOAL_AGENT_FRONTMATTER.contains(".tinker/notes/**"),
+            "tinker.md must deny .tinker/notes/ access");
+        assert!(GOAL_AGENT_FRONTMATTER.contains(".tinker/state/**"),
+            "tinker.md must deny .tinker/state/ access");
+        assert!(GOAL_AGENT_FRONTMATTER.contains("deny"),
+            "tinker.md permission block must include deny rules");
+    }
+
+    // spec: no-peek / tend-exemption — tend.md must use an allowlist that restricts
+    // all file access to .tinker/goals/ only; everything else must be blocked.
+    #[test]
+    fn test_spec_tend_md_restricts_to_tinker_goals() {
+        let content = tend_agent_content();
+        let after = content.strip_prefix("---\n").expect("agent file starts with frontmatter");
+        let end = after.find("\n---").expect("frontmatter has closing delimiter");
+        let frontmatter = &after[..end];
+        // Catch-all deny must be present for each affected tool.
+        assert!(frontmatter.contains("\"*\": deny"),
+            "tend.md must deny all paths by default (allowlist model)");
+        // The only allowed path must be .tinker/goals/.
+        assert!(content.contains(".tinker/goals/**"),
+            "tend.md must explicitly allow .tinker/goals/");
+        // src/ must not be listed as allowed.
+        assert!(!content.contains("src/**"),
+            "tend.md must not use src/** — allowlist model blocks src/ via catch-all deny");
     }
 
     #[test]

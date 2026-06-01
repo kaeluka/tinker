@@ -21,13 +21,12 @@ You may read state (`git status`, `git diff`, `git log`) to orient yourself, \
 but don't mutate it — no commits, pushes, checkouts, branch operations, \
 rebases, or stashing. Writing files is fine; the user handles commits.";
 
-/// Directory-write restriction injected into every goal-session prompt.
-/// Goal sessions must not write to the tinker-owned directories listed here;
-/// those are tinker's exclusive domain (per `goal-sessions`).
-pub const TINKER_DIR_WRITE_RULES: &str = "Do not write to `.tinker/goals/`, \
+/// Directory access restriction injected into every goal-session prompt.
+/// Goal sessions must not read or write the tend-owned directories listed here;
+/// those are tend's exclusive domain (per `goal-sessions`).
+pub const TINKER_DIR_WRITE_RULES: &str = "Do not read or write `.tinker/goals/`, \
 `.tinker/notes/`, or `.tinker/state/`. Those directories are owned by \
-tinker. You may read them (e.g. to understand sibling goals or state), \
-but must not create, modify, or delete any file inside them.";
+tend — do not read, create, modify, or delete any file inside them.";
 
 /// Implementation-ownership mandate injected into every goal-session prompt.
 /// Goal sessions own the source code and should not hesitate to radically
@@ -87,7 +86,7 @@ fn build_neighborhood_table(goal: &Goal) -> String {
     if !goal.parent_id.is_empty() {
         rows.push((
             goal.parent_id.clone(),
-            "parent goal (read for broader context and framing)".to_string(),
+            "parent goal — ask @tend for broader context and framing".to_string(),
         ));
     }
 
@@ -137,6 +136,17 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
              If you need more context about a neighbor's scope or intent, \
              consult `@tend` — tend holds the full goal tree.\n\n\
              {table}\n"
+        )
+    };
+
+    // Tend is the goal tree's keeper: it reads and writes `.tinker/` directly
+    // and does not own source code. Both rules are wrong for it.
+    let (dir_rules_line, ownership_line) = if goal.id == "tend" {
+        (String::new(), String::new())
+    } else {
+        (
+            format!("- {}\n", TINKER_DIR_WRITE_RULES),
+            format!("- {}\n", IMPLEMENTATION_OWNERSHIP_MANDATE),
         )
     };
 
@@ -196,8 +206,8 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
          ## Rules\n\
          \n\
          - {vcs_rules}\n\
-         - {tinker_dir_write_rules}\n\
-         - {ownership_mandate}\n\
+         {dir_rules_line}\
+         {ownership_line}\
          {neighbors_section}\
          When you have made meaningful progress (or decided no action is \
          warranted), stop.",
@@ -206,8 +216,8 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
         description = goal.description,
         neighbors_section = neighbors_section,
         vcs_rules = VCS_RULES,
-        tinker_dir_write_rules = TINKER_DIR_WRITE_RULES,
-        ownership_mandate = IMPLEMENTATION_OWNERSHIP_MANDATE,
+        dir_rules_line = dir_rules_line,
+        ownership_line = ownership_line,
     );
     if let Some(r) = reason {
         prompt.push_str(&format!("\n\n## Reason for triggering\n{}", r));
@@ -350,11 +360,11 @@ mod tests {
             || VCS_RULES.to_lowercase().contains("read-only"));
     }
 
-    // spec: goal-sessions decision — "Goal sessions must not write to
+    // spec: goal-sessions decision — "Goal sessions must not read or write
     // `.tinker/goals/`, `.tinker/notes/`, or `.tinker/state/`." The init
-    // prompt must carry the directory write restriction into the agent's
-    // context so it cannot silently mutate the tinker-owned directories when
-    // dispatched with a narrow scope.
+    // prompt must carry the directory access restriction into the agent's
+    // context so it cannot read or silently mutate the tend-owned directories
+    // when dispatched with a narrow scope.
     #[test]
     fn test_spec_goal_messages_carry_tinker_dir_write_restriction() {
         let calc = make_goal("calc", "build calc");
@@ -392,6 +402,27 @@ mod tests {
                 .contains("own"),
             "IMPLEMENTATION_OWNERSHIP_MANDATE must use 'own' language"
         );
+    }
+
+    // spec: tend exemption — tend is the goal tree's keeper and owns no source
+    // code. Its preamble must omit both the directory access restriction (it
+    // legitimately reads/writes .tinker/) and the implementation-ownership
+    // mandate (it delegates code changes to goal sessions via @rummage).
+    #[test]
+    fn test_spec_tend_preamble_omits_dir_and_ownership_rules() {
+        let mut tend = make_goal("tend", "manage the goal tree");
+        tend.id = "tend".into();
+        let msg = session_init_message(&tend, None, "[]");
+        assert!(
+            !msg.contains(TINKER_DIR_WRITE_RULES),
+            "tend must not receive the directory access restriction"
+        );
+        assert!(
+            !msg.contains(IMPLEMENTATION_OWNERSHIP_MANDATE),
+            "tend must not receive the implementation-ownership mandate"
+        );
+        // VCS rules still apply to tend.
+        assert!(msg.contains(VCS_RULES), "tend must still receive VCS rules");
     }
 
     // spec: goal-sessions — "After each goal session finishes, tinker folds
@@ -553,19 +584,23 @@ mod tests {
         assert!(msg.contains("| goal-id | reason |"));
     }
 
-    // spec: goal-sessions — "The session reads the reasons and pulls a
-    // neighbor's full text on demand (it can read `.tinker/goals/`)." The
-    // init message must explicitly tell the session how to pull neighbor text.
+    // spec: no-peek — agents do not read goal files to understand neighbors.
+    // The init message must direct agents to consult @tend when the compact
+    // index and edge reasons aren't sufficient — not to fetch TOML files.
     #[test]
-    fn test_spec_goal_init_neighbors_pullable_on_demand() {
+    fn test_spec_goal_init_escalates_to_tend_for_neighbor_context() {
         let mut goal = make_goal("calc", "build calc");
         goal.parent_id = "math".into();
 
         let msg = goal_init_message(&goal, None);
 
         assert!(
-            msg.contains(".tinker/goals/"),
-            "init message must name the path sessions use to pull neighbor full text"
+            msg.contains("@tend"),
+            "init message must name @tend as the escalation path for neighbor context"
+        );
+        assert!(
+            !msg.contains("read `.tinker/goals/"),
+            "init message must not instruct agents to read goal files"
         );
     }
 

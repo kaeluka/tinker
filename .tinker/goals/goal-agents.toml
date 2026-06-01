@@ -39,9 +39,9 @@ receives a standard runtime-injected preamble:
 You are the agent for goal `<id>`. Your goal description follows.
 
 **Goal tree navigation.** The compact index below lists every goal
-with summaries and parent/child relationships. To read a goal's full
-text: `Read .tinker/goals/<id>.toml`. The goal IS the agent's role
-and operating instructions.
+with summaries and parent/child relationships. If you need a goal's
+full text, ask `@tend`. The goal IS the agent's role and operating
+instructions.
 
 **Messaging other agents.** To reach another agent:
 
@@ -55,9 +55,9 @@ Your message here.
 - Only the `@`-block is delivered to the named agent.
 - Actor model: no blocking, no call stack, no formal return value.
   Replies arrive in your normal conversation stream.
-- **Before sending `@goal-id`, read `.tinker/goals/<goal-id>.toml`.**
-  The goal is the agent's role. You cannot write a useful message
-  without knowing what that agent does and what it needs.
+- The compact index and edge reasons tell you what an agent is
+  responsible for — enough to write a useful message. Ask `@tend`
+  if you need more context about a goal's scope or intent.
 
 **Two shared resources available to all agents.**
 - `@tend` — for intent and *should*: what the user wants, what a
@@ -171,11 +171,10 @@ ownership.
 - Out of scope: cross-process session persistence; goal-agent execution
   model (owned by `parallel-goal-agents`); per-agent tool distinctions
   beyond what applies uniformly to all agents.
-- Sessions must not write to `.tinker/goals/`, `.tinker/notes/`, or
-  `.tinker/state/` — these directories are tend-owned. Reading goal
-  files is allowed and expected; writing would let a session silently
-  mutate the spec it executes under or bypass tend's ownership of
-  notes and state.
+- Sessions must not read or write `.tinker/goals/`, `.tinker/notes/`,
+  or `.tinker/state/` — these directories are tend-owned. Goal content
+  arrives via `@tend`; reading goal files directly would bypass the
+  no-peek constraint and tend's ownership of the goal tree.
 """
 parent_id = "the-cycles"
 

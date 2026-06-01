@@ -3,8 +3,8 @@ summary = "governs: reactive maintenance of README.md at project root; synthesiz
 description = """
 ## WHAT
 A packaged goal that reactively maintains the human-facing
-`README.md` at the project root by reading the project's current goal
-tree. It synthesizes whatever foundational "why" and "what" the goals
+`README.md` at the project root by asking `@tend` for the current
+goal tree. It synthesizes whatever foundational "why" and "what" the goals
 contain into a cohesive narrative for a new developer — it does not
 invent features or philosophy, it articulates exactly what the goals
 hold.
@@ -28,8 +28,8 @@ from its load-bearing intent (the goal files); the README doesn't
 drift because it is just a reflection of the tree.
 
 ## SCOPE
-- In scope: generating `README.md` at the project root; reading the
-  goal tree to source the narrative; directing the LLM's prose
+- In scope: generating `README.md` at the project root; asking `@tend`
+  for the goal tree to source the narrative; directing the LLM's prose
   style; tailoring the opening to a reader who knows nothing about
   the project. Required sections, in order:
   - **Status** (top of the README, before anything else): tinker is
