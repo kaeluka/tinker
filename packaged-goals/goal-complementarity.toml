@@ -58,3 +58,7 @@ reason = "Jog's domain (bidirectional discrepancy finding, read-only delegation 
 [[related]]
 id = "goal-structure-standard"
 reason = "`goal-structure-standard` is where orthogonal placement is enforced structurally (Merge, Nest Down, Nest Up, New Root, Retire). This goal is the design rationale — why each goal should own a distinct domain."
+
+[[related]]
+id = "no-peek"
+reason = "`no-peek` is the communication-layer expression of this goal's orthogonality principle: when coupling lives in edges rather than enumerated reads, domain orthogonality composes through the graph."

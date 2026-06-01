@@ -133,9 +133,9 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
     } else {
         format!(
             "\n## Neighbor goals\n\n\
-             Pull any neighbor's full text on demand by reading \
-             `.tinker/goals/<goal-id>.toml`. Use the reason column to decide \
-             what to pull.\n\n\
+             Use the reason column to decide which neighbors are relevant. \
+             If you need more context about a neighbor's scope or intent, \
+             consult `@tend` — tend holds the full goal tree.\n\n\
              {table}\n"
         )
     };
@@ -147,7 +147,8 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
          \n\
          {compact_index}\n\
          \n\
-         Pull any goal's full text on demand by reading `.tinker/goals/<goal-id>.toml`.\n\
+         If the compact index isn't sufficient, consult `@tend` — tend holds the full \
+         goal tree and can answer questions about any goal's scope or intent.\n\
          \n\
          ## Message passing\n\
          \n\
@@ -161,23 +162,23 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
          the goal, how to try the result, every `test_spec_` function you created or \
          modified, and how you collaborated with other agents in fulfilling the task.\n\
          \n\
-         **Before sending `@goal-id`, read `.tinker/goals/<goal-id>.toml`.** The goal is \
-         the agent's role. You cannot write a useful message without knowing what that \
-         agent does and what it needs.\n\
+         **Before sending `@goal-id`, ensure you understand the recipient's role.** The \
+         compact index and edge reasons are your primary signal. If they're not sufficient, \
+         ask `@tend` — tend holds the full goal tree and can describe what any agent does \
+         and needs.\n\
          \n\
-         **Three shared agents — route questions to the right one; don't substitute \
-         goal-file reads for agent consultation.**\n\
+         **Three shared agents — route questions to the right one.**\n\
          - `@tend` — intent and *should*: what the user wants, what a goal means, whether \
          a behavior is intentional. Tend holds the goal tree and conversation history.\n\
          - `@rummage` — code reality and *is*: what the code actually does, how a flow \
          works, whether an implementation matches a spec. Questions about system behavior \
-         go here — reading a goal file cannot substitute.\n\
+         go here.\n\
          - `@jog` — discrepancy finding: spots gaps between two sources (spec vs. code, \
          goal vs. behavior). Use when you need to know whether two layers agree.\n\
          \n\
-         Reading a goal file tells you what an agent is *responsible for* — enough to write \
-         a useful message to it. It does not answer questions the agent is better positioned \
-         to answer.\n\
+         The compact index and edge reasons tell you what an agent is *responsible for* — \
+         enough to write a useful message. They do not answer questions the agent is better \
+         positioned to answer.\n\
          \n\
          ## Your goal\n\
          \n\
@@ -589,21 +590,21 @@ mod tests {
         );
     }
 
-    // spec: goal-agents preamble — before sending an @-block to another agent, the
-    // agent must read that goal's TOML file so it knows the recipient's role. The
-    // preamble must contain the read-before-message mandate verbatim so the LLM
-    // treats "reading before messaging" as a hard requirement, not an option.
+    // spec: goal-agents preamble — before @-messaging another agent, an agent must
+    // understand the recipient's role via the compact index and edge reasons (no-peek:
+    // no goal-file reads). If the index isn't sufficient, @tend is the escalation
+    // path. The preamble must encode this dialog-first model.
     #[test]
     fn test_spec_preamble_includes_read_before_message_mandate() {
         let goal = make_goal("widget", "build a widget");
         let msg = session_init_message(&goal, None, "[]");
         assert!(
-            msg.contains("Before sending") && msg.contains("read `.tinker/goals/"),
-            "preamble must contain the read-before-message mandate"
+            msg.contains("Before sending") && msg.contains("compact index"),
+            "preamble must direct agents to use the compact index before messaging"
         );
         assert!(
-            msg.contains("cannot write a useful message without knowing"),
-            "preamble must explain why reading is required before sending"
+            !msg.contains("read `.tinker/goals/"),
+            "preamble must not instruct agents to read goal files directly"
         );
     }
 
@@ -653,8 +654,8 @@ mod tests {
             "preamble must describe @jog as the discrepancy-finding resource"
         );
         assert!(
-            msg.contains("don't substitute") || msg.contains("does not answer"),
-            "preamble must explicitly warn against substituting file reads for agent queries"
+            msg.contains("do not answer") || msg.contains("don't substitute"),
+            "preamble must note that the index does not substitute for agent queries"
         );
     }
 

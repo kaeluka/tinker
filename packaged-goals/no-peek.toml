@@ -1,0 +1,50 @@
+id = "no-peek"
+summary = "governs: agents access peer context through @-messages only; no reading other goals' files; edge graph is complete coupling map; compositionality: adding one edge propagates connectivity to all agents reachable through either endpoint; tend exempt as goal-tree keeper | triggers: any cross-agent information access; evaluating whether to read vs. ask; new agent-to-agent coupling; tend exemption boundary"
+description = """
+## WHAT
+
+Every goal is an agent. Agents access peer context by asking, not by
+reading. All information flow between agents goes through @-messages —
+an agent that needs something another agent knows sends a message; the
+recipient answers, or asks follow-up questions to ground the exchange.
+No agent opens another goal's file directly.
+
+The edge graph — `[[related]]` and `[[children]]` links with their
+reasons — is the complete, navigable coupling map. Adding one edge A↔B
+is a local change whose connectivity propagates to every agent
+reachable through A or B, without any of them updating their own
+content. This is the compositionality property: the graph does the
+work that enumeration inside each goal otherwise would.
+
+Edge reasons are the primary navigation signal. The compact index
+carries goal IDs, summaries, and reasons — enough for an agent to
+decide whether to consult a peer and how to frame the first message.
+When the compact index isn't sufficient, the agent asks; the receiving
+agent asks follow-up questions if it needs more context. Dialogs
+replace pre-loading.
+
+**Tend is exempt.** Tend is the goal tree's keeper — it holds the full
+tree and reads goal files directly. All other agents route
+goal-content questions through @tend rather than opening files.
+
+## WHY
+
+File reads force explicit enumeration: every agent that needs context
+from a peer must know that peer's ID and open its file. As the goal
+tree grows, those enumerations multiply independently — the same
+content gets re-read by many agents, and the coupling lives in goal
+prose rather than in the edge structure. The graph stops being the
+source of truth.
+
+The @-message model doesn't have this failure mode. Coupling is a
+property of the graph, not of what each node has memorized about its
+neighbors. Goals can be added, split, or retired without touching
+every agent that might have been reading them. At scale, this is the
+difference between a system that stays navigable and one that drowns
+in redundant enumeration.
+"""
+parent_id = "peer-consult"
+
+[[related]]
+id = "goal-complementarity"
+reason = "The compositionality argument here — adding one edge propagates connectivity through the graph — is the communication-layer form of `goal-complementarity`'s domain-orthogonality principle. Both say the same thing at different levels: coupling lives in the graph structure, not in what each node enumerates."
