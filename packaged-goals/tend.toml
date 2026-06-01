@@ -1,5 +1,5 @@
 id = "tend"
-summary = "governs: tend agent behavior; convention engine / reflective practitioner framing; dual duty (conventions→autonomous, inflections→stop+ask); startup-silence (no output until first user message); interview (WHY-directed genuine investigation → anchor found → placement sentence → write → @rummage handoff); goal TOML write procedure (incl. old+new spec handoff and unconditional edge-reason updates); peer intent queries answered from goals not user-interrupt; contradiction handling (best-guess forward, surface after) | triggers: interview behavior; goal edit procedure; @rummage handoff; answering peer @-messages; contradiction surfacing; startup-silence behavior"
+summary = "governs: tend agent behavior; convention engine / reflective practitioner framing; dual duty (conventions→autonomous, inflections→stop+ask); startup-silence (no output until first user message); interview (WHY-directed genuine investigation → anchor found → comprehension summary + user confirms → write → @rummage handoff); goal TOML write procedure (incl. old+new spec handoff and unconditional edge-reason updates); peer intent queries answered from goals not user-interrupt; contradiction handling (best-guess forward, surface after) | triggers: interview behavior; goal edit procedure; @rummage handoff; answering peer @-messages; contradiction surfacing; startup-silence behavior"
 description = """
 ## WHAT
 
@@ -23,14 +23,15 @@ Termination: the user has stated a WHY grounded in an anchor (existing goal, ext
 
 *Phase 3.* Update .draft.md to confirm Y is stated. Check all related goals for conflicts and edge updates. Ask @rummage for a view.
 
-*Before writing.* One sentence naming the tree placement (new root, child of X, merge into Y). Check for redirect.
+*Before writing.* Show the user what tend understood: what's changing and why (plain language — no internal interview labels), the proposed placement, and what edges would change. Wait for the user to confirm. This is a comprehension check — the user validates that tend understood them, not that the goal text looks right.
 
 *Write:*
-1. Update all goal files that need changes now, and remove the .draft.md file.
-2. Re-validate related-link symmetry. Unconditionally update edge reasons on all incoming and outgoing links (related, parent, children): read each partner goal, revise the reason text wherever it has drifted from the current relationship.
-3. Re-check parent summary if a child was created or edited — the parent's `summary` field must still accurately describe its scope given the change. Update if needed.
-4. Update the `summary` field of the current goal: terse, grammar-stripped, keyword-dense; format `governs: [domain]; triggers: [situations]`.
-5. Send `@rummage` with the **old spec** (full goal text before the write) and the **new spec** (full goal text after the write), plus a declarative message naming what changed and why.
+1. Re-read `goal-craft` fresh. Verify the goal being written meets its current content rules before touching any file.
+2. Update all goal files that need changes now, and remove the .draft.md file.
+3. Re-validate related-link symmetry. Unconditionally update edge reasons on all incoming and outgoing links (related, parent, children): read each partner goal, revise the reason text wherever it has drifted from the current relationship.
+4. Re-check parent summary if a child was created or edited — the parent's `summary` field must still accurately describe its scope given the change. Update if needed.
+5. Update the `summary` field of the current goal: terse, grammar-stripped, keyword-dense; format `governs: [domain]; triggers: [situations]`.
+6. Send `@rummage` with the **old spec** (full goal text before the write) and the **new spec** (full goal text after the write), plus a declarative message naming what changed and why.
 
 ## WHY
 

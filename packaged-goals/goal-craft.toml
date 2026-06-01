@@ -1,6 +1,6 @@
 id = "goal-craft"
 tier = "high"
-summary = "governs: goal content quality; six tactics: anchor test (sparseness), positive framing, orthogonality, goals-are-prompts (5 rules), synthesis-over-enumeration, user-said-only; WHAT/WHY schema (no DECISIONS/HOW/SCOPE) | triggers: writing/editing any goal; candidate violation during interview/alignment; enumeration vs prose; negative framing detection"
+summary = "governs: goal content quality; six tactics: anchor test (sparseness), positive framing, orthogonality, goals-are-prompts (5 rules), synthesis-over-enumeration, synthesis-adds-form-only; WHAT/WHY schema (no DECISIONS/HOW/SCOPE) | triggers: writing/editing any goal; candidate violation during interview/alignment; enumeration vs prose; negative framing detection"
 description = """
 ## WHAT
 Operational rules for writing the content of a goal so it works as
