@@ -189,7 +189,15 @@ async fn goal_agent_loop(
         let output = full_output.lock().unwrap().clone();
         match run_result {
             Ok(new_sid) => {
-                llm_session_id = Some(new_sid.clone());
+                // Only update session_id when the session actually produced one.
+                // An empty new_sid means the runner exited without emitting any
+                // events (e.g., API outage, model temporarily unavailable).
+                // Keeping llm_session_id as None ensures the next dispatch
+                // re-sends session_init_message with full context instead of
+                // treating this as an established session to continue.
+                if !new_sid.is_empty() {
+                    llm_session_id = Some(new_sid.clone());
+                }
                 let tool_calls = logger::count_tool_calls(&output);
                 let files_modified = logger::extract_modified_files(&output);
                 log.emit("goal_session", logger::LogEvent::GoalSessionFinished {
@@ -2533,6 +2541,19 @@ mod tests {
         assert!(
             main_rs.contains("\"harness\""),
             "known_agent_ids must include \"harness\" as a static entry",
+        );
+    }
+
+    // spec (goal-agents): when oc.run returns Ok("") (no session ID captured —
+    // the runner exited without emitting any events, e.g. transient API outage),
+    // llm_session_id must stay None so the next dispatch re-sends session_init_message
+    // with full context instead of treating this as an established session.
+    #[test]
+    fn test_spec_empty_session_id_does_not_advance_llm_session_id() {
+        let main_rs = include_str!("main.rs");
+        assert!(
+            main_rs.contains("if !new_sid.is_empty()"),
+            "goal_agent_loop must guard llm_session_id update on non-empty new_sid",
         );
     }
 
