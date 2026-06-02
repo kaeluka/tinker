@@ -54,6 +54,20 @@ fn tend_agent_content() -> String {
     format!("{}{}", TEND_FRONTMATTER, packaged_tend_goal().description)
 }
 
+/// System prompt for tend when running under the claude backend.
+/// Leads with the file-scope boundary so it arrives as a system-level constraint,
+/// not a buried instruction in a user-turn message. The claude backend has no
+/// equivalent to opencode's path-scoped `permission:` block in tend.md; this is
+/// the closest available substitute.
+fn tend_system_prompt() -> String {
+    format!(
+        "Read and write files ONLY under .tinker/goals/ — nothing outside that path. \
+         src/ and all other directories are off-limits. VCS is read-only: git status/diff/log only.\n\n\
+         {}",
+        packaged_tend_goal().description
+    )
+}
+
 fn tend_init_prompt(goals_summary: &str, neighbor_section: &str) -> String {
     format!(
         "## Current goals (compact index — pull full text on demand)\n{goals_summary}\n\n\
@@ -305,7 +319,7 @@ async fn main() -> Result<()> {
         let goal_m = model_config.claude_mid(CLAUDE_GOAL_MODEL);
         let cleanup_m = model_config.claude_low(CLAUDE_SCHEDULER_MODEL);
         (
-            Arc::new(ClaudeRunner::new(tinker_m)),
+            Arc::new(ClaudeRunner::with_system_prompt(tinker_m, tend_system_prompt())),
             Arc::new(ClaudeRunner::new(goal_m)),
             Arc::new(ClaudeRunner::new(cleanup_m)),
         )
@@ -2120,6 +2134,43 @@ mod tests {
         let content = tend_agent_content();
         assert!(content.contains("code-reality questions to @rummage") || content.contains("delegates aggressively"),
             "tend prompt must require delegating code-reality questions to rummage rather than reading source directly");
+    }
+
+    // spec (backends): the claude backend has no path-scoped permission block — the system
+    // prompt is the only mechanism that states tend's file-access boundary. tend_system_prompt()
+    // must lead with the scope constraint so it reads as a system-level rule, not buried text.
+    #[test]
+    fn test_spec_tend_system_prompt_leads_with_scope_constraint() {
+        let prompt = tend_system_prompt();
+        assert!(
+            prompt.starts_with("Read and write files ONLY"),
+            "tend system prompt must open with the file-scope boundary statement"
+        );
+        assert!(
+            prompt.contains(".tinker/goals"),
+            "tend system prompt must name .tinker/goals/ as the only permitted scope"
+        );
+        assert!(
+            prompt.contains("src/"),
+            "tend system prompt must explicitly name src/ as off-limits"
+        );
+    }
+
+    // spec (backends): tend's claude runner must be constructed with a system prompt so the
+    // file-access boundary arrives as a persistent system message, not a user-turn instruction.
+    // ClaudeRunner::new must not be used for the tend (tinker_m) slot in the claude branch.
+    #[test]
+    fn test_spec_claude_tend_runner_wired_with_system_prompt() {
+        let main_rs = include_str!("main.rs");
+        let tend_runner_line = main_rs
+            .lines()
+            .find(|l| l.contains("Arc::new(ClaudeRunner") && l.contains("tinker_m"))
+            .expect("must find ClaudeRunner construction for tend (tinker_m) in the claude branch");
+        assert!(
+            !tend_runner_line.contains("ClaudeRunner::new("),
+            "tend's claude runner must use with_system_prompt, not ClaudeRunner::new — got: {}",
+            tend_runner_line.trim()
+        );
     }
 
     #[test]

@@ -31,7 +31,14 @@ personas its own way:
   each persona via `--system-prompt` instead of an agent file; resumes
   sessions with `--resume <session-id>`; parses streaming JSON
   (`--output-format stream-json --verbose`). The backend choice is a
-  boolean startup flag and is not persisted.
+  boolean startup flag and is not persisted. **Path-scope enforcement
+  is softer here than in the opencode path**: the claude CLI has no
+  equivalent to opencode's `permission:` block, so there are no
+  harness-level path restrictions. `--disallowedTools` is not a
+  substitute — it denies named tools, but Bash bypasses it entirely,
+  so the invariant does not hold. The system prompt states tend's write
+  scope explicitly (`.tinker/goals/` only, no `src/`), but compliance
+  is prompt-level, not enforced by the runner.
 
 Which model fills each tier, per backend, is overridable at runtime
 through `model-config`, a `.tinker/config.toml` file; the per-backend
