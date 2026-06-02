@@ -242,6 +242,36 @@ fn push_message_lines(lines: &mut Vec<Line<'static>>, msg: &crate::app::Message)
 }
 
 
+/// Build the running-sessions label for the Goals pane title.
+/// Sorts IDs alphabetically, then greedily fits as many as possible within
+/// `max_chars`. Returns e.g. `" ▶ alpha, beta + 2 goals "` or `" ▶ alpha "`.
+fn running_label(mut ids: Vec<&str>, max_chars: usize) -> String {
+    ids.sort_unstable();
+    let n = ids.len();
+    let mut best_k = 0usize;
+    for k in 1..=n {
+        let shown = &ids[..k];
+        let label = if k == n {
+            format!(" ▶ {} ", shown.join(", "))
+        } else {
+            let remaining = n - k;
+            format!(" ▶ {} + {} {} ", shown.join(", "), remaining, if remaining == 1 { "goal" } else { "goals" })
+        };
+        if label.chars().count() <= max_chars {
+            best_k = k;
+        }
+    }
+    if best_k == n && best_k > 0 {
+        format!(" ▶ {} ", ids[..best_k].join(", "))
+    } else if best_k > 0 {
+        let remaining = n - best_k;
+        format!(" ▶ {} + {} {} ", ids[..best_k].join(", "), remaining, if remaining == 1 { "goal" } else { "goals" })
+    } else {
+        let remaining = n;
+        format!(" ▶ {} {} ", remaining, if remaining == 1 { "goal" } else { "goals" })
+    }
+}
+
 fn draw_goal_tree(
     frame: &mut Frame,
     app: &mut App,
@@ -261,13 +291,14 @@ fn draw_goal_tree(
         " starting… ".to_string()
     } else {
         let n = app.running_sessions.len();
-        if n == 1 {
-            let id = app.running_sessions.keys().next().unwrap();
-            format!(" ▶ {} ", id)
-        } else if n > 1 {
-            format!(" ▶ {} running ", n)
-        } else {
+        if n == 0 {
             String::new()
+        } else {
+            // " Goals{phase_label} " must fit in area.width - 2 (border corners).
+            // Fixed overhead: " Goals " = 7 chars.
+            let max_chars = (area.width as usize).saturating_sub(9);
+            let ids: Vec<&str> = app.running_sessions.keys().map(String::as_str).collect();
+            running_label(ids, max_chars)
         }
     };
     let title = format!(" Goals{} ", phase_label);
@@ -911,6 +942,54 @@ mod tests {
             app.selected_goal,
             offset
         );
+    }
+
+    /// Spec (tui — goals pane title): with ample space all running IDs are shown.
+    #[test]
+    fn test_spec_running_label_all_fit() {
+        let ids = vec!["beta", "alpha"];
+        let label = running_label(ids, 100);
+        assert_eq!(label, " ▶ alpha, beta ");
+    }
+
+    /// Spec (tui — goals pane title): IDs are sorted alphabetically for stability.
+    #[test]
+    fn test_spec_running_label_sorted() {
+        let ids = vec!["zzz", "aaa", "mmm"];
+        let label = running_label(ids, 100);
+        assert_eq!(label, " ▶ aaa, mmm, zzz ");
+    }
+
+    /// Spec (tui — goals pane title): when not all IDs fit, show as many as
+    /// possible followed by "+ N goals".
+    #[test]
+    fn test_spec_running_label_overflow_shows_count() {
+        // sorted: ["alpha", "beta", "gamma"]
+        // k=1: " ▶ alpha + 2 goals " = 19 chars ≤ 20 → fits
+        // k=2: " ▶ alpha, beta + 1 goal " = 24 chars > 20 → doesn't fit
+        let ids = vec!["beta", "alpha", "gamma"];
+        let label = running_label(ids, 20);
+        assert_eq!(label, " ▶ alpha + 2 goals ");
+    }
+
+    /// Spec (tui — goals pane title): singular "goal" when exactly one is hidden.
+    #[test]
+    fn test_spec_running_label_singular_goal() {
+        // ids sorted: ["very-long-id-one", "very-long-id-two"]
+        // k=1: " ▶ very-long-id-one + 1 goal " = 29 chars ≤ 29 → fits
+        // k=2: " ▶ very-long-id-one, very-long-id-two " = 38 chars > 29 → doesn't fit
+        let ids = vec!["very-long-id-two", "very-long-id-one"];
+        let label = running_label(ids, 29);
+        assert!(label.contains("+ 1 goal "), "expected singular 'goal', got: {}", label);
+        assert!(!label.contains("goals"), "must not say 'goals' for remainder=1, got: {}", label);
+    }
+
+    /// Spec (tui — goals pane title): when nothing fits, fall back to count-only label.
+    #[test]
+    fn test_spec_running_label_nothing_fits_fallback() {
+        let ids = vec!["a-very-long-goal-name", "another-very-long-goal"];
+        let label = running_label(ids, 5);
+        assert!(label.contains("2 goals"), "expected count fallback, got: {}", label);
     }
 
 }

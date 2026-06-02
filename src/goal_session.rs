@@ -80,7 +80,7 @@ pub enum SessionEvent {
 /// its parent (if any), its declared children, and its related links. Each
 /// row carries the neighbor's id and a reason explaining why it might be
 /// relevant to pull. Returns an empty string when the goal has no neighbors.
-fn build_neighborhood_table(goal: &Goal) -> String {
+pub fn build_neighborhood_table(goal: &Goal) -> String {
     let mut rows: Vec<(String, String)> = vec![];
 
     if !goal.parent_id.is_empty() {

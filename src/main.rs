@@ -56,19 +56,21 @@ fn tend_agent_content() -> String {
     format!("{}{}", TEND_FRONTMATTER, packaged_tend_goal().description)
 }
 
-fn tend_init_prompt(goals_summary: &str) -> String {
+fn tend_init_prompt(goals_summary: &str, neighbor_section: &str) -> String {
     format!(
         "## Current goals (compact index — pull full text on demand)\n{goals_summary}\n\n\
          ---\n\n\
+         {neighbor_section}\
          **Startup.** This is a regular startup. Wait for the user's first instruction — \
          produce no output, no greeting, no acknowledgement."
     )
 }
 
-fn tend_init_prompt_full_context(goals_summary: &str) -> String {
+fn tend_init_prompt_full_context(goals_summary: &str, neighbor_section: &str) -> String {
     format!(
         "## Current goals (full text)\n{goals_summary}\n\n\
          ---\n\n\
+         {neighbor_section}\
          **Startup.** This is a regular startup. Wait for the user's first instruction — \
          produce no output, no greeting, no acknowledgement."
     )
@@ -480,10 +482,37 @@ async fn run_loop(
             let a = app.lock().unwrap();
             if a.goals.is_empty() { "[]".to_string() } else { goal::build_compact_index(&a.goals) }
         };
+        let neighbor_section = {
+            let table = goal_session::build_neighborhood_table(&tend_goal);
+            if table.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "## Neighbor goals\n\n\
+                     **Before and during significant work, send an `@`-message to each \
+                     neighboring goal — parent, children, and related links — excluding \
+                     your dispatcher, who already knows what you are doing.** Announce \
+                     what you are doing and invite input. \
+                     Adjacent goals respond with context, flag conflicts, and collaborate \
+                     toward resolution. Conflicts that neither party can resolve must \
+                     surface to your dispatcher — do not absorb them silently.\n\
+                     \n\
+                     Use the reason column to write a useful opening message. For deeper \
+                     context about any neighbor's scope or intent, consult `@tend` — \
+                     tend holds the full goal tree.\n\
+                     \n\
+                     **This mandate is only as good as the edge graph.** If a goal that \
+                     should be adjacent is missing from this table, that is a graph \
+                     maintenance failure — not something to work around.\n\
+                     \n\
+                     {table}\n\n"
+                )
+            }
+        };
         let trigger = if use_full_goal_context {
-            tend_init_prompt_full_context(&compact_index)
+            tend_init_prompt_full_context(&compact_index, &neighbor_section)
         } else {
-            tend_init_prompt(&compact_index)
+            tend_init_prompt(&compact_index, &neighbor_section)
         };
         let (tend_tx, tend_rx) = mpsc::channel::<String>(16);
         session_senders.insert("tend".to_string(), tend_tx.clone());
@@ -2188,7 +2217,7 @@ mod tests {
     fn test_spec_tinker_static_persona_in_agent_dynamic_goals_in_init() {
         let content = tend_agent_content();
         assert!(content.starts_with("---\n"), "agent file must begin with YAML frontmatter");
-        let init = tend_init_prompt("- demo-goal-id: a demo description");
+        let init = tend_init_prompt("- demo-goal-id: a demo description", "");
         assert!(init.contains("Current goals"), "init prompt must label the dynamic goals section");
         assert!(init.contains("demo-goal-id"), "init prompt must carry the dynamic goals summary verbatim");
         assert!(!content.contains("demo-goal-id"), "agent file must not embed dynamic goal ids");
@@ -2282,9 +2311,28 @@ mod tests {
 
     #[test]
     fn test_spec_tinker_init_prompt_full_context_label() {
-        let prompt = tend_init_prompt_full_context("### root\ndescription here");
+        let prompt = tend_init_prompt_full_context("### root\ndescription here", "");
         assert!(prompt.contains("full text"), "full-context init prompt must label goals as full text");
         assert!(!prompt.contains("compact"), "full-context init prompt must not reference the compact index");
+    }
+
+    // spec (agent-collaboration): tend's init prompt must carry the neighbor-consultation
+    // mandate the same way session_init_message does for goal agents. When a non-empty
+    // neighbor section is passed, both prompt variants must include it so the mandate
+    // is salient before the startup instruction.
+    #[test]
+    fn test_spec_tend_init_prompt_injects_neighbor_section() {
+        let section = "## Neighbor goals\n\nsome table\n\n";
+        let compact = tend_init_prompt("[]", section);
+        assert!(
+            compact.contains("## Neighbor goals"),
+            "compact init prompt must include the neighbor-consultation section",
+        );
+        let full = tend_init_prompt_full_context("[]", section);
+        assert!(
+            full.contains("## Neighbor goals"),
+            "full-context init prompt must include the neighbor-consultation section",
+        );
     }
 
     #[test]
@@ -2305,12 +2353,12 @@ mod tests {
     // corresponding model instruction, not just a rendering gate.
     #[test]
     fn test_spec_tend_startup_silence_prompt_instructs_no_output() {
-        let compact = tend_init_prompt("[]");
+        let compact = tend_init_prompt("[]", "");
         assert!(
             compact.contains("no output") || compact.contains("produce no"),
             "compact startup prompt must instruct tend to produce no output",
         );
-        let full = tend_init_prompt_full_context("[]");
+        let full = tend_init_prompt_full_context("[]", "");
         assert!(
             full.contains("no output") || full.contains("produce no"),
             "full-context startup prompt must instruct tend to produce no output",
