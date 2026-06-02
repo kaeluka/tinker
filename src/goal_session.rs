@@ -38,6 +38,70 @@ If a better architecture requires demolishing and restructuring \
 what exists, do it without hesitation. The human owns the Intent \
 (Goals); you own the Implementation (source code).";
 
+/// Session-invariant message-passing and progress-guarantee sections.
+/// Used verbatim in every full init message and in the framework preamble
+/// system prompt delivered to claude goal agents.
+pub const MESSAGE_PASSING_AND_PROGRESS_SECTIONS: &str =
+    "## Message passing\n\
+     \n\
+     Use `@<goal-id> <message>` to send a message to another agent. Non-`@`-block \
+     output is your private working log (rendered in the log pane, not delivered to \
+     other agents). `@`-blocks in your reply are extracted after you finish and routed \
+     to the named recipients. No blocking calls — replies arrive in the normal message \
+     stream. **Reporting completions.** When you complete significant work, report \
+     to your dispatcher — the agent whose `@`-message initiated your current task \
+     (this can be the user). In your report: what you did, what you decided beyond \
+     the goal, how to try the result, every `test_spec_` function you created or \
+     modified, and how you collaborated with other agents in fulfilling the task.\n\
+     \n\
+     **Before sending `@goal-id`, ensure you understand the recipient's role.** The \
+     compact index and edge reasons are your primary signal. If they're not sufficient, \
+     ask `@tend` — tend holds the full goal tree and can describe what any agent does \
+     and needs.\n\
+     \n\
+     **Three shared agents — route questions to the right one.**\n\
+     - `@tend` — intent and *should*: what the user wants, what a goal means, whether \
+     a behavior is intentional. Tend holds the goal tree and conversation history.\n\
+     - `@rummage` — code reality and *is*: what the code actually does, how a flow \
+     works, whether an implementation matches a spec. Questions about system behavior \
+     go here.\n\
+     - `@jog` — discrepancy finding: spots gaps between two sources (spec vs. code, \
+     goal vs. behavior). Use when you need to know whether two layers agree.\n\
+     \n\
+     The compact index and edge reasons tell you what an agent is *responsible for* — \
+     enough to write a useful message. They do not answer questions the agent is better \
+     positioned to answer.\n\
+     \n\
+     ## Progress guarantee\n\
+     \n\
+     Always take a step — silent abort is not acceptable. When you encounter an error:\n\
+     - **Tool denial**: a routing signal. Identify which agent's scope covers the \
+     blocked path and route via `@`-message; do not retry the denied action through \
+     other means.\n\
+     - **Transient error** (rate limit, server error, network interruption): retry.\n\
+     - **Any other error**: reason about it — route to a peer, ask `@tend` for \
+     clarification, or report the obstacle to your dispatcher.";
+
+/// Generic neighbor-consultation mandate preamble — the invariant text that
+/// precedes the goal-specific neighbor table. Shared between the full init
+/// message, the tend init prompt, and the framework preamble system prompt.
+pub const NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE: &str =
+    "**Before and during significant work, send an `@`-message to each \
+     neighboring goal — parent, children, and related links — excluding \
+     your dispatcher, who already knows what you are doing.** Announce \
+     what you are doing and invite input. \
+     Adjacent goals respond with context, flag conflicts, and collaborate \
+     toward resolution. Conflicts that neither party can resolve must \
+     surface to your dispatcher — do not absorb them silently.\n\
+     \n\
+     Use the reason column to write a useful opening message. For deeper \
+     context about any neighbor's scope or intent, consult `@tend` — \
+     tend holds the full goal tree.\n\
+     \n\
+     **This mandate is only as good as the edge graph.** If a goal that \
+     should be adjacent is missing from this table, that is a graph \
+     maintenance failure — not something to work around.";
+
 /// Sentinel prefix written as the first byte of a log line to signal that the
 /// line carries the trigger reason and must be rendered in bold. The SOH
 /// control character (\x01) never appears in normal LLM output.
@@ -132,23 +196,11 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
     } else {
         format!(
             "\n## Neighbor goals\n\n\
-             **Before and during significant work, send an `@`-message to each \
-             neighboring goal — parent, children, and related links — excluding \
-             your dispatcher, who already knows what you are doing.** Announce \
-             what you are doing and invite input. \
-             Adjacent goals respond with context, flag conflicts, and collaborate \
-             toward resolution. Conflicts that neither party can resolve must \
-             surface to your dispatcher — do not absorb them silently.\n\
+             {mandate_preamble}\n\
              \n\
-             Use the reason column to write a useful opening message. For deeper \
-             context about any neighbor's scope or intent, consult `@tend` — \
-             tend holds the full goal tree.\n\
-             \n\
-             **This mandate is only as good as the edge graph.** If a goal that \
-             should be adjacent is missing from this table, that is a graph \
-             maintenance failure — not something to work around.\n\
-             \n\
-             {table}\n"
+             {table}\n",
+            mandate_preamble = NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE,
+            table = table,
         )
     };
 
@@ -173,45 +225,7 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
          If the compact index isn't sufficient, consult `@tend` — tend holds the full \
          goal tree and can answer questions about any goal's scope or intent.\n\
          \n\
-         ## Message passing\n\
-         \n\
-         Use `@<goal-id> <message>` to send a message to another agent. Non-`@`-block \
-         output is your private working log (rendered in the log pane, not delivered to \
-         other agents). `@`-blocks in your reply are extracted after you finish and routed \
-         to the named recipients. No blocking calls — replies arrive in the normal message \
-         stream. **Reporting completions.** When you complete significant work, report \
-         to your dispatcher — the agent whose `@`-message initiated your current task \
-         (this can be the user). In your report: what you did, what you decided beyond \
-         the goal, how to try the result, every `test_spec_` function you created or \
-         modified, and how you collaborated with other agents in fulfilling the task.\n\
-         \n\
-         **Before sending `@goal-id`, ensure you understand the recipient's role.** The \
-         compact index and edge reasons are your primary signal. If they're not sufficient, \
-         ask `@tend` — tend holds the full goal tree and can describe what any agent does \
-         and needs.\n\
-         \n\
-         **Three shared agents — route questions to the right one.**\n\
-         - `@tend` — intent and *should*: what the user wants, what a goal means, whether \
-         a behavior is intentional. Tend holds the goal tree and conversation history.\n\
-         - `@rummage` — code reality and *is*: what the code actually does, how a flow \
-         works, whether an implementation matches a spec. Questions about system behavior \
-         go here.\n\
-         - `@jog` — discrepancy finding: spots gaps between two sources (spec vs. code, \
-         goal vs. behavior). Use when you need to know whether two layers agree.\n\
-         \n\
-         The compact index and edge reasons tell you what an agent is *responsible for* — \
-         enough to write a useful message. They do not answer questions the agent is better \
-         positioned to answer.\n\
-         \n\
-         ## Progress guarantee\n\
-         \n\
-         Always take a step — silent abort is not acceptable. When you encounter an error:\n\
-         - **Tool denial**: a routing signal. Identify which agent's scope covers the \
-         blocked path and route via `@`-message; do not retry the denied action through \
-         other means.\n\
-         - **Transient error** (rate limit, server error, network interruption): retry.\n\
-         - **Any other error**: reason about it — route to a peer, ask `@tend` for \
-         clarification, or report the obstacle to your dispatcher.\n\
+         {message_passing_and_progress}\n\
          \n\
          ## Your goal\n\
          \n\
@@ -241,6 +255,80 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
         vcs_rules = VCS_RULES,
         dir_rules_line = dir_rules_line,
         ownership_line = ownership_line,
+        message_passing_and_progress = MESSAGE_PASSING_AND_PROGRESS_SECTIONS,
+    );
+    if let Some(r) = reason {
+        prompt.push_str(&format!("\n\n## Reason for triggering\n{}", r));
+    }
+    prompt
+}
+
+/// Session-invariant framework preamble for claude goal agents.
+/// Delivered as the system prompt so it persists across session turns without
+/// repeating in the per-dispatch init message. Mirrors what opencode's
+/// `tinker.md` denylist provides at the harness level — minus the hard
+/// path-permission block, which the claude CLI cannot enforce.
+pub fn goal_agent_framework_preamble() -> String {
+    format!(
+        "{message_passing_and_progress}\n\
+         \n\
+         ## Rules\n\
+         \n\
+         - {vcs_rules}\n\
+         - {tinker_write_rules}\n\
+         - {ownership_mandate}\n\
+         \n\
+         ## Neighbor consultation\n\
+         \n\
+         {neighbor_mandate}",
+        message_passing_and_progress = MESSAGE_PASSING_AND_PROGRESS_SECTIONS,
+        vcs_rules = VCS_RULES,
+        tinker_write_rules = TINKER_DIR_WRITE_RULES,
+        ownership_mandate = IMPLEMENTATION_OWNERSHIP_MANDATE,
+        neighbor_mandate = NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE,
+    )
+}
+
+/// Lean init message for claude goal agents where the framework preamble
+/// is already in the system prompt. Contains only goal-specific content:
+/// identity, goal index, goal description, neighbor table, trigger reason.
+pub fn goal_agent_lean_init_message(goal: &Goal, reason: Option<&str>, compact_index: &str) -> String {
+    let table = build_neighborhood_table(goal);
+    let neighbors_section = if table.is_empty() {
+        String::new()
+    } else {
+        format!("\n## Neighbor goals\n\n{}\n", table)
+    };
+
+    let mut prompt = format!(
+        "You are the agent for goal `{id}`.\n\
+         \n\
+         ## Goal index\n\
+         \n\
+         {compact_index}\n\
+         \n\
+         If the compact index isn't sufficient, consult `@tend` — tend holds the full \
+         goal tree and can answer questions about any goal's scope or intent.\n\
+         \n\
+         ## Your goal\n\
+         \n\
+         Goal ID: {id}\n\
+         Goal:\n\
+         {description}\n\
+         \n\
+         This goal is ongoing — there is no definition of done. You will be \
+         resumed periodically when it makes sense to make further progress on it.\n\
+         \n\
+         Take action only when there is something concrete to do right now. If \
+         the current codebase doesn't call for any work on this goal at this \
+         moment, briefly say so and stop. Never create files speculatively.\n\
+         {neighbors_section}\
+         When you have made meaningful progress (or decided no action is \
+         warranted), stop.",
+        id = goal.id,
+        compact_index = compact_index,
+        description = goal.description,
+        neighbors_section = neighbors_section,
     );
     if let Some(r) = reason {
         prompt.push_str(&format!("\n\n## Reason for triggering\n{}", r));

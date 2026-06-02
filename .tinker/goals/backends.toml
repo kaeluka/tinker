@@ -31,14 +31,24 @@ personas its own way:
   each persona via `--system-prompt` instead of an agent file; resumes
   sessions with `--resume <session-id>`; parses streaming JSON
   (`--output-format stream-json --verbose`). The backend choice is a
-  boolean startup flag and is not persisted. **Path-scope enforcement
-  is softer here than in the opencode path**: the claude CLI has no
-  equivalent to opencode's `permission:` block, so there are no
-  harness-level path restrictions. `--disallowedTools` is not a
-  substitute — it denies named tools, but Bash bypasses it entirely,
-  so the invariant does not hold. The system prompt states tend's write
-  scope explicitly (`.tinker/goals/` only, no `src/`), but compliance
-  is prompt-level, not enforced by the runner.
+  boolean startup flag and is not persisted.
+
+  *Persona delivery split.* Session-invariant content arrives via
+  `--system-prompt`: for tend, its role description and write-scope
+  constraint (`.tinker/goals/` only, no `src/`); for goal agents, the
+  framework preamble (message passing protocol, progress guarantee,
+  rules, neighbor consultation mandate). Per-session content arrives in
+  the init message: for goal agents, the goal spec, trigger reason, and
+  neighbor table. This mirrors the opencode split between the stable
+  agent file (`tinker.md`) and the per-dispatch trigger.
+
+  **Path-scope enforcement is softer here than in the opencode path**:
+  the claude CLI has no equivalent to opencode's `permission:` block,
+  so there are no harness-level path restrictions. `--disallowedTools`
+  is not a substitute — it denies named tools, but Bash bypasses it
+  entirely, so the invariant does not hold. Both tend and goal agents
+  rely on system-prompt-level compliance rather than runner
+  enforcement.
 
 Which model fills each tier, per backend, is overridable at runtime
 through `model-config`, a `.tinker/config.toml` file; the per-backend

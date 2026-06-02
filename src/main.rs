@@ -68,6 +68,14 @@ fn tend_system_prompt() -> String {
     )
 }
 
+/// System prompt for claude goal agents. Contains the session-invariant
+/// framework preamble so it persists across session turns without repeating
+/// in every per-dispatch init message. Mirrors the opencode `tinker.md` /
+/// per-dispatch split.
+fn goal_agent_system_prompt() -> String {
+    goal_session::goal_agent_framework_preamble()
+}
+
 fn tend_init_prompt(goals_summary: &str, neighbor_section: &str) -> String {
     format!(
         "## Current goals (compact index — pull full text on demand)\n{goals_summary}\n\n\
@@ -112,6 +120,7 @@ async fn goal_agent_loop(
     app_ref: Arc<Mutex<App>>,
     log: logger::LogSender,
     backend_name: String,
+    lean_init: bool,
 ) {
     let goal_id = goal.id.clone();
     let mut llm_session_id: Option<String> = None;
@@ -180,7 +189,11 @@ async fn goal_agent_loop(
             log.emit("goal_session", logger::LogEvent::GoalSessionStarted {
                 goal_id: goal_id.clone(),
             });
-            goal_session::session_init_message(&goal, Some(&dispatch_msg), &compact_index)
+            if lean_init {
+                goal_session::goal_agent_lean_init_message(&goal, Some(&dispatch_msg), &compact_index)
+            } else {
+                goal_session::session_init_message(&goal, Some(&dispatch_msg), &compact_index)
+            }
         } else {
             dispatch_msg
         };
@@ -320,7 +333,7 @@ async fn main() -> Result<()> {
         let cleanup_m = model_config.claude_low(CLAUDE_SCHEDULER_MODEL);
         (
             Arc::new(ClaudeRunner::with_system_prompt(tinker_m, tend_system_prompt())),
-            Arc::new(ClaudeRunner::new(goal_m)),
+            Arc::new(ClaudeRunner::with_system_prompt(goal_m, goal_agent_system_prompt())),
             Arc::new(ClaudeRunner::new(cleanup_m)),
         )
     } else if use_default_model {
@@ -494,23 +507,11 @@ async fn run_loop(
             } else {
                 format!(
                     "## Neighbor goals\n\n\
-                     **Before and during significant work, send an `@`-message to each \
-                     neighboring goal — parent, children, and related links — excluding \
-                     your dispatcher, who already knows what you are doing.** Announce \
-                     what you are doing and invite input. \
-                     Adjacent goals respond with context, flag conflicts, and collaborate \
-                     toward resolution. Conflicts that neither party can resolve must \
-                     surface to your dispatcher — do not absorb them silently.\n\
+                     {mandate_preamble}\n\
                      \n\
-                     Use the reason column to write a useful opening message. For deeper \
-                     context about any neighbor's scope or intent, consult `@tend` — \
-                     tend holds the full goal tree.\n\
-                     \n\
-                     **This mandate is only as good as the edge graph.** If a goal that \
-                     should be adjacent is missing from this table, that is a graph \
-                     maintenance failure — not something to work around.\n\
-                     \n\
-                     {table}\n\n"
+                     {table}\n\n",
+                    mandate_preamble = goal_session::NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE,
+                    table = table,
                 )
             }
         };
@@ -530,7 +531,7 @@ async fn run_loop(
         let log_t = log.clone();
         let backend_t = backend_name.to_string();
         tokio::spawn(async move {
-            goal_agent_loop(tend_goal, tend_rx, session_tx_t, oc_t, oc_cleanup_t, fs_t, work_dir_t, app_ref, log_t, backend_t).await;
+            goal_agent_loop(tend_goal, tend_rx, session_tx_t, oc_t, oc_cleanup_t, fs_t, work_dir_t, app_ref, log_t, backend_t, false).await;
         });
         let _ = tend_tx.try_send(trigger);
     }
@@ -560,13 +561,14 @@ async fn run_loop(
                     let app_ref_goal = app.clone();
                     let log_goal = log.clone();
                     let backend_goal = backend_name.to_string();
+                    let lean_init_goal = backend_name == "claude";
                     let work_dir_goal = work_dir.clone();
                     let _ = msg_tx_goal.try_send(req.message);
                     tokio::spawn(async move {
                         goal_agent_loop(
                             goal, msg_rx_goal, session_tx_goal,
                             oc_for_goal, oc_cleanup_goal, fs_goal,
-                            work_dir_goal, app_ref_goal, log_goal, backend_goal,
+                            work_dir_goal, app_ref_goal, log_goal, backend_goal, lean_init_goal,
                         ).await;
                     });
                 }
@@ -2170,6 +2172,24 @@ mod tests {
             !tend_runner_line.contains("ClaudeRunner::new("),
             "tend's claude runner must use with_system_prompt, not ClaudeRunner::new — got: {}",
             tend_runner_line.trim()
+        );
+    }
+
+    // spec (backends): goal agents' claude runner must be constructed with a system prompt so
+    // the session-invariant framework preamble (message passing, progress guarantee, rules,
+    // neighbor consultation mandate) arrives as a persistent system message. ClaudeRunner::new
+    // must not be used for the goal agent (goal_m) slot in the claude branch.
+    #[test]
+    fn test_spec_claude_goal_runner_wired_with_system_prompt() {
+        let main_rs = include_str!("main.rs");
+        let goal_runner_line = main_rs
+            .lines()
+            .find(|l| l.contains("Arc::new(ClaudeRunner") && l.contains("goal_m"))
+            .expect("must find ClaudeRunner construction for goal agents (goal_m) in the claude branch");
+        assert!(
+            !goal_runner_line.contains("ClaudeRunner::new("),
+            "goal agents' claude runner must use with_system_prompt, not ClaudeRunner::new — got: {}",
+            goal_runner_line.trim()
         );
     }
 
