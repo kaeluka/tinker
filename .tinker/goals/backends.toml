@@ -1,5 +1,5 @@
 id = "backends"
-summary = "governs: pluggable LLM backend abstraction (runner trait at composition root); opencode default (tend.md + tinker.md written at startup with path-scoped permissions) vs claude --claude (--system-prompt, streaming JSON); claude high tier pinned to claude-opus-4-8 (not opus alias) to avoid unvalidated model versions; per-backend model-tier defaults overridable via model-config | triggers: backend implementation; persona delivery between backends; adding third backend; startup flag changes; high-tier model pin; agent file permission rules"
+summary = "governs: pluggable LLM backend abstraction (runner trait at composition root); opencode default (tend.md + tinker.md written at startup with path-scoped permissions) vs claude --claude (--system-prompt, streaming JSON); claude high tier pinned to claude-opus-4-8 (not opus alias) to avoid unvalidated model versions; per-backend model-tier defaults overridable via model-config; CLI error output re-injected into session so agents can reason about recovery | triggers: backend implementation; persona delivery between backends; adding third backend; startup flag changes; high-tier model pin; agent file permission rules; error handling behavior"
 description = """
 ## WHAT
 Tinker runs against a **pluggable backend** — the LLM CLI it shells
@@ -38,9 +38,18 @@ through `model-config`, a `.tinker/config.toml` file; the per-backend
 mappings above are the built-in defaults each tier falls back to when
 the config leaves a slot unset.
 
+**Error feedback.** When a CLI process exits with an error, the runner
+captures the error output and re-injects it as a message into the
+active session before the session closes, so the agent can read it
+and decide how to respond. The default expectation is that the agent
+reasons from the error. Permission-denied errors are a signal that
+the agent crossed a path boundary enforced by the agent file; the
+expected response is to route through a peer `@`-message rather than
+retry the blocked action directly.
+
 Startup argument handling (unknown-arg detection, help text, exit
-behaviour) is governed by `startup-args`. Recognised flags passed to
-this goal's backends are `--claude` (select the claude backend) and
+behaviour) is governed by `startup-args`. Recognised flags for this
+goal's backends are `--claude` (select the claude backend) and
 `--tend-full-goal-context` (restore full goal text in tend's context
 instead of the compact index).
 
@@ -55,20 +64,12 @@ invisible as the silent default. Naming opencode and claude as
 co-equal implementations fixes that and makes the cost of a third
 backend explicit and small.
 
-## SCOPE
-- In scope: the runner-trait abstraction with real implementations
-  wired only at the composition root; the two current backends
-  (opencode default, claude via `--claude`); per-backend model-tier
-  mapping (the built-in defaults, overridable per tier via
-  `model-config`) and persona delivery; agent file installation
-  (`tend.md` + `tinker.md` with path-scoped permissions) on the opencode path; `--resume` session
-  resumption and streaming-JSON parsing on the claude path.
-- Out of scope: persisting the backend *choice* (`--claude` is a
-  startup flag — per-tier model overrides, by contrast, are persisted
-  in `model-config`); auto-detecting which CLI is installed; backends
-  beyond opencode and claude until one is actually added; unknown-arg
-  detection and help text (see `startup-args`); tool-call rendering
-  (see `tui`).
+Error feedback closes the enforcement loop that path-scoped
+permissions open. The agent file rules already say "no" to out-of-scope
+paths; without error feedback the agent has no way to hear that
+signal and cannot course-correct. Re-injecting the error turns a
+silent process death into actionable information: the agent sees what
+failed and can find the compliant path.
 
 """
 parent_id = ""
@@ -84,3 +85,11 @@ reason = "`startup-args` owns unknown-arg detection, help text, and exit behavio
 [[related]]
 id = "coding-standards"
 reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
+
+[[related]]
+id = "no-peek"
+reason = "The error-feedback rule names `no-peek` as the resolution path for permission-denied errors: the agent routes through a peer @-message rather than retrying the blocked direct access. The feedback closes the enforcement loop that `no-peek`'s path-permission rules open. Asymmetric: `no-peek` is a packaged goal and carries no back-link."
+
+[[related]]
+id = "agent-liveness"
+reason = "agent-liveness defines the progress guarantee this goal's harness mechanisms enforce: tool-denial surfacing makes denials visible so agents can reason about them; silence detection prompts agents that produce no output to take a step."

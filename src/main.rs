@@ -1011,6 +1011,16 @@ fn handle_session_event(
             let known_ids = known_agent_ids(session_senders, &app.goals);
             let consultations = parse_at_commands(&session_text, &known_ids);
             dispatch_peer_consultations(app, &goal_id, &consultations, session_senders, goal_spawn_tx, log);
+            // Silence detection: if the session produced no output at all, prompt
+            // the agent to surface what happened. Applies uniformly to all sessions.
+            if session_text.trim().is_empty() {
+                if let Some(tx) = session_senders.get(&goal_id) {
+                    let _ = tx.try_send(
+                        "You produced no response to the previous message. \
+                         Did you mean to say something?".to_string()
+                    );
+                }
+            }
         }
         SessionEvent::CleanupBlocked { goal_id, dirty_files, error } => {
             let msg = if let Some(e) = error {
@@ -2382,6 +2392,55 @@ mod tests {
         assert!(
             !app.running_sessions.contains_key("tend"),
             "tend must be removed from running_sessions after Done",
+        );
+    }
+
+    // spec (agent-liveness): when a session produces no output at all (empty
+    // current_session_text at Done time), a follow-up message must be sent back
+    // into that session's channel so the agent is prompted to surface what happened.
+    #[test]
+    fn test_spec_silence_detection_sends_followup_on_empty_response() {
+        use crate::goal_session::SessionEvent;
+
+        let mut app = App::new();
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
+        let mut senders = HashMap::new();
+        senders.insert("rummage".to_string(), msg_tx);
+        let log = logger::noop_sender();
+
+        // No chunk emitted — current_session_text is empty at Done time.
+        let done = SessionEvent::Done { goal_id: "rummage".to_string(), crashed: false };
+        handle_session_event(&mut app, done, &spawn_tx, &senders, &RealFilesystem, &log);
+
+        assert!(
+            msg_rx.try_recv().is_ok(),
+            "empty-response session must receive a silence follow-up probe",
+        );
+    }
+
+    // spec (agent-liveness): when a session produces output, no silence probe
+    // is sent — the follow-up is reserved for genuinely empty turns only.
+    #[test]
+    fn test_spec_silence_detection_skips_followup_when_text_produced() {
+        use crate::goal_session::SessionEvent;
+
+        let mut app = App::new();
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
+        let mut senders = HashMap::new();
+        senders.insert("rummage".to_string(), msg_tx);
+        let log = logger::noop_sender();
+
+        let chunk = SessionEvent::Chunk { goal_id: "rummage".to_string(), text: "working on it".to_string() };
+        handle_session_event(&mut app, chunk, &spawn_tx, &senders, &RealFilesystem, &log);
+
+        let done = SessionEvent::Done { goal_id: "rummage".to_string(), crashed: false };
+        handle_session_event(&mut app, done, &spawn_tx, &senders, &RealFilesystem, &log);
+
+        assert!(
+            msg_rx.try_recv().is_err(),
+            "session that produced text must not receive a silence probe",
         );
     }
 

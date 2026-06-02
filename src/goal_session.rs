@@ -124,7 +124,8 @@ fn build_neighborhood_table(goal: &Goal) -> String {
 /// 3. Message-passing semantics — how @goal-id routing works.
 /// 4. The goal's own description (WHAT/WHY).
 /// 5. Rules (VCS, directory writes, ownership mandate).
-/// 6. Trigger reason (if present).
+/// 6. Neighbor goals — mandatory consultation table (agent-collaboration).
+/// 7. Trigger reason (if present).
 pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &str) -> String {
     let table = build_neighborhood_table(goal);
     let neighbors_section = if table.is_empty() {
@@ -132,9 +133,22 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
     } else {
         format!(
             "\n## Neighbor goals\n\n\
-             Use the reason column to decide which neighbors are relevant. \
-             If you need more context about a neighbor's scope or intent, \
-             consult `@tend` — tend holds the full goal tree.\n\n\
+             **Before and during significant work, send an `@`-message to each \
+             neighboring goal — parent, children, and related links — excluding \
+             your dispatcher, who already knows what you are doing.** Announce \
+             what you are doing and invite input. \
+             Adjacent goals respond with context, flag conflicts, and collaborate \
+             toward resolution. Conflicts that neither party can resolve must \
+             surface to your dispatcher — do not absorb them silently.\n\
+             \n\
+             Use the reason column to write a useful opening message. For deeper \
+             context about any neighbor's scope or intent, consult `@tend` — \
+             tend holds the full goal tree.\n\
+             \n\
+             **This mandate is only as good as the edge graph.** If a goal that \
+             should be adjacent is missing from this table, that is a graph \
+             maintenance failure — not something to work around.\n\
+             \n\
              {table}\n"
         )
     };
@@ -189,6 +203,16 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
          The compact index and edge reasons tell you what an agent is *responsible for* — \
          enough to write a useful message. They do not answer questions the agent is better \
          positioned to answer.\n\
+         \n\
+         ## Progress guarantee\n\
+         \n\
+         Always take a step — silent abort is not acceptable. When you encounter an error:\n\
+         - **Tool denial**: a routing signal. Identify which agent's scope covers the \
+         blocked path and route via `@`-message; do not retry the denied action through \
+         other means.\n\
+         - **Transient error** (rate limit, server error, network interruption): retry.\n\
+         - **Any other error**: reason about it — route to a peer, ask `@tend` for \
+         clarification, or report the obstacle to your dispatcher.\n\
          \n\
          ## Your goal\n\
          \n\
@@ -338,6 +362,31 @@ mod tests {
         assert!(
             init.contains(reason),
             "init message must surface the trigger reason"
+        );
+    }
+
+    // spec (agent-liveness): the framework preamble must include a Progress
+    // guarantee section instructing agents to route denied tool calls via
+    // @-message, retry transient errors, and never silently abort.
+    #[test]
+    fn test_spec_session_init_includes_progress_guarantee() {
+        let goal = make_goal("test", "do something");
+        let msg = session_init_message(&goal, None, "[]");
+        assert!(
+            msg.contains("Progress guarantee"),
+            "init message must include Progress guarantee section header"
+        );
+        assert!(
+            msg.contains("Tool denial"),
+            "Progress guarantee must address tool denial routing"
+        );
+        assert!(
+            msg.contains("silent abort"),
+            "Progress guarantee must prohibit silent abort"
+        );
+        assert!(
+            msg.contains("Transient error"),
+            "Progress guarantee must address transient errors"
         );
     }
 
@@ -582,6 +631,106 @@ mod tests {
 
         // Table header must be present
         assert!(msg.contains("| goal-id | reason |"));
+    }
+
+    // spec (agent-collaboration): the neighbor section must be a mandatory
+    // consultation requirement — imperative, not advisory. Before and during
+    // significant work the agent must send @-messages to every neighbor,
+    // announce what it is doing, and invite input.
+    #[test]
+    fn test_spec_neighbor_section_is_mandatory_consultation() {
+        use crate::goal::RelatedLink;
+
+        let mut goal = make_goal("calc", "build calc");
+        goal.related = vec![RelatedLink {
+            id: "coding-standards".into(),
+            reason: "apply these".into(),
+        }];
+
+        let msg = goal_init_message(&goal, None);
+
+        assert!(
+            msg.contains("Before and during significant work"),
+            "neighbor section must mandate consultation before and during work"
+        );
+        assert!(
+            msg.contains("send an `@`-message to each"),
+            "neighbor section must instruct sending @-messages to each neighbor"
+        );
+        assert!(
+            msg.contains("parent, children, and related links"),
+            "neighbor section must enumerate all three adjacency categories explicitly"
+        );
+        assert!(
+            msg.contains("Announce what you are doing"),
+            "neighbor section must require announcing work and inviting input"
+        );
+    }
+
+    // spec (agent-collaboration): the dispatcher is exempt from the consultation
+    // mandate — it already knows what the agent is doing. The section must name
+    // this exemption so agents don't redundantly notify their dispatcher.
+    #[test]
+    fn test_spec_neighbor_section_exempts_dispatcher() {
+        use crate::goal::RelatedLink;
+
+        let mut goal = make_goal("calc", "build calc");
+        goal.related = vec![RelatedLink { id: "foo".into(), reason: "related".into() }];
+
+        let msg = goal_init_message(&goal, None);
+
+        assert!(
+            msg.contains("excluding your dispatcher"),
+            "neighbor section must explicitly exempt the dispatcher from consultation"
+        );
+        assert!(
+            msg.contains("already knows what you are doing"),
+            "neighbor section must give the reason for the dispatcher exemption"
+        );
+    }
+
+    // spec (agent-collaboration): conflicts that neither party can resolve must
+    // surface to the dispatcher — the section must name this explicitly so
+    // agents do not absorb conflicts silently.
+    #[test]
+    fn test_spec_neighbor_section_names_conflict_escalation() {
+        use crate::goal::RelatedLink;
+
+        let mut goal = make_goal("calc", "build calc");
+        goal.related = vec![RelatedLink { id: "foo".into(), reason: "related".into() }];
+
+        let msg = goal_init_message(&goal, None);
+
+        assert!(
+            msg.contains("dispatcher"),
+            "neighbor section must name the dispatcher as the conflict escalation target"
+        );
+        assert!(
+            msg.contains("do not absorb them silently"),
+            "neighbor section must explicitly prohibit silent conflict absorption"
+        );
+    }
+
+    // spec (agent-collaboration): the mandate is only as good as the edge graph.
+    // The section must explicitly name missing edges as a graph maintenance
+    // failure so agents do not treat absent neighbors as "nothing to consult."
+    #[test]
+    fn test_spec_neighbor_section_names_graph_maintenance_failure() {
+        use crate::goal::RelatedLink;
+
+        let mut goal = make_goal("calc", "build calc");
+        goal.related = vec![RelatedLink { id: "foo".into(), reason: "related".into() }];
+
+        let msg = goal_init_message(&goal, None);
+
+        assert!(
+            msg.contains("graph maintenance failure"),
+            "neighbor section must name missing edges as a graph maintenance failure"
+        );
+        assert!(
+            msg.contains("only as good as the edge graph"),
+            "neighbor section must state the mandate is bounded by the edge graph"
+        );
     }
 
     // spec: no-peek — agents do not read goal files to understand neighbors.

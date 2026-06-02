@@ -1,0 +1,56 @@
+id = "agent-collaboration"
+summary = "governs: mandatory neighbor consultation before/during significant work; agents announce changes to all adjacent goals and invite input; collaborative conflict resolution (file-level and goal-level); unresolvables surface up the chain (goal agent → rummage → tend → user); mandate coupled to graph maintenance | triggers: agent starting significant work; conflicting changes between parallel agents; neighbor notification before implementation"
+description = """
+## WHAT
+Before and during significant work, every agent sends @-messages to its
+full adjacency — parent, children, and related goals — announcing what
+it's doing and inviting their input. This is a requirement, not a
+courtesy: the full adjacency defines the complete set of goals whose
+context bears on the work. The one exemption: the agent that dispatched
+this work already knows what's happening and does not need to be
+consulted.
+
+Adjacent goals respond in the spirit of collaboration: contributing
+relevant context, identifying conflicts (competing file edits or
+contradictory goal interpretations), and working toward a resolution.
+Agents think on their feet — they do not wait for all responses before
+acting, but they integrate what arrives and adjust. When a conflict
+cannot be resolved between the involved agents, it surfaces to the
+dispatcher: rummage handles unresolvables from goal agents; tend handles
+unresolvables from rummage; the user handles what tend cannot resolve
+alone.
+
+This mandate is only as good as the edge graph. If a relevant goal is
+not adjacent, it will not be consulted — and no agent can compensate for
+a missing edge. A gap in consultation is a gap in graph maintenance, not
+a gap in agent discipline. This instruction in the preamble and the
+link-symmetry rules in `goal-structure-standard` are two halves of the
+same guarantee.
+
+## WHY
+The edge graph encodes the system's complete coupling map. An agent
+working without consulting its neighbors loses context that only those
+neighbors' outgoing edges can surface — including context the working
+agent had no way to know it needed. Neighbors have their own
+neighborhoods; consultation propagates recursively through the graph,
+surfacing the full web of relevant context before work lands.
+
+At scale — a deployment with dozens or hundreds of goal agents running
+in parallel — this is the coordination mechanism. Silent work makes
+system behavior depend on each agent's isolated local view. The
+consultation requirement is what makes the graph's information actually
+flow.
+"""
+parent_id = "goal-agents"
+
+[[related]]
+id = "peer-consult"
+reason = "The @-message channel is the delivery mechanism for this goal's consultation requirement; peer-consult governs the protocol that carries each neighbor announcement. Asymmetric: peer-consult is a packaged goal and carries no back-link."
+
+[[related]]
+id = "no-peek"
+reason = "no-peek established that coupling lives in edges rather than direct reads; agent-collaboration extends that principle: since coupling lives in edges, agents must actively use those edges by consulting neighbors, not just avoid bypassing them. Asymmetric: no-peek is a packaged goal and carries no back-link."
+
+[[related]]
+id = "goal-structure-standard"
+reason = "goal-structure-standard's link-symmetry rules are the other half of this goal's guarantee: the consultation mandate is only as good as the edge graph, which goal-structure-standard maintains. Asymmetric: goal-structure-standard is a packaged goal and carries no back-link."

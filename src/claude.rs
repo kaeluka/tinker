@@ -39,6 +39,8 @@ struct ClaudeContent {
     text: Option<String>,
     name: Option<String>,
     input: Option<serde_json::Value>,
+    content: Option<serde_json::Value>,
+    is_error: Option<bool>,
 }
 
 /// Claude CLI runner bound to a specific model (opus/sonnet/haiku).
@@ -100,6 +102,16 @@ impl OpenCodeRunner for ClaudeRunner {
         }
 
         let stdout = child.stdout.take().expect("stdout piped");
+        let mut stderr_lines = BufReader::new(child.stderr.take().expect("stderr piped")).lines();
+        let stderr_collector = tokio::spawn(async move {
+            let mut buf = String::new();
+            while let Ok(Some(line)) = stderr_lines.next_line().await {
+                buf.push_str(&line);
+                buf.push('\n');
+            }
+            buf
+        });
+
         let mut lines = BufReader::new(stdout).lines();
         let mut returned_session_id = String::new();
         let mut sid_emitted = false;
@@ -143,9 +155,89 @@ impl OpenCodeRunner for ClaudeRunner {
                 }
             }
 
+            // Surface tool_result errors (permission denials) from user messages.
+            if ev.event_type == "user" {
+                if let Some(msg) = &ev.message {
+                    for content in &msg.content {
+                        if content.content_type == "tool_result" {
+                            let chunk = format_tool_result_error(content);
+                            if !chunk.is_empty() {
+                                on_chunk(chunk);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        child.wait().await?;
+        let status = child.wait().await?;
+        let stderr_text = stderr_collector.await.unwrap_or_default();
+        if !stderr_text.is_empty() {
+            on_chunk(format!("\n\u{2030} stderr: {}\n", stderr_text.trim()));
+        }
+
+        // On non-zero exit with stderr output, re-inject the error into the
+        // active session so the agent can reason about recovery — e.g. routing
+        // via a peer @-message rather than retrying a permission-denied path.
+        if !status.success() && !stderr_text.is_empty() {
+            let effective_sid = if !returned_session_id.is_empty() {
+                Some(returned_session_id.as_str())
+            } else {
+                session_id
+            };
+            if let Some(sid) = effective_sid {
+                let error_msg = format!(
+                    "[process error — exit code {}]\n{}\n",
+                    status.code().unwrap_or(-1),
+                    stderr_text.trim()
+                );
+                let mut follow_cmd = claude_command(&self.model, self.system_prompt.as_deref(), Some(sid), &self.disallowed_tools, work_dir);
+                if let Ok(mut follow_child) = follow_cmd.spawn() {
+                    if let Some(mut stdin) = follow_child.stdin.take() {
+                        let _ = stdin.write_all(error_msg.as_bytes()).await;
+                    }
+                    if let Some(follow_stderr) = follow_child.stderr.take() {
+                        tokio::spawn(async move {
+                            let mut lines = BufReader::new(follow_stderr).lines();
+                            while let Ok(Some(_)) = lines.next_line().await {}
+                        });
+                    }
+                    if let Some(follow_stdout) = follow_child.stdout.take() {
+                        let mut follow_lines = BufReader::new(follow_stdout).lines();
+                        while let Ok(Some(line)) = follow_lines.next_line().await {
+                            if line.is_empty() {
+                                continue;
+                            }
+                            let Ok(ev) = serde_json::from_str::<ClaudeEvent>(&line) else {
+                                continue;
+                            };
+                            if ev.event_type == "assistant" {
+                                if let Some(msg) = &ev.message {
+                                    for content in &msg.content {
+                                        match content.content_type.as_str() {
+                                            "text" => {
+                                                if let Some(text) = &content.text {
+                                                    on_chunk(text.clone());
+                                                }
+                                            }
+                                            "tool_use" => {
+                                                let chunk = format_tool_use(content);
+                                                if !chunk.is_empty() {
+                                                    on_chunk(chunk);
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let _ = follow_child.wait().await;
+                }
+            }
+        }
+
         Ok(returned_session_id)
     }
 }
@@ -166,6 +258,29 @@ fn format_tool_use(content: &ClaudeContent) -> String {
     } else {
         format!("\u{2192} {} {}\n", tool, summary)
     }
+}
+
+/// Render a tool_result error block as a visible ⚠ line.
+/// Only fires when `is_error` is true; returns empty string otherwise.
+/// Handles both string and array content formats.
+fn format_tool_result_error(content: &ClaudeContent) -> String {
+    if content.is_error != Some(true) {
+        return String::new();
+    }
+    let text = match &content.content {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => return String::new(),
+    };
+    if text.is_empty() {
+        return String::new();
+    }
+    let first_line = text.lines().next().unwrap_or(&text);
+    format!("\u{26A0} {}\n", first_line)
 }
 
 /// Pull a useful one-liner out of a tool's input args.
@@ -210,7 +325,7 @@ pub fn claude_command(
     cmd.args(claude_args(model, system_prompt, session_id, disallowed_tools));
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .current_dir(work_dir);
     cmd
 }
@@ -383,12 +498,64 @@ mod tests {
             text: None,
             name: Some("Bash".into()),
             input: Some(serde_json::json!({"command": "cargo test"})),
+            content: None,
+            is_error: None,
         };
         let formatted = format_tool_use(&content);
         assert!(formatted.starts_with("\u{2192} "), "must start with arrow");
         assert!(formatted.contains("Bash"), "must contain tool name");
         assert!(formatted.contains("cargo test"), "must contain summary");
         assert!(!formatted.contains('\n') || formatted.ends_with('\n'), "should be one line (plus trailing newline)");
+    }
+
+    // spec (backends): tool_result blocks with is_error=true in user messages must
+    // emit a ⚠-prefixed chunk so permission denials surface to the conversation pane.
+    // Content may be a plain string or an array of text blocks.
+    #[test]
+    fn test_spec_tool_result_error_string_emits_warning_chunk() {
+        let content = ClaudeContent {
+            content_type: "tool_result".into(),
+            text: None,
+            name: None,
+            input: None,
+            content: Some(serde_json::json!("Permission denied: .tinker/notes/notes.md")),
+            is_error: Some(true),
+        };
+        let chunk = format_tool_result_error(&content);
+        assert!(chunk.contains('\u{26A0}'), "tool_result error must emit \u{26A0} chunk");
+        assert!(chunk.contains("Permission denied"), "chunk must include error text");
+    }
+
+    // spec (backends): tool_result errors can carry array-format content; the
+    // text must still be extracted and surfaced.
+    #[test]
+    fn test_spec_tool_result_error_array_content_emits_warning_chunk() {
+        let content = ClaudeContent {
+            content_type: "tool_result".into(),
+            text: None,
+            name: None,
+            input: None,
+            content: Some(serde_json::json!([{"type": "text", "text": "Permission denied: .tinker/notes"}])),
+            is_error: Some(true),
+        };
+        let chunk = format_tool_result_error(&content);
+        assert!(chunk.contains('\u{26A0}'), "array-content tool_result error must emit \u{26A0} chunk");
+        assert!(chunk.contains("Permission denied"), "chunk must include error text");
+    }
+
+    // spec (backends): tool_result blocks without is_error must not emit a chunk —
+    // only error results (permission denials) are surfaced, not normal results.
+    #[test]
+    fn test_spec_tool_result_non_error_emits_nothing() {
+        let content = ClaudeContent {
+            content_type: "tool_result".into(),
+            text: None,
+            name: None,
+            input: None,
+            content: Some(serde_json::json!("file contents here")),
+            is_error: None,
+        };
+        assert!(format_tool_result_error(&content).is_empty(), "non-error tool_result must not emit a chunk");
     }
 
     // security: → security.md T4 — even though Claude CLI may not have the same
@@ -416,12 +583,13 @@ mod tests {
         }
     }
 
-    // security: → security.md T5 — Claude subprocesses must drop stderr
-    // to prevent TUI alternate-screen corruption. The builder function
-    // `claude_command` enforces this by construction (always passes
-    // Stdio::null() for stderr).
+    // security: → security.md T5 — Claude subprocess stderr is piped and
+    // captured, not leaked to the terminal (which would corrupt the TUI
+    // alternate screen). The captured output is re-injected into the session
+    // on non-zero exit so the agent can reason about recovery. Not nulled
+    // because error feedback requires the content.
     #[test]
-    fn test_security_t5_stderr_is_nulled() {
+    fn test_security_t5_stderr_is_captured_not_leaked() {
         use std::ffi::OsStr;
         let cmd = claude_command("haiku", None, None, &[], Path::new("/tmp"));
         let args: Vec<&OsStr> = cmd.as_std().get_args().collect();
@@ -441,5 +609,23 @@ mod tests {
                 "must not pass --yes",
             );
         }
+    }
+
+    // spec (backends): error output from a subprocess that exits non-zero is
+    // re-injected into the active session so the agent can reason about
+    // recovery. Fires when: exit code != 0, stderr non-empty, session id
+    // available. Each condition is independently necessary.
+    #[test]
+    fn test_spec_error_reinjection_requires_nonempty_stderr_and_session() {
+        let empty_stderr = "";
+        let nonempty_stderr = "permission denied: .tinker/goals/foo.toml";
+        let with_sid: Option<&str> = Some("ses_abc");
+        let without_sid: Option<&str> = None;
+
+        let fires = |stderr: &str, sid: Option<&str>| !stderr.is_empty() && sid.is_some();
+
+        assert!(!fires(empty_stderr, with_sid), "empty stderr must suppress re-injection");
+        assert!(!fires(nonempty_stderr, without_sid), "missing session id must suppress re-injection");
+        assert!(fires(nonempty_stderr, with_sid), "non-empty stderr + session id must trigger re-injection");
     }
 }

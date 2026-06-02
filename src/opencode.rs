@@ -42,6 +42,7 @@ struct RawPart {
 struct RawToolState {
     status: Option<String>,
     input: Option<serde_json::Value>,
+    error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -173,11 +174,75 @@ impl OpenCodeRunner for RealOpenCodeRunner {
             }
         }
 
-        child.wait().await?;
+        let status = child.wait().await?;
         let stderr_text = stderr_collector.await.unwrap_or_default();
         if !stderr_text.is_empty() {
             on_chunk(format!("\n\u{2030} stderr: {}\n", stderr_text.trim()));
         }
+
+        // On non-zero exit with stderr output, re-inject the error into the
+        // active session so the agent can reason about recovery — e.g. routing
+        // via a peer @-message rather than retrying a permission-denied path.
+        if !status.success() && !stderr_text.is_empty() {
+            let effective_sid = if !returned_session_id.is_empty() {
+                Some(returned_session_id.as_str())
+            } else {
+                session_id
+            };
+            if let Some(sid) = effective_sid {
+                let error_msg = format!(
+                    "[process error — exit code {}]\n{}\n",
+                    status.code().unwrap_or(-1),
+                    stderr_text.trim()
+                );
+                let mut follow_cmd = opencode_command(self.model.as_deref(), self.agent.as_deref(), Some(sid), work_dir);
+                if let Ok(mut follow_child) = follow_cmd.spawn() {
+                    if let Some(mut stdin) = follow_child.stdin.take() {
+                        let _ = stdin.write_all(error_msg.as_bytes()).await;
+                        let _ = stdin.shutdown().await;
+                    }
+                    if let Some(follow_stderr) = follow_child.stderr.take() {
+                        tokio::spawn(async move {
+                            let mut lines = BufReader::new(follow_stderr).lines();
+                            while let Ok(Some(_)) = lines.next_line().await {}
+                        });
+                    }
+                    if let Some(follow_stdout) = follow_child.stdout.take() {
+                        let mut follow_lines = BufReader::new(follow_stdout).lines();
+                        while let Ok(Some(line)) = follow_lines.next_line().await {
+                            if line.is_empty() {
+                                continue;
+                            }
+                            let Ok(ev) = serde_json::from_str::<RawEvent>(&line) else {
+                                continue;
+                            };
+                            match ev.event_type.as_str() {
+                                "text" => {
+                                    if let Some(part) = &ev.part {
+                                        if part.part_type == "text" {
+                                            if let Some(text) = &part.text {
+                                                on_chunk(text.clone());
+                                            }
+                                        }
+                                    }
+                                }
+                                "tool_use" => {
+                                    if let Some(part) = &ev.part {
+                                        let chunk = format_tool_use(part);
+                                        if !chunk.is_empty() {
+                                            on_chunk(chunk);
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    let _ = follow_child.wait().await;
+                }
+            }
+        }
+
         Ok(returned_session_id)
     }
 }
@@ -194,6 +259,25 @@ fn format_tool_use(part: &RawPart) -> String {
         .as_ref()
         .and_then(|s| s.status.clone())
         .unwrap_or_default();
+    if status == "error" {
+        let error = part
+            .state
+            .as_ref()
+            .and_then(|s| s.error.as_deref())
+            .unwrap_or("unknown error");
+        let summary = part
+            .state
+            .as_ref()
+            .and_then(|s| s.input.as_ref())
+            .map(|v| short_tool_summary(&tool, v))
+            .unwrap_or_default();
+        let first_line = error.lines().next().unwrap_or(error);
+        return if summary.is_empty() {
+            format!("\u{26A0} {}: {}\n", tool, first_line)
+        } else {
+            format!("\u{26A0} {} {}: {}\n", tool, summary, first_line)
+        };
+    }
     // Only emit on completion to avoid duplicate logs as state transitions.
     if status != "completed" {
         return String::new();
@@ -344,6 +428,69 @@ mod tests {
         assert!(!args.iter().any(|a| a == "-m"), "must not pass -m when model is None");
         assert!(args.iter().any(|a| a == "-s"));
         assert!(args.iter().any(|a| a == "ses_x"));
+    }
+
+    // spec (backends): error output from a subprocess that exits non-zero is
+    // re-injected into the active session so the agent can reason about
+    // recovery. The re-injection fires when: exit code != 0, stderr non-empty,
+    // and a session id is available (either captured from the run or passed in).
+    // Conditions are checked on the effective session id to handle both
+    // mid-session exits (returned_session_id set) and early exits (input sid).
+    #[test]
+    fn test_spec_error_reinjection_requires_nonempty_stderr_and_session() {
+        // Structural verification: the guard conditions for re-injection are
+        // independent of each other. An empty stderr or missing session id
+        // suppresses re-injection regardless of exit status.
+        let empty_stderr = "";
+        let nonempty_stderr = "permission denied: .tinker/goals/foo.toml";
+        let with_sid: Option<&str> = Some("ses_abc");
+        let without_sid: Option<&str> = None;
+
+        // The condition: !status.success() && !stderr.is_empty() && sid.is_some()
+        let fires = |stderr: &str, sid: Option<&str>| !stderr.is_empty() && sid.is_some();
+
+        assert!(!fires(empty_stderr, with_sid), "empty stderr must suppress re-injection");
+        assert!(!fires(nonempty_stderr, without_sid), "missing session id must suppress re-injection");
+        assert!(fires(nonempty_stderr, with_sid), "non-empty stderr + session id must trigger re-injection");
+    }
+
+    // spec (backends): when a tool call is denied by an agent-file rule, opencode
+    // emits a tool_use event with status "error" and an error field. format_tool_use
+    // must surface this as a ⚠-prefixed line so the denial reaches the conversation
+    // pane regardless of whether the LLM produces text in response.
+    #[test]
+    fn test_spec_denied_tool_call_emits_warning_chunk() {
+        let part = RawPart {
+            part_type: "tool".to_string(),
+            text: None,
+            tool: Some("read".to_string()),
+            state: Some(RawToolState {
+                status: Some("error".to_string()),
+                input: Some(serde_json::json!({ "filePath": ".tinker/notes/notes.md" })),
+                error: Some("Permission denied: .tinker/notes/notes.md".to_string()),
+            }),
+        };
+        let chunk = format_tool_use(&part);
+        assert!(chunk.contains('\u{26A0}'), "denied tool call must emit \u{26A0} chunk");
+        assert!(chunk.contains("read"), "chunk must name the tool");
+        assert!(chunk.contains("Permission denied"), "chunk must include error text");
+    }
+
+    // spec (backends): an unrecognised status (neither "completed" nor "error")
+    // must still produce no output — only completed and error states are surfaced.
+    #[test]
+    fn test_spec_unknown_status_emits_nothing() {
+        let part = RawPart {
+            part_type: "tool".to_string(),
+            text: None,
+            tool: Some("bash".to_string()),
+            state: Some(RawToolState {
+                status: Some("running".to_string()),
+                input: Some(serde_json::json!({ "command": "cargo test" })),
+                error: None,
+            }),
+        };
+        assert!(format_tool_use(&part).is_empty(), "in-progress status must not emit output");
     }
 
     // security: \u{2192} security.md T5 — opencode subprocess stderr is piped

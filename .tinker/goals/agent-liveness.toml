@@ -1,0 +1,50 @@
+id = "agent-liveness"
+summary = "governs: progress guarantee for all agents; error recovery contract (denial→route @-message, transient→retry, silence→harness prompts); stuck state as system failure; framework preamble section | triggers: agent produces no output; permission denial handling; transient error handling; scheduling reliability"
+description = """
+## WHAT
+Every agent carries a **progress guarantee**: any session that receives
+a message either completes, routes to a peer, or explicitly reports an
+obstacle. Silent abort — receiving a message and producing no output
+— is a system failure, not a normal outcome.
+
+Tool denials are routing signals. A permission boundary marks where a
+different agent's scope begins; the correct response is to identify
+that agent and route via `@`-message, not retry the denied action
+through other means. Transient errors (rate limits, server errors,
+network interruptions) call for retries: the task is valid, the
+infrastructure was temporarily unavailable. Any other error calls for
+reasoning — route to a peer, ask `@tend` for clarification, or report
+the obstacle to the dispatcher — but always take a step.
+
+The harness enforces the guarantee mechanically. When a session
+produces no assistant text, the harness sends a follow-up prompting
+the agent to respond before the turn closes. This catches the case
+where an error arrives as a tool result and the agent produces no
+output rather than acknowledging it.
+
+This guarantee is delivered as a section in the framework preamble
+that every session receives. It applies uniformly to all agents: tend,
+rummage, jog, and every goal agent.
+
+## WHY
+Long-running multi-agent processes — dispatch chains, rummage
+investigations, jog verification runs — are only schedulable if they
+finish. An agent that silently aborts breaks the chain: no downstream
+agent is notified, no error surfaces, and no recovery is possible
+without user intervention.
+
+The progress guarantee is a liveness property. In programming language
+design, a progress theorem says a well-formed term either terminates
+or takes a step. The same invariant applies here: a well-formed agent
+session either terminates with output or takes a step toward a
+resolution. Stuck is the one state the system is designed to prevent.
+"""
+parent_id = "goal-agents"
+
+[[related]]
+id = "peer-consult"
+reason = "The @-message path is the named recovery mechanism on denial — agent-liveness specifies when to route; peer-consult governs the protocol that delivers it. Asymmetric: peer-consult is a packaged goal and carries no back-link."
+
+[[related]]
+id = "backends"
+reason = "backends governs the harness-side mechanisms that enforce this goal's guarantee: tool-denial surfacing (making denials visible in the conversation pane) and silence detection (the follow-up prompt when no assistant text is produced)."

@@ -1,5 +1,5 @@
 id = "goal-agents"
-summary = "governs: uniform session registry — every goal is a structurally identical process-scoped addressable agent; @goal-id universal dispatch; two tend-only exceptions (eager start + startup-silence message + TUI suppression; parse-correction loop); execution model delegated to child parallel-goal-agents; framework preamble (incl. dispatcher-report rule and agent-collaboration requirement); dispatcher-provided init sections (spec diff + code inventory when rummage dispatches); tier field in goal TOML; structured summary requirement; .tinker/ write prohibition | triggers: session registry; @-dispatch routing; agent init; tier field; tend exception boundaries; session output requirements"
+summary = "governs: uniform session registry — every goal is a structurally identical process-scoped addressable agent; @goal-id universal dispatch; two tend-only exceptions (eager start + startup-silence message + TUI suppression; parse-correction loop); execution model delegated to child parallel-goal-agents; progress guarantee delegated to child agent-liveness; neighbor consultation mandate delegated to child agent-collaboration; framework preamble (incl. dispatcher-report rule, progress guarantee, neighbor consultation mandate); dispatcher-provided init sections (spec diff + code inventory when rummage dispatches); tier field in goal TOML; structured summary requirement; .tinker/ write prohibition | triggers: session registry; @-dispatch routing; agent init; tier field; tend exception boundaries; session output requirements"
 description = """
 ## WHAT
 Tinker's agent architecture follows one rule: **every goal is a
@@ -177,6 +177,14 @@ ownership.
   no-peek constraint and tend's ownership of the goal tree.
 """
 parent_id = "the-cycles"
+
+[[children]]
+id = "agent-liveness"
+reason = "progress guarantee — every agent must advance on error; the behavioral contract delivered as a framework preamble section"
+
+[[children]]
+id = "agent-collaboration"
+reason = "neighbor consultation mandate — every agent announces significant work to adjacent goals and collaborates to resolve conflicts before and during execution"
 
 [[children]]
 id = "cleanup-hook"
