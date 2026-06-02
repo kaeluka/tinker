@@ -54,3 +54,7 @@ reason = "no-peek established that coupling lives in edges rather than direct re
 [[related]]
 id = "goal-structure-standard"
 reason = "goal-structure-standard's link-symmetry rules are the other half of this goal's guarantee: the consultation mandate is only as good as the edge graph, which goal-structure-standard maintains. Asymmetric: goal-structure-standard is a packaged goal and carries no back-link."
+
+[[related]]
+id = "parallel-goal-agents"
+reason = "parallel-goal-agents names this goal's consultation mandate as the conflict-avoidance mechanism for concurrent agents in the shared main tree."

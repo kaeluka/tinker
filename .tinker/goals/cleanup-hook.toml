@@ -73,4 +73,4 @@ reason = "Rummage is the active investigator that writes scratch tests, fuzz har
 
 [[related]]
 id = "parallel-goal-agents"
-reason = "With worktree-per-dispatch execution, this hook must run inside the worktree before the agent's first turn, not in the main working tree."
+reason = "Cleanup runs before each agent's first turn; agents run in the shared main working directory, so cleanup targets the main tree."

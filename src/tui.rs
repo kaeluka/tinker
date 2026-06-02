@@ -243,33 +243,26 @@ fn push_message_lines(lines: &mut Vec<Line<'static>>, msg: &crate::app::Message)
 
 
 /// Build the running-sessions label for the Goals pane title.
-/// Sorts IDs alphabetically, then greedily fits as many as possible within
-/// `max_chars`. Returns e.g. `" ▶ alpha, beta + 2 goals "` or `" ▶ alpha "`.
+/// Sorts IDs alphabetically, fits as many as possible within `max_chars`,
+/// truncating with `…` when needed.
+/// Returns e.g. `" > alpha, beta, … "` (truncated) or `" > alpha, beta "`.
 fn running_label(mut ids: Vec<&str>, max_chars: usize) -> String {
     ids.sort_unstable();
     let n = ids.len();
-    let mut best_k = 0usize;
-    for k in 1..=n {
-        let shown = &ids[..k];
-        let label = if k == n {
-            format!(" ▶ {} ", shown.join(", "))
-        } else {
-            let remaining = n - k;
-            format!(" ▶ {} + {} {} ", shown.join(", "), remaining, if remaining == 1 { "goal" } else { "goals" })
-        };
+
+    let all_label = format!(" > {} ", ids.join(", "));
+    if all_label.chars().count() <= max_chars {
+        return all_label;
+    }
+
+    for k in (1..n).rev() {
+        let label = format!(" > {}, … ", ids[..k].join(", "));
         if label.chars().count() <= max_chars {
-            best_k = k;
+            return label;
         }
     }
-    if best_k == n && best_k > 0 {
-        format!(" ▶ {} ", ids[..best_k].join(", "))
-    } else if best_k > 0 {
-        let remaining = n - best_k;
-        format!(" ▶ {} + {} {} ", ids[..best_k].join(", "), remaining, if remaining == 1 { "goal" } else { "goals" })
-    } else {
-        let remaining = n;
-        format!(" ▶ {} {} ", remaining, if remaining == 1 { "goal" } else { "goals" })
-    }
+
+    " > … ".to_string()
 }
 
 fn draw_goal_tree(
@@ -949,7 +942,7 @@ mod tests {
     fn test_spec_running_label_all_fit() {
         let ids = vec!["beta", "alpha"];
         let label = running_label(ids, 100);
-        assert_eq!(label, " ▶ alpha, beta ");
+        assert_eq!(label, " > alpha, beta ");
     }
 
     /// Spec (tui — goals pane title): IDs are sorted alphabetically for stability.
@@ -957,39 +950,27 @@ mod tests {
     fn test_spec_running_label_sorted() {
         let ids = vec!["zzz", "aaa", "mmm"];
         let label = running_label(ids, 100);
-        assert_eq!(label, " ▶ aaa, mmm, zzz ");
+        assert_eq!(label, " > aaa, mmm, zzz ");
     }
 
     /// Spec (tui — goals pane title): when not all IDs fit, show as many as
-    /// possible followed by "+ N goals".
+    /// possible followed by "…".
     #[test]
-    fn test_spec_running_label_overflow_shows_count() {
+    fn test_spec_running_label_overflow_truncated() {
         // sorted: ["alpha", "beta", "gamma"]
-        // k=1: " ▶ alpha + 2 goals " = 19 chars ≤ 20 → fits
-        // k=2: " ▶ alpha, beta + 1 goal " = 24 chars > 20 → doesn't fit
+        // all: " > alpha, beta, gamma " = 22 chars > 20 → doesn't fit
+        // k=2: " > alpha, beta, … " = 18 chars ≤ 20 → fits
         let ids = vec!["beta", "alpha", "gamma"];
         let label = running_label(ids, 20);
-        assert_eq!(label, " ▶ alpha + 2 goals ");
+        assert_eq!(label, " > alpha, beta, … ");
     }
 
-    /// Spec (tui — goals pane title): singular "goal" when exactly one is hidden.
-    #[test]
-    fn test_spec_running_label_singular_goal() {
-        // ids sorted: ["very-long-id-one", "very-long-id-two"]
-        // k=1: " ▶ very-long-id-one + 1 goal " = 29 chars ≤ 29 → fits
-        // k=2: " ▶ very-long-id-one, very-long-id-two " = 38 chars > 29 → doesn't fit
-        let ids = vec!["very-long-id-two", "very-long-id-one"];
-        let label = running_label(ids, 29);
-        assert!(label.contains("+ 1 goal "), "expected singular 'goal', got: {}", label);
-        assert!(!label.contains("goals"), "must not say 'goals' for remainder=1, got: {}", label);
-    }
-
-    /// Spec (tui — goals pane title): when nothing fits, fall back to count-only label.
+    /// Spec (tui — goals pane title): when nothing fits, fall back to ellipsis-only label.
     #[test]
     fn test_spec_running_label_nothing_fits_fallback() {
         let ids = vec!["a-very-long-goal-name", "another-very-long-goal"];
         let label = running_label(ids, 5);
-        assert!(label.contains("2 goals"), "expected count fallback, got: {}", label);
+        assert_eq!(label, " > … ");
     }
 
 }

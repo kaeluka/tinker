@@ -1,5 +1,5 @@
 id = "goal-agents"
-summary = "governs: uniform session registry — every goal is a structurally identical process-scoped addressable agent; @goal-id universal dispatch; two tend-only exceptions (eager start + startup-silence message + TUI suppression; parse-correction loop); execution model delegated to child parallel-goal-agents; progress guarantee delegated to child agent-liveness; neighbor consultation mandate delegated to child agent-collaboration; framework preamble (incl. dispatcher-report rule, progress guarantee, neighbor consultation mandate); dispatcher-provided init sections (spec diff + code inventory when rummage dispatches); tier field in goal TOML; structured summary requirement; .tinker/ write prohibition | triggers: session registry; @-dispatch routing; agent init; tier field; tend exception boundaries; session output requirements"
+summary = "governs: uniform session registry — every goal is a structurally identical process-scoped addressable agent; @goal-id universal dispatch; two tend-only exceptions (eager start + startup-silence message + TUI suppression; parse-correction loop); execution model delegated to child parallel-goal-agents; progress guarantee delegated to child agent-liveness; neighbor consultation mandate delegated to child agent-collaboration; framework preamble (incl. dispatcher-report rule, progress guarantee, neighbor consultation mandate); dispatcher-provided spec diff (tend dispatches after goal write); tier field in goal TOML; structured summary requirement; .tinker/ write prohibition | triggers: session registry; @-dispatch routing; agent init; tier field; tend exception boundaries; session output requirements"
 description = """
 ## WHAT
 Tinker's agent architecture follows one rule: **every goal is a
@@ -29,7 +29,7 @@ Everything else is identical across all agents: the same event types,
 the same routing, the same lifecycle, the same `@`-dispatch protocol.
 
 **Goal agent execution model.** The execution model for goal agents
-(parallelism, worktree lifecycle, merge strategy) is governed by
+(concurrency and conflict avoidance) is governed by
 `parallel-goal-agents`.
 
 **Framework preamble.** Before its goal description, every session
@@ -77,22 +77,17 @@ collaborated with other agents in fulfilling the task.
 The agent's role in the intent↔spec↔code cycle is part of its
 `description`, not injected by the runtime.
 
-**Dispatcher-provided init sections.** When rummage dispatches a goal
-agent, it augments the init message with two additional sections
-beyond the standard preamble and goal text:
+**Dispatcher-provided init sections.** When tend dispatches a goal
+agent after a goal write, it augments the init message with one
+additional section beyond the standard preamble and goal text:
 
 - **Spec diff** — what was removed from the goal text and what was
-  added, computed from the old spec and new spec that tend provides
-  at handoff.
-- **Code inventory** — what currently exists in the goal's scope,
-  read by rummage from files named in the goal description and
-  related links.
+  added, computed from the old spec and new spec tend holds.
 
-Agents receiving a rummage dispatch use both artifacts to determine
-what existing code implements the removed spec (and must be deleted)
-and what new code to write for the added spec. This is the mechanism
-that makes large refactors reliable: agents are given both sides of
-the diff, not just the desired end state.
+Goal agents needing a code inventory of what currently exists in
+their scope should consult `@rummage`. This is the mechanism that
+makes large refactors reliable: agents hold both sides of the diff,
+not just the desired end state.
 
 **Structured summary.** When a session completes significant work, it
 reports to its dispatcher (see preamble) with a structured summary
@@ -133,12 +128,11 @@ output before the user has typed anything. No other exceptions are
 justified and none should be added without explicit user confirmation
 that they belong in the architecture.
 
-The dispatcher-provided init sections (spec diff + code inventory)
-close the information gap that makes large refactors fail: without
-them, agents receive only the desired end state and must infer what to
-remove — inference that fails systematically for deletions and the
-deletion half of every change. With them, agents hold both sides of
-the diff and can act with confidence.
+The spec diff closes the information gap that makes large refactors
+fail: without it, agents receive only the desired end state and must
+infer what to remove — inference that fails systematically for
+deletions and the deletion half of every change. Code inventory is
+available on demand via `@rummage`.
 
 The structured summary and `test_spec_` listing exist because a
 session is an unreliable narrator about its own work — the summary
@@ -147,27 +141,17 @@ compliance. Requiring the session to account for every
 `test_spec_` function systemically enforces the tests-as-guardrails
 standard without relying on the session's general good behavior.
 
-Goal agents are serialized globally (not just per-goal-id) because
-the two hazards — shared file writes and the cleanup-hook race — apply
-across any pair of concurrently running agents, not only same-goal
-pairs. The constraint is coarser than strictly necessary: agents
-working on unrelated files could safely overlap. Per-file conflict
-detection would allow that, but the simpler invariant (one at a time,
-always) is correct without requiring the runtime to model file
-ownership.
-
 ## SCOPE
 - In scope: the session registry and `SessionEntry` type; `@goal-id`
   as the universal dispatch; the exactly-two tend exceptions (eager
   start + startup-silence message + TUI suppression of startup output;
   parse-correction loop) and their boundaries; framework preamble
   injected before every session's goal description; the
-  dispatcher-provided init sections (spec diff + code inventory) and
-  their role in diff-aware dispatch; `tier` field in goal TOML; the
-  unified `SessionEvent` enum and single run-loop receiver dispatching
-  on `goal_id`; the structured summary requirement and `test_spec_`
-  listing mandate; pre-session cleanup via `cleanup-hook`; serial
-  goal-agent queue (one active goal agent at a time).
+  dispatcher-provided spec diff and its role in diff-aware dispatch;
+  `tier` field in goal TOML; the unified `SessionEvent` enum and
+  single run-loop receiver dispatching on `goal_id`; the structured
+  summary requirement and `test_spec_` listing mandate; pre-session
+  cleanup via `cleanup-hook`.
 - Out of scope: cross-process session persistence; goal-agent execution
   model (owned by `parallel-goal-agents`); per-agent tool distinctions
   beyond what applies uniformly to all agents.
@@ -192,7 +176,7 @@ reason = "pre-session cleanup — removes tinker-test-case: investigation marker
 
 [[children]]
 id = "parallel-goal-agents"
-reason = "execution model — worktree-per-dispatch parallel execution, rummage-owned merge, correctness-first"
+reason = "execution model — concurrent agents in shared main tree, coordination-based conflict avoidance via agent-collaboration"
 
 [[related]]
 id = "the-cycles"

@@ -130,9 +130,6 @@ pub struct App {
     /// Tracks the index in `messages` of the current in-progress agent turn
     /// for each session, so incoming chunks can append to that slot in-place.
     pub agent_msg_idx: HashMap<String, usize>,
-    /// Worktree paths queued for removal after rummage signals merge-done via
-    /// `@harness merge-done <path>`. Drained each event-loop tick.
-    pub pending_worktree_removals: Vec<PathBuf>,
 }
 
 impl App {
@@ -167,7 +164,6 @@ impl App {
             modal: None,
             active_session: "tend".to_string(),
             agent_msg_idx: HashMap::new(),
-            pending_worktree_removals: Vec::new(),
         }
     }
 
