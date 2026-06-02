@@ -1,5 +1,5 @@
 id = "backends"
-summary = "governs: pluggable LLM backend abstraction (runner trait at composition root); opencode default (generic agent files for tend/rummage/jog installed at startup) vs claude --claude (--system-prompt, streaming JSON); claude high tier pinned to claude-opus-4-8 (not opus alias) to avoid unvalidated model versions; per-backend model-tier defaults overridable via model-config | triggers: backend implementation; persona delivery between backends; adding third backend; startup flag changes; high-tier model pin"
+summary = "governs: pluggable LLM backend abstraction (runner trait at composition root); opencode default (tend.md + tinker.md written at startup with path-scoped permissions) vs claude --claude (--system-prompt, streaming JSON); claude high tier pinned to claude-opus-4-8 (not opus alias) to avoid unvalidated model versions; per-backend model-tier defaults overridable via model-config | triggers: backend implementation; persona delivery between backends; adding third backend; startup flag changes; high-tier model pin; agent file permission rules"
 description = """
 ## WHAT
 Tinker runs against a **pluggable backend** — the LLM CLI it shells
@@ -15,14 +15,14 @@ Each backend maps tinker's roles to its own models and delivers agent
 personas its own way:
 
 - **opencode** (default): runs its own configured model defaults. At
-  startup installs agent files for tend, rummage, and jog
-  (`~/.config/opencode/agents/tend.md` etc.), always overwriting so
-  the installed copies stay in sync. Each agent file carries the shared
-  generic frontmatter (`description: Tinker agent.`, `mode: primary`) —
-  no tool restrictions. Tend's agent file uses a static/dynamic split:
-  the persona lives in the file; the current goal list is passed in
-  fresh over stdin each run so tend's context stays current without
-  rebuilding the file.
+  startup writes two agent files to `~/.config/opencode/agents/`,
+  always overwriting so the installed copies stay in sync. `tend.md`
+  carries the full tend description and an allowlist restricting tend
+  to `.tinker/goals/**` only (reads and writes). `tinker.md` carries
+  generic frontmatter and a denylist blocking reads and writes to all
+  `.tinker/` subdirectories; it is used by rummage, jog, and all goal
+  agents. Both files enforce path-scoped access rules at the backend
+  level, not just via prompt instructions.
 
 - **claude** (`--claude`): maps roles to `claude-opus-4-8` (tend, high
   tier) and `sonnet` (goal sessions, mid tier); the high tier uses a
@@ -60,8 +60,8 @@ backend explicit and small.
   wired only at the composition root; the two current backends
   (opencode default, claude via `--claude`); per-backend model-tier
   mapping (the built-in defaults, overridable per tier via
-  `model-config`) and persona delivery; agent file installation for
-  tend, rummage, and jog on the opencode path; `--resume` session
+  `model-config`) and persona delivery; agent file installation
+  (`tend.md` + `tinker.md` with path-scoped permissions) on the opencode path; `--resume` session
   resumption and streaming-JSON parsing on the claude path.
 - Out of scope: persisting the backend *choice* (`--claude` is a
   startup flag — per-tier model overrides, by contrast, are persisted

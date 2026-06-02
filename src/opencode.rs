@@ -263,7 +263,6 @@ pub fn opencode_args(model: Option<&str>, agent: Option<&str>, session_id: Optio
         "run".into(),
         "--format".into(),
         "json".into(),
-        "--dangerously-skip-permissions".into(),
     ];
     if let Some(m) = model {
         args.push("-m".into());
@@ -294,15 +293,18 @@ mod tests {
         assert_eq!(summary, "echo 1");
     }
 
-    // security: → security.md T4 — tinker must pass --dangerously-skip-permissions
-    // so goal sessions can run non-interactively. Explicit deny rules in opencode.json
-    // still apply; this only auto-approves what is not explicitly denied.
+    // security: → security.md T4 — non-interactive sessions must not use
+    // --dangerously-skip-permissions: it bypasses agent-file deny rules entirely.
+    // opencode's system defaults include a {"permission":"*","action":"allow"} rule
+    // that auto-approves non-interactive tool calls without prompts. Agent-file deny
+    // rules (path-scoped) are merged AFTER system defaults and win via last-match-wins.
+    // No global config override needed or wanted.
     #[test]
-    fn test_security_t4_skip_permissions_flag_present() {
+    fn test_security_t4_no_dangerous_skip_permissions_flag() {
         let args = opencode_args(Some("any-model"), None, Some("ses_x"));
         assert!(
-            args.iter().any(|a| a == "--dangerously-skip-permissions"),
-            "must pass --dangerously-skip-permissions (saw {:?})",
+            !args.iter().any(|a| a == "--dangerously-skip-permissions"),
+            "must not pass --dangerously-skip-permissions — it bypasses agent-file deny rules (saw {:?})",
             args
         );
     }

@@ -37,33 +37,13 @@ use tokio::sync::mpsc;
 
 /// Frontmatter for goal-agent sessions (written to `tinker.md`).
 /// Allows all reads except tend-owned dirs; blocks all edits/writes to them.
-const GOAL_AGENT_FRONTMATTER: &str = "---\ndescription: >-\n  Tinker agent.\nmode: primary\n\
-permission:\n\
-  read:\n\
-    \"*\": allow\n\
-    \".tinker/goals/**\": deny\n\
-    \".tinker/notes/**\": deny\n\
-    \".tinker/state/**\": deny\n\
-  edit:\n\
-    \".tinker/**\": deny\n\
-  write:\n\
-    \".tinker/**\": deny\n\
----\n";
+const GOAL_AGENT_FRONTMATTER: &str =
+    "---\ndescription: >-\n  Tinker agent.\nmode: primary\npermission:\n  read:\n    \"*\": allow\n    \".tinker/goals/**\": deny\n    \".tinker/notes/**\": deny\n    \".tinker/state/**\": deny\n  edit:\n    \".tinker/**\": deny\n---\n";
 
 /// Frontmatter for the tend agent (written to `tend.md`).
 /// Allowlist: only `.tinker/goals/**` is accessible; everything else is blocked.
-const TEND_FRONTMATTER: &str = "---\ndescription: >-\n  Tinker agent.\nmode: primary\n\
-permission:\n\
-  read:\n\
-    \"*\": deny\n\
-    \".tinker/goals/**\": allow\n\
-  edit:\n\
-    \"*\": deny\n\
-    \".tinker/goals/**\": allow\n\
-  write:\n\
-    \"*\": deny\n\
-    \".tinker/goals/**\": allow\n\
----\n";
+const TEND_FRONTMATTER: &str =
+    "---\ndescription: >-\n  Tinker agent.\nmode: primary\npermission:\n  read:\n    \"*\": deny\n    \".tinker/goals/**\": allow\n  edit:\n    \"*\": deny\n    \".tinker/goals/**\": allow\n---\n";
 
 fn packaged_tend_goal() -> Goal {
     const TOML: &str = include_str!("../packaged-goals/tend.toml");
@@ -357,6 +337,12 @@ async fn main() -> Result<()> {
     // persona arrives via --system-prompt there, not agent files.
     // tinker.md: used by all goal-agent sessions; denies .tinker/ dir access.
     // tend.md: used by the tend session; restricts access to .tinker/goals/ only.
+    //
+    // opencode's system defaults include {"permission": "*", "action": "allow"} which
+    // auto-approves tool calls without interactive prompts. Agent-file deny rules are
+    // merged after system defaults and win via last-match-wins. No global config override
+    // needed — adding {"*": "allow"} to opencode.json would push a rule BEFORE agent-file
+    // rules in the merge and break deny enforcement.
     if !use_claude {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
