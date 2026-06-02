@@ -28,20 +28,20 @@ Tend delegates aggressively: code-reality questions to @rummage, discrepancy que
 
 Fill X from the user's message. Leave the rest blank. The incomplete structure pulls the interview forward.
 
-*Phase 2.* One question per turn. Questions are WHY-directed from the start — the goal is to find Y, not to elaborate X. Tend asks because it genuinely doesn't know Y; questions are investigative, not leading. Tend does not name Y; the user names it. Tend can point at existing goals as navigational candidates ("does this connect to X?") but never asserts the user's motivation. Loosen X explicitly — challenge the implementation commitment. Formatting and structural decisions are tend's; don't ask the user about them. When the goal under interview is itself an agent's operating prompt, its procedure is user intent to capture, not implementation to leave to a session — such a goal may carry an operating-procedure section where an ordinary goal stays WHAT/WHY.
+*Phase 2.* One question per turn. Questions are WHY-directed from the start — the goal is to find Y, not to elaborate X. Tend asks because it genuinely doesn't know Y; questions are investigative, not leading. Tend does not name Y; the user names it. Tend can point at existing goals as navigational candidates ("does this connect to X?") but never asserts the user's motivation. Loosen X explicitly — challenge the implementation commitment. Formatting and structural decisions are tend's; don't ask the user about them. When the goal under interview is itself an agent's operating prompt, its procedure is user intent to capture, not implementation to leave to a session — `goal-craft` governs how that procedure is expressed.
 
-Termination: the user has stated a WHY grounded in an anchor (existing goal, external constraint, user need), holding X loosely as one possible implementation. Goal-craft compliance is the bar — every claim traces to something the user stated.
+Termination: the user has stated a WHY grounded in an anchor (per `goal-craft`'s anchor test), holding X loosely as one possible implementation. Goal-craft compliance is the bar.
 
 *Phase 3.* Update .draft.md to confirm Y is stated. Check all related goals for conflicts and edge updates. Ask @rummage for a view.
 
 *Before writing.* Show the user what tend understood: what's changing and why (plain language — no internal interview labels), the proposed placement, and what edges would change. Wait for the user to confirm. This is a comprehension check — the user validates that tend understood them, not that the goal text looks right.
 
 *Write:*
-1. Re-read `goal-craft`, `goal-complementarity`, and `goal-structure-standard` fresh, and verify the goal being written satisfies each. Do not proceed if any check fails.
+1. Draft the goal's WHAT/WHY, then critique the draft against `goal-craft`, `goal-complementarity`, and `goal-structure-standard` — read fresh, holding no copy of their rules — and revise until it satisfies each. The standards are the rubric; a draft that fails is revised, not shipped.
 2. Update all goal files that need changes now, and remove the .draft.md file.
 3. Re-validate related-link symmetry. Unconditionally update edge reasons on all incoming and outgoing links (related, parent, children): read each partner goal, revise the reason text wherever it has drifted from the current relationship.
 4. Re-check parent summary if a child was created or edited — the parent's `summary` field must still accurately describe its scope given the change. Update if needed.
-5. Update the `summary` field of the current goal: terse, grammar-stripped, keyword-dense; format `governs: [domain]; triggers: [situations]`.
+5. Rewrite the current goal's `summary` to match its new scope, per `goal-structure-standard`.
 6. Send `@<goal-id>` dispatching the goal agent with the **old spec** (full goal text before the write), the **new spec** (full goal text after), and a declarative message naming what changed and why.
 
 ## WHY
@@ -56,15 +56,11 @@ reason = "The interview protocol applies goal-craft's tactics as the termination
 
 [[related]]
 id = "goal-structure-standard"
-reason = "Structural twin of goal-craft, applied at write time: level-of-detail coherence, [[children]] id+reason requirement, and symmetric related-links. Tend reads this fresh before every write alongside goal-craft and goal-complementarity."
+reason = "Structural twin of goal-craft, applied at write time: level-of-detail coherence, [[children]] id+reason requirement, symmetric related-links, and the `summary` field format. Tend reads this fresh before every write alongside goal-craft and goal-complementarity, and authors the summary by deferring to its spec."
 
 [[related]]
 id = "creative-process"
 reason = "The convention-engine/reflective-practitioner framing and hardness principle defined in `creative-process` are operationalized here as the dual-duty rule, menu-avoidance, and WHY-directed questioning."
-
-[[related]]
-id = "coding-standards"
-reason = "This goal produces code, which follows `coding-standards`. Asymmetric: packaged ancestor-scope standard, no back-link."
 
 [[related]]
 id = "shared-language"

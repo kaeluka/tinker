@@ -43,9 +43,17 @@ Two TOML link primitives are kept distinct:
   carry related-links, not just roots, because cross-cutting concerns
   don't respect tree level.
 
+Every goal also carries a **`summary`** field: a terse,
+grammar-stripped, keyword-dense index entry in the form `governs:
+[domain]; triggers: [situations]`, written for an agent scanning the
+tree rather than for human reading. It is the navigation index for
+the goal as a whole — the way a link reason is the navigation index
+for an edge — so it tracks the goal's current scope.
+
 The **write protocol** re-validates both coherence rules on every
-edit: it re-checks the parent summary whenever a child is created or
-edited, and re-validates related-links on both sides. When an edit
+edit: it rewrites the edited goal's own `summary`, re-checks the
+parent summary whenever a child is created or edited, and
+re-validates related-links on both sides. When an edit
 needs to touch a partner goal (to add, remove, or rephrase a
 back-pointing link), that partner edit happens in the **same write
 turn** and appears as one bundle in the placement sentence before writing, so the user
@@ -105,7 +113,7 @@ reason = "This goal produces code, which follows `coding-standards`. Asymmetric:
 
 [[related]]
 id = "tend"
-reason = "The summary write protocol (terse, governs+triggers format, written on every goal creation and edit) is part of tend's write procedure. Both goals apply on every edit: this goal for structural integrity, tend for summary authoring."
+reason = "This goal owns the `summary` field format (terse, governs+triggers, rewritten on every edit) alongside the WHAT/WHY structure. Tend's write procedure authors the summary by deferring here, holding no copy of the rule. Both goals apply on every edit: this goal defines the form, tend executes it."
 
 [[related]]
 id = "goal-complementarity"
