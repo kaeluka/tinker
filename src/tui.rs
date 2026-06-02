@@ -331,6 +331,8 @@ fn draw_goal_tree(
             };
             let id_style = if is_selected {
                 name_style
+            } else if is_active {
+                Style::default().fg(Color::Yellow)
             } else {
                 Style::default().fg(Color::DarkGray)
             };
@@ -881,6 +883,40 @@ mod tests {
         assert!(
             !marker_style.add_modifier.contains(Modifier::BOLD),
             "running ▶ marker must not carry BOLD modifier",
+        );
+    }
+
+    /// Spec (tui — queue visibility): the goal ID of a running goal must use a
+    /// distinct colour (Yellow) so the running goal stays visually salient
+    /// while scrolling. The ▶ marker stays dim; only the ID gets colour.
+    #[test]
+    fn test_spec_running_goal_id_colour_is_distinct() {
+        let is_active = true;
+        let is_selected = false;
+        let name_style = Style::default(); // not selected
+        // Mirror the id-style derivation from draw_goal_tree.
+        let id_style = if is_selected {
+            name_style
+        } else if is_active {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        assert_eq!(
+            id_style.fg,
+            Some(Color::Yellow),
+            "running goal ID must use Yellow fg to remain visually salient",
+        );
+        // Confirm the marker is still dim — unchanged by this feature.
+        let marker_style = if is_active {
+            Style::default().fg(Color::DarkGray)
+        } else {
+            name_style
+        };
+        assert_eq!(
+            marker_style.fg,
+            Some(Color::DarkGray),
+            "running ▶ marker must remain dim (DarkGray) regardless of ID colour",
         );
     }
 

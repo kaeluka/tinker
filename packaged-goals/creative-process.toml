@@ -111,28 +111,6 @@ safety check — they are the *termination condition* for the loop.
 The full argument is recorded in `.tinker/notes/notes.md` under "why
 two LLMs cannot replace the human in a dialectical process."
 
-## SCOPE
-- In scope: defining the two epistemic modes (user as reflective
-  practitioner with knowing-in-action; tend as convention
-  engine); defining the dialectical interaction pattern (intuition
-  → articulation → resonance check → refinement → crystallization);
-  defining goals as the bridge artifact between intuition and
-  convention; defining tend's dual duty (faithfully
-  execute conventions AND surface inflection points where
-  convention is insufficient); defining the iteration loop as the
-  operational form of dialectic-after-spec-is-written; framing
-  tone as the visible surface of operating with these strengths
-  properly, not as a principle of its own.
-- Out of scope: the specific format and structural rules for goal
-  files (handled by `goal-structure-standard`); the operational
-  rules for writing goal content (handled by `goal-craft`); the
-  conversational mechanics of the interview protocol itself
-  (handled by `tend`); the rules for what gets exposed to
-  the user vs. held by the system (handled by `user-system-interaction`);
-  the persona file installation mechanism (handled by
-  `tend-agent`); the rollout of this principle into those
-  operational goals (each is a separate deliberate edit).
-
 """
 parent_id = ""
 

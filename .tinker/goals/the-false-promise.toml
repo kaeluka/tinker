@@ -17,14 +17,6 @@ trust blindly and accumulate paralyzing cognitive debt. Tinker
 rejects the choice by extracting intent into a separate, durable
 layer — Goals — kept distinct from implementation.
 
-## SCOPE
-- In scope: the diagnosis of cognitive debt; the concept of
-  quasi-specification laundering; the necessity of extracting intent
-  into a durable layer (Goals).
-- Out of scope: the mechanics of the dialectic (handled by
-  `creative-process`); the specific boundary of who holds what state
-  (handled by `user-system-interaction`).
-
 """
 parent_id = ""
 

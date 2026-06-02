@@ -47,16 +47,6 @@ no access to the sender's surrounding prose — it only sees the block.
 Without the rule agents would silently rely on context they never
 actually delivered, producing incomplete or misleading consultations.
 
-## SCOPE
-- In scope: `@<agent-or-goal-id>` blocks with multi-line bodies; block
-  termination at the next `@`-line or end of reply; delivery of only
-  the block to the named agent; messaging among any agents in the
-  session registry; freely nesting consultations; agent-initiated and
-  user-triggered initiation; the user observing the exchange in real
-  time.
-- Out of scope: formal return values or blocking semantics; call stack
-  tracking; blank-line termination; TUI rendering details (left to
-  `tui`).
 """
 parent_id = ""
 

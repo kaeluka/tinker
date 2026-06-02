@@ -13,8 +13,11 @@ semantic UI snapshot. The split is deliberate — a pure state file
 loses temporal information (durations, ordering); a pure log forces
 reconstructing current state by scanning. Both live under
 `.tinker/`; required directories are pre-created at startup. Tend
-reads both with its existing file tools when it needs them. It
-never writes to either, and goal sessions don't touch them at all.
+reads both with its existing file tools when it needs them, to
+observe rather than to act — controlling runtime (cancelling or
+reordering queued sessions) is a separate concern, not done through
+this substrate. Tend never writes to either; goal sessions don't
+touch them; nothing outside tend reads them.
 
 The **event log** captures: tend turn boundaries; message-level
 events in three categories — user input (full text), assistant
@@ -35,6 +38,13 @@ read one event). The log appends forever — no rotation; the user
 clears it manually if it grows. Specific event-kind names, shape,
 and retrieval tooling are implementation's call within these
 constraints.
+
+The log captures observable lifecycle and message events; tend's own
+dialectic moves — reframes, frame-checks, playbacks — stay in pane
+content and `notes.md`, not here. Capture stops at the message level:
+per-line conversation-pane text and streaming session-log content are
+subsumed by these message events and each finished-session
+transcript, so the substrate does not duplicate them.
 
 Finished-session events carry **observable facts only** — what
 tend sees from outside the session — with no session-declared
@@ -77,29 +87,9 @@ where it matters most — scope expansion, scope shrinkage, doing
 something else entirely. Observable facts from outside the session
 are trustworthy where the session's own account is not.
 
-## SCOPE
-- In scope: the append-only event log (categories above) and the
-  semantic JSON state file, both under `.tinker/`; async
-  non-blocking writes; passive read-only access for tend via its
-  existing file tools.
-- Out of scope:
-  - Pane content beyond message-level — verbatim conversation-pane
-    text per line and streaming session-log capture (subsumed by
-    the message-level events and the transcript on each
-    finished-session event).
-  - Tend-self-emitted structured events for its own dialectic
-    moves (reframe, frame-check, playback-sent/confirmed) — those
-    stay in pane content and `notes.md`; may become a follow-up
-    goal if reframe-frequency analysis turns out to matter.
-  - Goal sessions reading the log or state file.
-  - Tend mutating runtime state through this primitive
-    (cancelling queued sessions, manipulating the queue) — a
-    separate parked goal.
-  - Log rotation, retention, or compression.
-  - Redaction of sensitive content in tool outputs (user-managed
-    for now).
-  - Exposing the log or state file to anything beyond tend's own
-    reading.
+Because the log stores message text verbatim — tool inputs and
+outputs included — redacting anything sensitive is the user's
+responsibility.
 
 """
 parent_id = "user-system-interaction"

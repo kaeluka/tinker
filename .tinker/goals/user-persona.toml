@@ -27,18 +27,6 @@ reflective-practitioner role; `shared-language` operationalizes the
 no-jargon and form consequences; this goal names what those principles
 mean for who this specific user is.
 
-## SCOPE
-- In scope: who the user is; the no-jargon need and why it follows
-  from not reading source; the design-partner expectation; the
-  trade-off/Pareto framing as a user need.
-- Out of scope: the state-ownership split itself
-  (`user-system-interaction`); the dialectical process,
-  convention-engine framing, inflection-point surfacing duty, and
-  irreplaceability of the human stakeholder (`creative-process`);
-  the two exposure surfaces (`user-system-interaction`);
-  agent-specific communication rules — those live in each agent's
-  own goal and in `shared-language`; the operational vocabulary and
-  form rules themselves (`shared-language`).
 """
 parent_id = "user-system-interaction"
 children = []

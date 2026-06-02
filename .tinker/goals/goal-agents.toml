@@ -4,9 +4,10 @@ description = """
 ## WHAT
 Tinker's agent architecture follows one rule: **every goal is a
 structurally identical, process-scoped, addressable agent.** The
-session registry maps each goal-id to a `SessionEntry` holding a
-message channel, the captured LLM session ID, and the associated
-goal. The `@goal-id` syntax is the single universal dispatch
+session registry maps each goal-id to the sending half of that
+agent's message channel; the agent's goal and its resumable LLM
+session id live in the persistent per-goal loop the runtime spawns,
+not in the registry. The `@goal-id` syntax is the single universal dispatch
 mechanism — any agent activates any other by emitting an `@`-block;
 the runtime routes it to the named entry.
 
@@ -104,14 +105,21 @@ session start via `model-config`. Tend, rummage, and jog declare
 **Unified event enum:**
 ```
 enum SessionEvent {
-    LlmSessionId { goal_id: String, session_id: String },
     Chunk        { goal_id: String, text: String },
     Done         { goal_id: String },
     CleanupBlocked { goal_id: String, dirty_files: Vec<PathBuf>, error: Option<String> },
 }
 ```
 A single `mpsc::Receiver<SessionEvent>` in the run loop handles
-events from all sessions, dispatching on `goal_id`.
+events from all sessions, dispatching on `goal_id`. The LLM session
+id is not an event — each per-goal loop captures it from the runner's
+return value and holds it for resumption.
+
+Sessions never read or write `.tinker/goals/`, `.tinker/notes/`, or
+`.tinker/state/` — those directories are tend-owned. Goal content
+reaches a session through `@tend` and its init message, never by
+reading goal files directly; doing so would bypass `no-peek` and
+tend's ownership of the goal tree.
 
 ## WHY
 A uniform registry eliminates the distinction between "named agents"
@@ -141,24 +149,6 @@ compliance. Requiring the session to account for every
 `test_spec_` function systemically enforces the tests-as-guardrails
 standard without relying on the session's general good behavior.
 
-## SCOPE
-- In scope: the session registry and `SessionEntry` type; `@goal-id`
-  as the universal dispatch; the exactly-two tend exceptions (eager
-  start + startup-silence message + TUI suppression of startup output;
-  parse-correction loop) and their boundaries; framework preamble
-  injected before every session's goal description; the
-  dispatcher-provided spec diff and its role in diff-aware dispatch;
-  `tier` field in goal TOML; the unified `SessionEvent` enum and
-  single run-loop receiver dispatching on `goal_id`; the structured
-  summary requirement and `test_spec_` listing mandate; pre-session
-  cleanup via `cleanup-hook`.
-- Out of scope: cross-process session persistence; goal-agent execution
-  model (owned by `parallel-goal-agents`); per-agent tool distinctions
-  beyond what applies uniformly to all agents.
-- Sessions must not read or write `.tinker/goals/`, `.tinker/notes/`,
-  or `.tinker/state/` — these directories are tend-owned. Goal content
-  arrives via `@tend`; reading goal files directly would bypass the
-  no-peek constraint and tend's ownership of the goal tree.
 """
 parent_id = "the-cycles"
 

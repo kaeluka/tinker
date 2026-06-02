@@ -19,6 +19,25 @@ counterpart to `project-indexer`, it defaults to conceptual
 descriptions and avoids raw code identifiers except where they're
 needed for setup.
 
+The README has four required sections, in order:
+- **Status** (top of the README, before anything else): tinker is
+  an early-stage experimental coding assistant. Bugs are expected.
+  Features are in heavy flux. This is a design study and work is
+  actively ongoing. This framing is fixed — it does not vary with
+  the goal tree.
+- **Installation**: build from source with `cargo build --release`;
+  add the release binary to PATH; symlink packaged goals into
+  `~/.tinker` so the ancestor-merge picks them up.
+- **Agents**: how tend, rummage, and jog collaborate; how to switch
+  between them; tend as the right starting point for any
+  conversation.
+- **Architecture**: every goal is an addressable agent that can
+  enforce its own constraints and consult peers — an actor model
+  where specification documents converse to resolve conflicts and
+  ensure compliance. This is how tinker minimizes cognitive debt:
+  the user stays informed about the current feature set without
+  ever having to read code.
+
 ## WHY
 AI-built projects evolve rapidly and manual documentation rots. Every
 project needs a human-facing entry point explaining its intent and
@@ -26,34 +45,6 @@ architecture. Making this a packaged goal means every tinker-built
 project automatically gets a self-updating README derived directly
 from its load-bearing intent (the goal files); the README doesn't
 drift because it is just a reflection of the tree.
-
-## SCOPE
-- In scope: generating `README.md` at the project root; asking `@tend`
-  for the goal tree to source the narrative; directing the LLM's prose
-  style; tailoring the opening to a reader who knows nothing about
-  the project. Required sections, in order:
-  - **Status** (top of the README, before anything else): tinker is
-    an early-stage experimental coding assistant. Bugs are expected.
-    Features are in heavy flux. This is a design study and work is
-    actively ongoing. This framing is fixed — it does not vary with
-    the goal tree.
-  - **Installation**: build from source with `cargo build --release`;
-    add the release binary to PATH; symlink packaged goals into
-    `~/.tinker` so the ancestor-merge picks them up.
-  - **Agents**: how tend, rummage, and jog collaborate; how to switch
-    between them; tend as the right starting point for any
-    conversation.
-  - **Architecture**: every goal is an addressable agent that can
-    enforce its own constraints and consult peers — an actor model
-    where specification documents converse to resolve conflicts and
-    ensure compliance. This is how tinker minimizes cognitive debt:
-    the user stays informed about the current feature set without
-    ever having to read code.
-- Out of scope: documenting internal module structure or low-level
-  API details (handled by LLM-targeted artifacts like `AGENTS.md` or
-  in-tree docs); hardcoding any specific philosophy beyond the status
-  framing above (the agent synthesizes whatever the project's goal
-  tree holds).
 
 """
 parent_id = ""

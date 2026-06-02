@@ -2,8 +2,9 @@ id = "goal-storage"
 summary = "governs: goal file storage as TOML at .tinker/goals/<id>.toml; ancestor-directory merge (cwd-most wins on duplicates); malformed file reported without blocking siblings; session IDs in memory only (not persisted); [[children]] and [[related]] both carry id+reason | triggers: goal file format/parsing; ancestor merge behavior; schema changes affecting storage layer"
 description = """
 ## WHAT
-Goals are persistent files associated with a project. They live in a
-project-local subdirectory and survive across tinker runs. Goals
+Goals are persistent files associated with a project. They live
+directly in a single project-local directory and survive across
+tinker runs. Goals
 from ancestor directories of the current working directory also
 apply, merged with the project's own — so a shared standard defined
 once in the user's home directory takes effect in every project.
@@ -31,24 +32,9 @@ across projects matters because some intent (coding standards,
 security rules) is global; the user shouldn't have to copy-paste it
 into every project. Storing intent without session state keeps the
 file authoritative — there's no parallel session-history artifact
-that could drift from or override what the goal says.
-
-## SCOPE
-- In scope: a human-editable text format for goals; recovery from a
-  single malformed file (the rest still load); ancestor-directory
-  merge with the project's copy winning on duplicates; following
-  symlinks transparently; the `[[children]]` and `[[related]]`
-  link-list schema (id + reason per entry for both).
-- Out of scope: nested goal subdirectories; persisting session state
-  or history; a per-file `change_log` (pending work is triggered via
-  the dispatch protocol, not recorded on the spec).
-- Transition note: during the migration from `children = [...]`
-  (plain string array) to `[[children]]` (array of tables with id +
-  reason), the parser must accept both formats — treating string
-  entries as `ChildLink { id, reason: "" }`. This backward compat
-  must ship in the same change that introduces `ChildLink`, so a new
-  binary can start against old TOML files without losing goals from
-  the goal list.
+that could drift from or override what the goal says. For the same
+reason the goal file carries no change log: pending work is triggered
+through the dispatch protocol, not accreted as history on the spec.
 
 """
 parent_id = ""

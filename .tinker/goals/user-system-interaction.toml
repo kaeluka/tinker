@@ -50,23 +50,6 @@ track it. The stale-binary debugging session — where tinker assumed
 the user knew which artifact was running, theorized for two rounds,
 and eroded trust in a working feature — made the gap visible.
 
-## SCOPE
-- In scope: defining who holds what state (should vs is); defining
-  what surfaces are legitimate (interface as-is, internals only via
-  shared-language filtering); framing `user-persona` (who the user
-  is), `shared-language` (the filtering mechanism for the second
-  surface), `implementation-ownership` (the application of
-  "tinker holds the *is*" to source code), and `tend-introspection`
-  (the mechanism by which tinker gains structured access to the *is*
-  its own reasoning depends on) as downstream applications of this
-  principle.
-- Out of scope: the specific mechanisms by which these rules are
-  enforced (those live in children and in operational goals like
-  `tend-agent`, `goal-agents`, `cleanup-hook`); rollout across
-  existing operational surfaces (each operational goal that needs to
-  absorb this principle is its own follow-up edit, deliberate rather
-  than one-shot).
-
 """
 parent_id = "the-false-promise"
 

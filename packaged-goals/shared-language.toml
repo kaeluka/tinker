@@ -55,17 +55,6 @@ Both the vocabulary rule and the form norm are grounded in the same
 fact from `user-persona` — the user can't verify through source, so
 what they receive is their only window into what's happening.
 
-## SCOPE
-- In scope: tend chat; user-facing session messages; READMEs,
-  guides, and other human-readable documentation goal sessions
-  write into the tree; human-targeted code comments; deeper-technical
-  documentation sections provided each technical term is anchored
-  on first use; the conversational form norm (minimum viable shape;
-  no unrequested tables, lists, or multi-paragraph surveys; rummage
-  documents exempt).
-- Out of scope: artifacts authored for LLM consumption (e.g.
-  `AGENTS.md`); implementation comments aimed at future LLM agents;
-  goal file contents themselves (LLM-consumed by goal sessions).
 """
 parent_id = ""
 

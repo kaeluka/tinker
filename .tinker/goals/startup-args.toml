@@ -1,15 +1,11 @@
 id = "startup-args"
 summary = "governs: CLI arg validation (unknown flag/positional → error+help+exit 1); --help/-h handler; help text content (flag list + repo link https://github.com/kaeluka/tinker) | triggers: adding new flags; changing help text; arg parsing behavior changes"
 description = """
-WHAT
+## WHAT
 When tinker receives an unrecognized argument — flag or positional — it prints an error naming the bad argument, prints help text listing all valid flags with a link to the repo (https://github.com/kaeluka/tinker), and exits with code 1. The same help text is shown for `--help`/`-h`. Error message and help text both go to stdout.
 
-WHY
-Unknown arguments silently ignored makes typos invisible. A user who fat-fingers a flag gets no feedback and tinker starts anyway, potentially behaving in an unexpected way.
-
-SCOPE
-In scope: detection of unrecognized arguments (flags and positional args alike), error message naming the bad argument, help text listing valid flags with the repo link, `--help`/`-h` handling, exit code 1 on unknown arg.
-Out of scope: interactive help, subcommands, man page generation.
+## WHY
+Unknown arguments silently ignored makes typos invisible. A user who fat-fingers a flag gets no feedback and tinker starts anyway, potentially behaving in an unexpected way. The help is a single flat flag listing — not interactive help, subcommands, or a generated man page.
 """
 parent_id = ""
 children = []

@@ -1,5 +1,5 @@
 id = "tui"
-summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); per-session conversation view; queue visibility (dim ▶ running; dim [N] queued; no exemptions — tend/rummage/jog ▶ starts at message submission; goal agents ▶ starts at dispatch; both clear on Done; full listing in goal-text region); auto-follow scroll; active-agent tag (<goal-id>>); /<goal-id> switches active session; each agent's messages labeled with goal-id; modal trigger-reason dialog | triggers: TUI layout/rendering changes; queue display; scroll behavior; agent-switch UX; message label rendering; per-session filtering; ▶ timing trigger"
+summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); per-session conversation view; queue visibility (dim ▶ running; dim [N] queued; coloured goal ID for running goal; no exemptions — tend/rummage/jog ▶ starts at message submission; goal agents ▶ starts at dispatch; both clear on Done; full listing in goal-text region); auto-follow scroll; active-agent tag (<goal-id>>); /<goal-id> switches active session; each agent's messages labeled with goal-id; modal trigger-reason dialog | triggers: TUI layout/rendering changes; queue display; scroll behavior; agent-switch UX; message label rendering; per-session filtering; ▶ timing trigger; goal ID colour"
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left
@@ -55,7 +55,9 @@ from when the first response chunk arrives. For goal agents, ▶
 appears at dispatch time and clears on Done. A goal with several pending invocations
 shows only its *next* index — never multiple numbers — so the list
 stays uncluttered. Markers render dim/grey so they don't dominate
-the goal name. When a marked goal is selected, the goal-text region
+the goal name. The goal ID of a running goal is rendered in a distinct
+colour, making it visually salient while scrolling; the ▶ marker stays
+dim. When a marked goal is selected, the goal-text region
 appends a section beneath the description listing every pending
 invocation for that goal in queue order — running first, then queued
 — each line carrying its glyph or index and trigger reason. In the
@@ -96,38 +98,14 @@ scaffolding, not conversation. The user opened tinker to type
 something, not to read tend orienting itself.
 
 Queue markers render dim for the same reason — they are ambient
-status, and a bright marker would compete with the goal name that
-carries the actual meaning. The queue surface is read-only by
+status, and a bright marker would compete with the goal name. The goal
+ID of a running goal is coloured instead: the name carries the meaning,
+so the name gets the signal. Running goals are easy to scroll past when
+only a dim glyph marks them; colour on the ID makes the active goal
+stay visible at a glance. The queue surface is read-only by
 deliberate choice: the user wanted to see what is running without
 being able to cancel or reorder it. Queue control is a separate
 concern, deferred until there is a real need.
-
-## SCOPE
-- In scope: the two-column layout at fixed 25%/50%/25% right-side
-  proportions; live streaming of conversation and session output;
-  per-session conversation filtering (each session's view contains
-  the inputs sent to it and its responses; system notifications are
-  global and appear in every session's view; full accumulated history
-  loaded on session switch); mouse-wheel scrolling with auto-follow;
-  keyboard goal-list navigation with edge scrolling; the modal
-  trigger-reason dialog; bold trigger reasons in the session log;
-  queue visibility markers in the goal list (dim `▶` running, dim
-  `[N]` queued; ▶ for tend/rummage/jog starts at message submission
-  and clears on Done; ▶ for goal agents starts at dispatch and clears
-  on Done; only first position shown per goal; applies to every
-  session in the registry without exception, including tend); full
-  running and queued listing in the goal-text region for the selected
-  goal; the
-  active-session input-prompt tag and message routing; each agent's
-  messages labeled with the goal-id; `/<goal-id>` slash commands
-  that switch the active session to any entry in the session
-  registry; suppression of tend's startup output from the
-  conversation pane (before the user's first message).
-- Out of scope: themes, syntax highlighting, layout configurability,
-  syncing the interface to a remote viewer; any interactive
-  manipulation of running sessions (cancel, reorder, pause) — the
-  queue surface is read-only; tool-call dim rendering (removed due
-  to rendering artifacts).
 
 """
 parent_id = ""

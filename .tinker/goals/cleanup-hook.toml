@@ -35,7 +35,9 @@ source:
 Without a marker convention, investigation code accumulates and
 contaminates production. With one, rummage can probe freely —
 including in production source, including by exposing private
-symbols — and the cleanup step keeps the codebase honest.
+symbols — and the cleanup step keeps the codebase honest. Enforcing the marker
+at write time is rummage's own discipline; this hook only cleans up
+afterward.
 
 Blocking on cleanup failure is deliberate: a goal session writing on
 top of half-cleaned investigation code is worse than not running at
@@ -48,16 +50,6 @@ format to teach the convention — exactly what broke when the rummage
 v2 prompt carried a code-fence example of the marker that cleanup
 couldn't remove without breaking the prompt and a test asserting the
 prompt contains it.
-
-## SCOPE
-- In scope: detecting markers across the project tree before each
-  goal session; dispatching a cheap cleanup agent; retrying a few
-  times before giving up; surfacing unrecoverable failures to the
-  user; distinguishing real markers from both prose mentions and
-  format-example mentions.
-- Out of scope: enforcing the marker at write time (rummage
-  self-enforces; this hook only cleans up after); recovering across
-  project boundaries; reliance on version control for reverts.
 
 """
 parent_id = "goal-agents"

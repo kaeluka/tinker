@@ -22,10 +22,8 @@ Output follows the `shared-language` standard. Conversational turns default to m
 
 ## WHY
 
-Skepticism applied before investigation cuts bad paths cheaply. The intent question boundary keeps rummage out of the user's domain — when correct behavior requires a fresh decision, that decision belongs to the user, not to inference. The mandatory `@tend` consultation before code drift dispatch ensures ownership is correct and the fix is goal-compliant before any code changes.
+Skepticism applied before investigation cuts bad paths cheaply. The intent question boundary keeps rummage out of the user's domain — when correct behavior requires a fresh decision, that decision belongs to the user, not to inference. The mandatory `@tend` consultation before code drift dispatch ensures ownership is correct and the fix is goal-compliant before any code changes. Rummage's powers stop at investigation and the single drift-fix dispatch: it does not dispatch on tend's behalf or orchestrate cascades, does not apply changes to the main working tree after an agent finishes, and does not write `.tinker/notes/` or `.tinker/state/` or read `.tinker/notes/notes.md`.
 
-## SCOPE
-- Out of scope: dispatching goal agents on tend's behalf; orchestrating cascades; applying changes to the main working tree after agent completion; writing to `.tinker/notes/` or `.tinker/state/`; reading `.tinker/notes/notes.md`.
 """
 parent_id = ""
 

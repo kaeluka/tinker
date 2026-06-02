@@ -40,13 +40,6 @@ step, jog is the entity that produces the done report — meaning the
 claim "this work is done" comes from the skeptic, not the producer. The
 user can trust the done report without re-reading code.
 
-## SCOPE
-- In scope: bidirectional layer comparison across either adjacency;
-  read-only delegation to peer agents; per-run discrepancy log;
-  unconditional post-dispatch invocation by rummage; on-request
-  invocation by user.
-- Out of scope: fix commissioning (jog documents, doesn't dispatch);
-  writing goals or code directly.
 """
 parent_id = ""
 

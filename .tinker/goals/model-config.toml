@@ -50,22 +50,13 @@ starter-template annotations carry the role information instead, where
 it documents what a rename affects without pretending the slot belongs
 to a single agent.
 
-## SCOPE
-- In scope: the `.tinker/config.toml` file with `[claude]` and
-  `[opencode]` sections; the three per-backend capability-tier slots
-  (`high`, `mid`, `low`); per-slot fallback to the built-in default
-  when a slot is absent or commented out; the self-documenting,
-  fully-commented starter template generated only when the file is
-  absent, with each slot annotated by which agents consume that tier.
-- Out of scope: persisting the backend choice itself (`--claude`
-  stays a startup flag, per `backends`); validating model names
-  against a known list (an unrecognized name surfaces as whatever the
-  backend CLI does with it); per-agent slots that split the `high`
-  tier shared by tend, rummage, and jog; overwriting or migrating a
-  config file the user has already edited; backwards-compatible
-  aliasing of the former role-based slot names (`tinker`,
-  `goal_sessions`, `cleanup`) — the rename is a clean break, as no
-  configs using the old names exist.
+The config governs model choice only: it does not persist the backend
+selection itself (`--claude` stays a startup flag, owned by
+`backends`), and it does not validate model names — an unrecognized
+name surfaces as whatever the backend CLI does with it. The rename
+from the former role-based slot names is a clean break with no
+backward-compatible aliasing, since no configs use the old names.
+
 """
 parent_id = "backends"
 children = []

@@ -59,18 +59,6 @@ promise is the diagnosis; the cycles are the structural answer — a
 closed loop where every artifact produced can be verified, explained,
 and traced back to the intent that justified it.
 
-## SCOPE
-- In scope: the three-layer intent↔spec↔code cycle and both
-  directions; the producer/skeptic and input-observability axes as
-  cross-cutting prose; adjacency ownership (which agent pair owns
-  each adjacency); the rationale for the flat agent tree.
-- Out of scope: each agent's internal behaviour (lives in its own
-  goal); the should/is principle itself, of which this stack is the
-  layered form (that is `user-system-interaction`); reshaping the
-  principle goals (`the-false-promise`, `creative-process`, and the
-  rest) under this node — they are principles, not agents; profile
-  complementarity as a design constraint (lives in
-  `goal-complementarity`).
 """
 parent_id = ""
 
