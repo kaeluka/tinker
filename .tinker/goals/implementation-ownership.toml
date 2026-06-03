@@ -5,7 +5,7 @@ description = """
 A formal mandate applied to goal sessions: they own the source-code
 implementation. Ownership is scope-bounded by the goal and its
 related goals — sessions hold full autonomy over implementation the
-spec doesn't dictate, none over what it does, and treat the goal as a
+goal doesn't dictate, none over what it does, and treat the goal as a
 high-level optimization target, not a literal exhaustive spec. The mandate explicitly
 overrides the default LLM behavior of acting as a cautious "guest"
 who avoids deleting or radically restructuring code: a session is

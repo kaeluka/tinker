@@ -15,7 +15,10 @@ step and reports every item present in one but not the other to whoever
 asked for jog's help.
 
 **Output.** Each run produces a new file under `.tinker/discrepancies/`
-documenting the findings, separated into forward and backward checks.
+documenting the findings, separated into the forward check
+(source→derived: items in the source missing downstream — coverage
+gaps) and the backward check (derived→source: items downstream with no
+source — points of interest).
 Rummage triggers jog unconditionally after every dispatch as the
 post-dispatch verification step — the primary invocation path — and
 this discrepancy document is the authoritative done report, returned to

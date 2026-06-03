@@ -19,7 +19,7 @@ template: both backend sections present, every slot listed but
 commented out, each annotated with its consuming agents and showing
 the current built-in default value on the commented line. The user
 uncomments and edits rather than looking up model names or slot
-identifiers. The starter file is written only when none exists.
+identifiers.
 
 ## WHY
 The user wants to choose the model for each tier — to experiment and

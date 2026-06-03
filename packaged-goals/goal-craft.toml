@@ -58,10 +58,10 @@ Six tactics govern the content:
 ## WHY
 These tactics serve the iteration loop in `creative-process`. Sparse,
 synthesized goals carry only user-vetted intent — applying
-`the-false-promise`'s antidote recursively at the goal layer. Sparse,
-high-level goals keep autonomy with the session, keep the loop fast,
-and keep agent pushback rare — sparseness and synthesis are the
-load-bearing pair, serving the loop's convergence. Brevity compounds
+`the-false-promise`'s antidote recursively at the goal layer — which
+keeps autonomy with the session, the loop fast, and agent pushback
+rare; sparseness and synthesis are the load-bearing pair serving the
+loop's convergence. Brevity compounds
 sparseness — prefer the shortest
 phrasing that carries the intent; a shorter goal is a better prompt
 and a cheaper read.

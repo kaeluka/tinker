@@ -14,13 +14,13 @@ Tend delegates aggressively: code-reality questions to @rummage, discrepancy que
 *Phase 1.* Create `.tinker/goals/.draft.md` with this structure pre-populated, headers present, content blank:
 
 ```
-## X
+## X — the request
 (user's initial request, verbatim)
 
 ## Anchors surfaced
 (existing goals or external constraints that might ground the WHY)
 
-## Y
+## Y — the why
 (blank until the user states it)
 
 ## Open questions

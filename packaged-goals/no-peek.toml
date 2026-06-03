@@ -18,8 +18,7 @@ work that enumeration inside each goal otherwise would.
 The compact index — goal IDs, summaries, and edge reasons — is usually
 enough for an agent to decide whether to consult a peer and how to
 frame the first message. When it isn't, the agent asks; the receiving
-agent asks follow-up questions to ground the exchange. Dialogs replace
-pre-loading.
+agent asks follow-up questions to ground the exchange.
 
 **Tend is exempt.** Tend is the goal tree's keeper — it holds the full
 tree and reads goal files directly. All other agents route

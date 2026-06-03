@@ -58,7 +58,8 @@ parent summary whenever a child is created or edited, and
 re-validates related-links on both sides. When an edit
 needs to touch a partner goal (to add, remove, or rephrase a
 back-pointing link), that partner edit happens in the **same write
-turn** and appears as one bundle in the placement sentence before writing, so the user
+turn** and appears as one bundle in the single placement sentence tend
+states before writing, so the user
 can redirect the whole change together rather than through
 cascading multi-turn interviews.
 

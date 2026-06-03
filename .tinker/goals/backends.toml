@@ -54,10 +54,10 @@ the config leaves a slot unset.
 **Error feedback.** When a CLI process exits with an error, the runner
 captures the error output and re-injects it as a message into the
 active session before the session closes, so the agent can read it
-and decide how to respond. Permission-denied errors are a signal that
-the agent crossed a path boundary enforced by the agent file; the
-expected response is to route through a peer `@`-message rather than
-retry the blocked action directly.
+and decide how to respond. Under opencode a permission-denied error
+signals the agent crossed the agent-file path boundary; the expected
+response is to route through a peer `@`-message rather than retry the
+blocked action.
 
 Startup argument handling is governed by `startup-args`. Recognised
 flags for this goal's backends are `--claude` (select the claude backend) and

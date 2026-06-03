@@ -3,10 +3,9 @@ summary = "governs: reactive maintenance of README.md at project root; synthesiz
 description = """
 ## WHAT
 Reactively maintains the `README.md` at the project root, deriving it
-from the current goal tree obtained via `@tend`. It synthesizes
-whatever foundational "why" and "what" the goals contain into a
-cohesive narrative for a new developer, articulating exactly what the
-goals hold rather than supplementing it.
+from the current goal tree obtained via `@tend`. It synthesizes the
+foundational "why" and "what" the goals contain into a cohesive
+narrative for a new developer, never supplementing beyond them.
 
 The prose is simple, clear, and precise: no ten-dollar words where
 simple ones suffice, but precision always comes first. The README opens assuming zero prior

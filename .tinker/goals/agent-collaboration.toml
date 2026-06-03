@@ -1,10 +1,10 @@
 id = "agent-collaboration"
-summary = "governs: mandatory neighbor consultation before/during significant work; agents announce changes to all adjacent goals and invite input; collaborative conflict resolution (file-level and goal-level); unresolvables surface up the chain (goal agent → rummage → tend → user); mandate coupled to graph maintenance | triggers: agent starting significant work; conflicting changes between parallel agents; neighbor notification before implementation"
+summary = "governs: mandatory neighbor consultation before/during work that edits files or reinterprets a goal; agents announce changes to all adjacent goals and invite input; collaborative conflict resolution (file-level and goal-level); unresolvables surface up the chain (goal agent → rummage → tend → user); mandate coupled to graph maintenance | triggers: agent starting work that edits files or reinterprets a goal; conflicting changes between parallel agents; neighbor notification before implementation"
 description = """
 ## WHAT
-Before and during significant work, every agent sends @-messages to its
-full adjacency — parent, children, and related goals — announcing what
-it's doing and inviting their input. The full adjacency defines the
+Before and during work that edits files or reinterprets a goal, every
+agent sends @-messages to its full adjacency — parent, children, and
+related goals — announcing what it's doing and inviting their input. The full adjacency defines the
 complete set of goals whose context bears on the work. The one
 exemption: the agent that dispatched
 this work already knows what's happening and does not need to be

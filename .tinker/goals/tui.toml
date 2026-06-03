@@ -1,5 +1,5 @@
 id = "tui"
-summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); per-session conversation view; queue visibility (dim ▶ running; dim [N] queued; coloured goal ID for running goal; no exemptions — tend/rummage/jog ▶ starts at message submission; goal agents ▶ starts at dispatch; both clear on Done; full listing in goal-text region); auto-follow scroll; active-agent tag (<goal-id>>); /<goal-id> switches active session; each agent's messages labeled with goal-id; modal trigger-reason dialog | triggers: TUI layout/rendering changes; queue display; scroll behavior; agent-switch UX; message label rendering; per-session filtering; ▶ timing trigger; goal ID colour"
+summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); per-session conversation view; queue visibility (dim ▶ running; dim [N] queued; coloured goal ID for running goal; no exemptions — tend/rummage/jog ▶ starts at message submission; goal agents ▶ starts at dispatch; both clear on Done; full listing in goal-text region); auto-follow scroll; active-agent tag (goal-id>); /<goal-id> switches active session; each agent's messages labeled with goal-id; modal trigger-reason dialog | triggers: TUI layout/rendering changes; queue display; scroll behavior; agent-switch UX; message label rendering; per-session filtering; ▶ timing trigger; goal ID colour"
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left
@@ -46,13 +46,13 @@ where it re-engages.
 
 **Queue visibility.** When goals have running or pending sessions,
 the goal list marks them: a distinct glyph (`▶`) for the
-currently-running goal, a bracketed integer (`[1]`, `[2]`) for each
-goal's next queued position. For tend, rummage, and jog, ▶ appears
+currently-running goal, a bracketed integer (`[1]`, `[2]`) marking a
+goal's next queued position; a goal with several pending invocations
+shows only that next index. For tend, rummage, and jog, ▶ appears
 when the user submits a message; for goal agents, at dispatch. It
-clears on Done. A goal with several pending invocations shows only
-its next index. Markers render dim/grey so they don't dominate
+clears on Done. Markers render dim/grey so they don't dominate
 the goal name. The goal ID of a running goal renders in a distinct
-colour; the ▶ marker stays dim. When a marked goal is selected, the goal-text region
+colour. When a marked goal is selected, the goal-text region
 appends a section beneath the description listing every pending
 invocation for that goal in queue order — running first, then queued
 — each line carrying its glyph or index and trigger reason. The queue

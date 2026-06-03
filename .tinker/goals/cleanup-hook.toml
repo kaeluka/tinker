@@ -5,7 +5,7 @@ description = """
 Before any goal session runs, the system scans the project tree for
 `tinker-test-case:` markers — left by rummage's active investigation
 work — and dispatches a cheap cleanup agent to remove or revert the change each
-one labels. It retries a few times; if markers still can't be
+one labels. It retries up to three times; if markers still can't be
 cleaned, the goal session is blocked and the user is told which
 files still need attention.
 

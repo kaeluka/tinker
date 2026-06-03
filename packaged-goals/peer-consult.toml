@@ -10,7 +10,7 @@ delivered to the named agent**; any prose the sending agent wrote
 before or after it is not included, so each `@`-block must be
 self-contained.
 
-The opening may sit inline on the `@`-line or below it. The system
+The message text may begin inline on the `@`-line or on the line below. The system
 detects these blocks after each reply
 finalises, routes each to the named agent's input channel, and pushes
 a system message so the user can see the exchange.

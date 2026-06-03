@@ -10,8 +10,9 @@ brief summary paired with pointers to the source files that implement
 it. It's written for LLMs to read; the exact structure is the
 indexing agent's call, not prescribed here.
 
-Updates run reactively: the indexer fires when source files change.
-Lag between a manual edit and the next update is acceptable.
+Updates run reactively: the indexer fires when source files change
+or the goal set changes. Lag between an edit and the next update is
+acceptable.
 
 ## WHY
 Any agent (or human) arriving fresh at a project needs a way to

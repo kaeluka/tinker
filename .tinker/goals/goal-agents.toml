@@ -68,7 +68,7 @@ collaborated with other agents in fulfilling the task.
 
 ---
 
-**Dispatcher-provided init sections.** When tend dispatches a goal
+**Dispatcher-provided init section.** When tend dispatches a goal
 agent after a goal write, it augments the init message with one
 additional section beyond the standard preamble and goal text:
 
@@ -83,14 +83,9 @@ their scope should consult `@rummage`.
 session start via `model-config`. Tend, rummage, and jog declare
 `tier = "high"`.
 
-**Unified event enum:**
-```
-enum SessionEvent {
-    Chunk        { goal_id: String, text: String },
-    Done         { goal_id: String },
-    CleanupBlocked { goal_id: String, dirty_files: Vec<PathBuf>, error: Option<String> },
-}
-```
+**Unified event stream.** Every session emits three kinds of event:
+a streamed output chunk, a done signal, and a cleanup-blocked signal
+carrying the dirty files.
 
 Sessions never read or write `.tinker/goals/`, `.tinker/notes/`, or
 `.tinker/state/` (tend-owned); goal content reaches a session via

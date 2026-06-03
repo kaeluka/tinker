@@ -8,7 +8,7 @@ Apply these coding standards to any code in this project.
 This is a standing constraint, not a feature that progresses toward
 completion. It should fire whenever the batch produced changes to
 source code — any write, edit, or new file outside `.tinker/`,
-`target/`, `node_modules/`, and documentation paths. If the batch
+`target/`, `node_modules/`, and `*.md` files. If the batch
 contained no source-code changes, there's nothing to verify; reply
 `no`. If the goal already ran in this batch and nothing further
 changed since, also `no` — one run per batch is enough.
