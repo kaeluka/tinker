@@ -169,10 +169,6 @@ id = "parallel-goal-agents"
 reason = "execution model — concurrent agents in shared main tree, coordination-based conflict avoidance via agent-collaboration"
 
 [[related]]
-id = "the-cycles"
-reason = "goal-agents is the implementation of the-cycles' conceptual model: every agent in the cycle (forward and backward) is a process-scoped session addressable by goal-id, making the cycle executable rather than descriptive."
-
-[[related]]
 id = "peer-consult"
 reason = "peer-consult governs the @-block protocol and delivery rules; goal-agents implements the session registry that makes @-dispatch universal across the whole agent population."
 
@@ -195,3 +191,15 @@ reason = "tend is the only agent with structural exceptions in the registry (eag
 [[related]]
 id = "coding-standards"
 reason = "This goal produces code, which follows coding-standards (capability-based DI, the polymorphism ladder, test_spec_/test_security_ marking, security.md, and the tinker-test-case: convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: coding-standards is a packaged ancestor-scope standard and carries no back-link."
+
+[[related]]
+id = "implementation-ownership"
+reason = "implementation-ownership's source-ownership mandate (override the LLM structural taboo; permission to demolish and rewire without hesitation) rides in the framework preamble and session init this goal constructs, injected alongside the goal text."
+
+[[related]]
+id = "no-peek"
+reason = "This goal's .tinker/ read/write prohibition (sessions never read goal files; content arrives via @tend and the init message) is the agent-architecture expression of no-peek's rule that agents access peer context through @-messages, never by reading other goals' files. Asymmetric: no-peek is a packaged goal and carries no back-link."
+
+[[related]]
+id = "tend-introspection"
+reason = "tend-introspection records observables of this goal's session lifecycle (dispatched/started/finished), @-dispatch emissions, and the session-start framework-preamble plus goal-list hash; its capture schema depends on what goal-agents' registry emits."

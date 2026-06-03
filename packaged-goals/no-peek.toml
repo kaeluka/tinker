@@ -16,12 +16,12 @@ reachable through A or B, without any of them updating their own
 content. This is the compositionality property: the graph does the
 work that enumeration inside each goal otherwise would.
 
-Edge reasons are the primary navigation signal. The compact index
-carries goal IDs, summaries, and reasons — enough for an agent to
-decide whether to consult a peer and how to frame the first message.
-When the compact index isn't sufficient, the agent asks; the receiving
-agent asks follow-up questions if it needs more context. Dialogs
-replace pre-loading.
+The compact index — goal IDs, summaries, and the edge reasons whose
+navigation-index role `goal-structure-standard` defines — is usually
+enough for an agent to decide whether to consult a peer and how to
+frame the first message. When it isn't, the agent asks; the receiving
+agent asks follow-up questions to ground the exchange. Dialogs replace
+pre-loading.
 
 **Tend is exempt.** Tend is the goal tree's keeper — it holds the full
 tree and reads goal files directly. All other agents route
@@ -48,3 +48,11 @@ parent_id = "peer-consult"
 [[related]]
 id = "goal-complementarity"
 reason = "The compositionality argument here — adding one edge propagates connectivity through the graph — is the communication-layer form of `goal-complementarity`'s domain-orthogonality principle. Both say the same thing at different levels: coupling lives in the graph structure, not in what each node enumerates."
+
+[[related]]
+id = "tend"
+reason = "no-peek exempts tend by name: tend is the goal-tree keeper, the one agent that reads goal files directly while every other agent routes goal-content questions through @tend. tend's direct-read access and its @tend intent-endpoint role are the operational form of that exemption."
+
+[[related]]
+id = "goal-structure-standard"
+reason = "no-peek's guarantee that the edge graph is the complete, navigable coupling map depends on goal-structure-standard's symmetry and reason-accuracy rules — reasons only work as the navigation signal if accurate and links are symmetric. goal-structure-standard maintains the graph; no-peek relies on it staying navigable."

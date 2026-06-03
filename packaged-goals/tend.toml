@@ -81,3 +81,11 @@ reason = "The `@`-block protocol through which tend consults rummage and receive
 [[related]]
 id = "goal-complementarity"
 reason = "Tend reads this goal fresh before every write as part of the goal orthogonality check — verifying the goal being written doesn't encroach on another goal's domain."
+
+[[related]]
+id = "no-peek"
+reason = "no-peek prohibits agents from reading peer goal files and routes all goal-content questions through @tend; tend is no-peek's named exemption — the goal-tree keeper that reads goal files directly and serves as the @tend endpoint other agents route to."
+
+[[related]]
+id = "readme-maintainer"
+reason = "readme-maintainer queries @tend read-only for the current goal tree to synthesize the human-facing README; tend serves the tree it keeps."

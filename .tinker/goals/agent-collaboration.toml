@@ -28,7 +28,7 @@ link-symmetry rules in `goal-structure-standard` are two halves of the
 same guarantee.
 
 ## WHY
-The edge graph encodes the system's complete coupling map. An agent
+An agent
 working without consulting its neighbors loses context that only those
 neighbors' outgoing edges can surface — including context the working
 agent had no way to know it needed. Neighbors have their own

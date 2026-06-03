@@ -60,9 +60,5 @@ id = "shared-language"
 reason = "Jog's output (discrepancy log and conversation) is user-facing; `shared-language` governs its vocabulary."
 
 [[related]]
-id = "coding-standards"
-reason = "This goal produces code, which follows `coding-standards`. Asymmetric: packaged ancestor-scope standard, no back-link."
-
-[[related]]
 id = "peer-consult"
 reason = "Jog orchestrates via @-messages to peer agents; the @-block protocol and delivery rules are governed by `peer-consult`."

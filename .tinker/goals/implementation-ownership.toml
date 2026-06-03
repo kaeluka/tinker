@@ -26,10 +26,9 @@ artifact as *theirs*, the taboo disappears.
 The first tactic for breaking the taboo is injecting this ownership
 mandate directly into the goal-session prompt, rather than building
 a separate optimization agent — the goal is the outcome (taboo
-broken), the prompt injection is just the current tactic. This
-ownership stops at the source: goal sessions never write their own
-goal `.toml` files — Intent stays human-owned — and tinker itself
-still writes no code.
+broken), the prompt injection is just the current tactic. This ownership
+stops at the source — Intent (the goals) stays human-owned and tinker
+itself writes no code.
 
 """
 parent_id = "user-system-interaction"

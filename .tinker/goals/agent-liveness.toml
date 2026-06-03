@@ -48,3 +48,7 @@ reason = "The @-message path is the named recovery mechanism on denial — agent
 [[related]]
 id = "backends"
 reason = "backends governs the harness-side mechanisms that enforce this goal's guarantee: tool-denial surfacing (making denials visible in the conversation pane) and silence detection (the follow-up prompt when no assistant text is produced)."
+
+[[related]]
+id = "no-peek"
+reason = "On a tool denial, agent-liveness mandates the agent advance by routing to the peer whose scope the permission boundary marks, rather than retrying the blocked action. no-peek owns that resolution form — cross-agent access goes through @-messages, not direct retries of denied operations. Asymmetric: no-peek is a packaged goal and carries no back-link."

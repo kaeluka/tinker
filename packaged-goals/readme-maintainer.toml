@@ -53,3 +53,11 @@ children = []
 [[related]]
 id = "project-indexer"
 reason = "Dual documentation goals: project-indexer maintains the LLM-facing map (AGENTS.md), while readme-maintainer maintains the human-facing narrative (README.md)."
+
+[[related]]
+id = "tend"
+reason = "readme-maintainer synthesizes the human-facing README by asking @tend for the current goal tree; tend answers the read-only intent query from the goals it keeps."
+
+[[related]]
+id = "peer-consult"
+reason = "readme-maintainer's README synthesis runs over an @tend query; peer-consult governs the @-block protocol and delivery rules that carry that request."

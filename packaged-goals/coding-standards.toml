@@ -153,7 +153,4 @@ optimize for that without sacrificing encapsulation.
 """
 parent_id = ""
 children = []
-related = [
-  { id = "cleanup-hook", reason = "Section 5 ('Tinkerability') of this standard defines the `tinker-test-case:` marker convention investigation code must carry. `cleanup-hook` is the mechanism that finds and removes those markers before each goal session — without it, the marker rule is unenforced." },
-  { id = "goal-sessions", reason = "The 'Tests as guardrails' section of this standard requires goal sessions to mark spec/security tests with `test_spec_*` and `test_security_*` prefixes. `goal-sessions` enforces this systemically by requiring sessions to explicitly list `test_spec_*` functions in their structured summary." }
-]
+related = []

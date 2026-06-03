@@ -126,3 +126,7 @@ reason = "tui renders every user-facing text surface (conversation, goal text, s
 [[related]]
 id = "peer-consult"
 reason = "The `@` message stream between agents appears in the conversation pane; TUI owns the rendering details for agent-to-agent exchanges."
+
+[[related]]
+id = "tend-introspection"
+reason = "tend-introspection's introspection substrate captures this goal's structural state (selection, focus, scroll, queue snapshot) in its state file and event log; when tui's structural state model changes, the substrate's captured fields must change."

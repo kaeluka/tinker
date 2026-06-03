@@ -98,3 +98,11 @@ children = []
 [[related]]
 id = "coding-standards"
 reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
+
+[[related]]
+id = "tui"
+reason = "tend-introspection's substrate captures tui's structural state (selection, focus, scroll offsets, queue snapshot) in its state file and logs tui state-change events; the set of observable structural state it records is defined by what tui renders and maintains."
+
+[[related]]
+id = "goal-agents"
+reason = "tend-introspection logs goal-session lifecycle events (dispatched/started/finished), @-dispatch emissions, and a session-start system-prompt and goal-list-hash capture; the lifecycle and dispatch events it records are produced by goal-agents' session registry."

@@ -60,11 +60,7 @@ parent_id = ""
 
 [[related]]
 id = "project-indexer"
-reason = "`AGENTS.md` produced by `project-indexer` is the canonical example of an LLM-targeted artifact this goal carves out of the shared-vocabulary rule. The exemption is named explicitly because project-indexer's output looks like documentation but isn't aimed at the user. Asymmetric link: `project-indexer` is a packaged goal and carries no back-link."
-
-[[related]]
-id = "coding-standards"
-reason = "This goal produces code, which follows `coding-standards`. Asymmetric: packaged ancestor-scope standard, no back-link."
+reason = "`AGENTS.md` produced by `project-indexer` is the canonical example of an LLM-targeted artifact this goal carves out of the shared-vocabulary rule. The exemption is named explicitly because project-indexer's output looks like documentation but isn't aimed at the user."
 
 [[related]]
 id = "tend"

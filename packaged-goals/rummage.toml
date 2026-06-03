@@ -50,3 +50,7 @@ reason = "The `@`-block protocol through which rummage communicates with tend, g
 [[related]]
 id = "jog"
 reason = "Jog sends read-only @rummage queries to read the code layer during its discrepancy runs. Rummage can consult @jog on spec↔code alignment questions during investigation."
+
+[[related]]
+id = "creative-process"
+reason = "Rummage grounds its intent-question boundary (a fresh correctness decision belongs to the user, not to inference) and its prove-by-execution stance in creative-process's human-as-termination and observability principle. Rummage is the spec↔code backward pass that instantiates creative-process's 'the dialectic must continue after a goal is written' — catching drift as conventions degrade."

@@ -12,7 +12,7 @@ children = []
 
 [[related]]
 id = "backends"
-reason = "backends governs the known flag set (--claude, --tend-full-goal-context, --default-model, --help/-h); this goal validates against that set. When a new flag is added to backends, it must also be added here."
+reason = "backends defines the recognised backend-selection flag set (--claude, --tend-full-goal-context); this goal validates incoming args against that set and renders them in the help text. When a new flag is added to backends it must also be registered here. (--help/-h is this goal's own handler, not backends'.)"
 
 [[related]]
 id = "coding-standards"

@@ -52,11 +52,11 @@ parent_id = ""
 
 [[related]]
 id = "tend"
-reason = "Rummage is tend's code-reading arm: tend reaches for `@rummage` proactively whenever forming a recommendation that depends on what the system currently does. Tend also receives `@tend` consultations from rummage when rummage needs intent context."
+reason = "tend is a session-registry agent governed by the @-block protocol this goal defines: it consults peers via @rummage and @jog and receives @tend reports from goal agents, all delivered under peer-consult's self-contained-block and multi-line rules."
 
 [[related]]
 id = "rummage"
-reason = "Tend is rummage's intent-reading arm: rummage consults `@tend` when it needs to understand the *should* rather than inferring from goal text — specifically for case-1/case-2 disambiguation, ownership resolution before dispatch, and intentionality checks."
+reason = "rummage is a session-registry agent that communicates with tend, goal agents, and jog through the @-block protocol this goal governs; peer-consult defines the delivery and self-containment rules its consultations must satisfy."
 
 [[related]]
 id = "jog"
@@ -67,8 +67,8 @@ id = "goal-complementarity"
 reason = "`goal-complementarity` is the design rationale for why consultation quality depends on domain gap: routing to a goal with a stronger domain for the workload produces better output. This channel is the runtime mechanism; that goal is the design rationale."
 
 [[related]]
-id = "coding-standards"
-reason = "This goal produces code, which follows `coding-standards`. Asymmetric: packaged ancestor-scope standard, no back-link."
+id = "readme-maintainer"
+reason = "readme-maintainer consults @tend over the @-block protocol this goal governs to read the goal tree for README synthesis."
 
 [[children]]
 id = "no-peek"

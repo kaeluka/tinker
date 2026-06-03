@@ -3,7 +3,7 @@ summary = "governs: concurrent goal agent execution in shared main working direc
 description = """
 ## WHAT
 
-Goal agents run directly in the main working directory. Multiple agents can be active concurrently. Conflict avoidance is the responsibility of the agents themselves: before making significant changes, each agent announces its work to neighboring goals via `@`-messages and awaits input, per the `agent-collaboration` mandate. Agents resolve file-level and goal-level conflicts collaboratively; unresolvable conflicts surface to the dispatcher and ultimately to the user.
+Goal agents run directly in the main working directory. Multiple agents can be active concurrently. Conflict avoidance is the responsibility of the agents themselves, via the consultation mandate in `agent-collaboration`.
 
 The cleanup hook runs in the main working tree before each agent's first turn.
 

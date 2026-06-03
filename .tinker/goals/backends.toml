@@ -35,7 +35,7 @@ personas its own way:
 
   *Persona delivery split.* Session-invariant content arrives via
   `--system-prompt`: for tend, its role description and write-scope
-  constraint (`.tinker/goals/` only, no `src/`); for goal agents, the
+  constraint; for goal agents, the
   framework preamble (message passing protocol, progress guarantee,
   rules, neighbor consultation mandate). Per-session content arrives in
   the init message: for goal agents, the goal spec, trigger reason, and
@@ -104,9 +104,9 @@ id = "coding-standards"
 reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
 
 [[related]]
-id = "no-peek"
-reason = "The error-feedback rule names `no-peek` as the resolution path for permission-denied errors: the agent routes through a peer @-message rather than retrying the blocked direct access. The feedback closes the enforcement loop that `no-peek`'s path-permission rules open. Asymmetric: `no-peek` is a packaged goal and carries no back-link."
-
-[[related]]
 id = "agent-liveness"
 reason = "agent-liveness defines the progress guarantee this goal's harness mechanisms enforce: tool-denial surfacing makes denials visible so agents can reason about them; silence detection prompts agents that produce no output to take a step."
+
+[[related]]
+id = "goal-agents"
+reason = "goal-agents defines the uniform session registry and unified runner task this goal's runner trait must support; per-tier model resolution for every goal agent is wired through the backend at the composition root. Changes to the registry or the tier field affect what the runner abstraction must provide."
