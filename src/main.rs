@@ -2306,8 +2306,14 @@ mod tests {
 
     #[test]
     fn test_spec_tinker_prompt_related_links_symmetric_both_list_each_other() {
+        // tend's write procedure defers the symmetry rule to goal-structure-standard
+        // (read fresh) rather than restating it; the guardrail is that the prompt
+        // still mandates re-validating every edge, symmetry included.
         let content = tend_agent_content();
-        assert!(content.contains("Re-validate related-link symmetry"), "prompt must include a 'Re-validate related-link symmetry' step");
+        assert!(
+            content.contains("Re-validate all edges") && content.contains("symmetry"),
+            "prompt must include an edge re-validation step covering related-link symmetry",
+        );
     }
 
     // spec (tend, goal-agents): the startup-silence init prompt must instruct
