@@ -2,29 +2,23 @@ id = "readme-maintainer"
 summary = "governs: reactive maintenance of README.md at project root; synthesizes goal tree into human-facing narrative (zero prior knowledge assumed); simple+precise prose style; required sections: status framing, installation, agent collaboration, actor-model architecture | triggers: goal tree changes affecting project narrative; README needing update"
 description = """
 ## WHAT
-A packaged goal that reactively maintains the human-facing
-`README.md` at the project root by asking `@tend` for the current
-goal tree. It synthesizes whatever foundational "why" and "what" the goals
-contain into a cohesive narrative for a new developer — it does not
-invent features or philosophy, it articulates exactly what the goals
-hold.
+Reactively maintains the `README.md` at the project root, deriving it
+from the current goal tree obtained via `@tend`. It synthesizes
+whatever foundational "why" and "what" the goals contain into a
+cohesive narrative for a new developer, articulating exactly what the
+goals hold rather than supplementing it.
 
-The prose is simple, clear, and precise (think Vonnegut, Hemingway,
-Erich Kästner): no ten-dollar words where simple ones suffice, but
-precision always comes first. The README opens assuming zero prior
+The prose is simple, clear, and precise: no ten-dollar words where
+simple ones suffice, but precision always comes first. The README opens assuming zero prior
 knowledge — using even less in-group shared language than tinker
 itself does — because the top is a landing point that must pick up a
-first-time reader exactly where they are. As the human-facing
-counterpart to `project-indexer`, it defaults to conceptual
-descriptions and avoids raw code identifiers except where they're
-needed for setup.
+first-time reader exactly where they are. It defaults to conceptual
+descriptions, using raw code identifiers only where setup needs them.
 
 The README has four required sections, in order:
-- **Status** (top of the README, before anything else): tinker is
-  an early-stage experimental coding assistant. Bugs are expected.
-  Features are in heavy flux. This is a design study and work is
-  actively ongoing. This framing is fixed — it does not vary with
-  the goal tree.
+- **Status** (top of the README, before anything else): a fixed
+  framing — tinker is an early-stage experimental design study in
+  heavy flux — that does not vary with the goal tree.
 - **Installation**: build from source with `cargo build --release`;
   add the release binary to PATH; symlink packaged goals into
   `~/.tinker` so the ancestor-merge picks them up.
@@ -39,12 +33,10 @@ The README has four required sections, in order:
   ever having to read code.
 
 ## WHY
-AI-built projects evolve rapidly and manual documentation rots. Every
-project needs a human-facing entry point explaining its intent and
-architecture. Making this a packaged goal means every tinker-built
-project automatically gets a self-updating README derived directly
-from its load-bearing intent (the goal files); the README doesn't
-drift because it is just a reflection of the tree.
+Manual documentation rots as AI-built projects evolve. Deriving the
+README from the goal tree gives every tinker-built project a
+self-updating human entry point that cannot drift, because it only
+reflects the tree.
 
 """
 parent_id = ""

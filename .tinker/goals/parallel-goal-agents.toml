@@ -3,13 +3,11 @@ summary = "governs: concurrent goal agent execution in shared main working direc
 description = """
 ## WHAT
 
-Goal agents run directly in the main working directory. Multiple agents can be active concurrently. Conflict avoidance is the responsibility of the agents themselves, via the consultation mandate in `agent-collaboration`.
-
-The cleanup hook runs in the main working tree before each agent's first turn.
+Goal agents run directly in the main working directory. Multiple agents can be active concurrently. Agents avoid conflicts themselves via the consultation mandate in `agent-collaboration`.
 
 ## WHY
 
-Worktree isolation solves the parallel-write problem with filesystem infrastructure — isolation, a merge step, and a merge agent. Coordination via `@`-messages solves the same problem with communication. The communication model is simpler: no merge step, no merge agent, and the conflict-resolution protocol (`agent-collaboration`) is already the mechanism agents use for goal-level coordination.
+Coordination via `@`-messages keeps the model simple: no merge infrastructure, and the conflict-resolution protocol agents already use for goal-level coordination doubles as the parallel-write guard.
 
 """
 parent_id = "goal-agents"

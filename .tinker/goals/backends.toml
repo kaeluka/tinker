@@ -7,9 +7,7 @@ out to — chosen at startup. Two backends exist today: **opencode**
 (the default) and **claude** (selected with the `--claude` flag).
 Both are co-equal implementations of the same runner trait, wired to
 real instances only at the composition root; business logic depends
-on the trait, not on any vendor's CLI. Adding a third backend (e.g.
-codex) means implementing that trait, not threading vendor specifics
-through the system.
+on the trait, not on any vendor's CLI.
 
 Each backend maps tinker's roles to its own models and delivers agent
 personas its own way:
@@ -20,8 +18,7 @@ personas its own way:
   carries the full tend description and an allowlist restricting tend
   to `.tinker/goals/**` only (reads and writes). `tinker.md` carries
   generic frontmatter and a denylist blocking reads and writes to all
-  `.tinker/` subdirectories; it is used by rummage, jog, and all goal
-  agents. Both files enforce path-scoped access rules at the backend
+  `.tinker/` subdirectories. Both files enforce path-scoped access rules at the backend
   level, not just via prompt instructions.
 
 - **claude** (`--claude`): maps roles to `claude-opus-4-8` (tend, high
@@ -30,8 +27,7 @@ personas its own way:
   alias can silently resolve to an unvalidated model version. Passes
   each persona via `--system-prompt` instead of an agent file; resumes
   sessions with `--resume <session-id>`; parses streaming JSON
-  (`--output-format stream-json --verbose`). The backend choice is a
-  boolean startup flag and is not persisted.
+  (`--output-format stream-json --verbose`).
 
   *Persona delivery split.* Session-invariant content arrives via
   `--system-prompt`: for tend, its role description and write-scope
@@ -58,15 +54,13 @@ the config leaves a slot unset.
 **Error feedback.** When a CLI process exits with an error, the runner
 captures the error output and re-injects it as a message into the
 active session before the session closes, so the agent can read it
-and decide how to respond. The default expectation is that the agent
-reasons from the error. Permission-denied errors are a signal that
+and decide how to respond. Permission-denied errors are a signal that
 the agent crossed a path boundary enforced by the agent file; the
 expected response is to route through a peer `@`-message rather than
 retry the blocked action directly.
 
-Startup argument handling (unknown-arg detection, help text, exit
-behaviour) is governed by `startup-args`. Recognised flags for this
-goal's backends are `--claude` (select the claude backend) and
+Startup argument handling is governed by `startup-args`. Recognised
+flags for this goal's backends are `--claude` (select the claude backend) and
 `--tend-full-goal-context` (restore full goal text in tend's context
 instead of the compact index).
 
@@ -74,19 +68,11 @@ instead of the compact index).
 Tinker's business logic should depend on a backend abstraction, not
 on one vendor's CLI: the user picks the models they prefer at
 startup, and a new backend slots in by implementing the runner rather
-than by editing the system around it. Capturing the abstraction as
-intent also keeps both backends legible — before this goal only the
-claude path was written down, so the opencode backend kept going
-invisible as the silent default. Naming opencode and claude as
-co-equal implementations fixes that and makes the cost of a third
-backend explicit and small.
+than by editing the system around it.
 
-Error feedback closes the enforcement loop that path-scoped
-permissions open. The agent file rules already say "no" to out-of-scope
-paths; without error feedback the agent has no way to hear that
-signal and cannot course-correct. Re-injecting the error turns a
-silent process death into actionable information: the agent sees what
-failed and can find the compliant path.
+Re-injecting the error closes the enforcement loop — an out-of-scope
+path denial becomes a signal the agent can hear and course-correct
+from, rather than a silent process death.
 
 """
 parent_id = ""

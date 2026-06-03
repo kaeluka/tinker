@@ -12,7 +12,7 @@ mechanism — any agent activates any other by emitting an `@`-block;
 the runtime routes it to the named entry.
 
 Tend has exactly **two structural exceptions**, and no others are
-justified:
+justified — everything else is identical across all agents:
 1. **Starts eagerly, with startup-silence.** Tend starts on process
    init so it is ready before the user types anything. Immediately
    after init, tend receives a startup-silence message: a single
@@ -25,13 +25,6 @@ justified:
    produces a malformed file, tend is re-queued with correction
    instructions (up to two attempts). No other agent triggers this
    loop because no other agent writes goal files.
-
-Everything else is identical across all agents: the same event types,
-the same routing, the same lifecycle, the same `@`-dispatch protocol.
-
-**Goal agent execution model.** The execution model for goal agents
-(concurrency and conflict avoidance) is governed by
-`parallel-goal-agents`.
 
 **Framework preamble.** Before its goal description, every session
 receives a standard runtime-injected preamble:
@@ -75,9 +68,6 @@ collaborated with other agents in fulfilling the task.
 
 ---
 
-The agent's role in the intent↔spec↔code cycle is part of its
-`description`, not injected by the runtime.
-
 **Dispatcher-provided init sections.** When tend dispatches a goal
 agent after a goal write, it augments the init message with one
 additional section beyond the standard preamble and goal text:
@@ -86,16 +76,7 @@ additional section beyond the standard preamble and goal text:
   added, computed from the old spec and new spec tend holds.
 
 Goal agents needing a code inventory of what currently exists in
-their scope should consult `@rummage`. This is the mechanism that
-makes large refactors reliable: agents hold both sides of the diff,
-not just the desired end state.
-
-**Structured summary.** When a session completes significant work, it
-reports to its dispatcher (see preamble) with a structured summary
-covering: accomplishments, decisions made beyond the goal, how to
-try the result, every `test_spec_` function created or modified
-(enforces the `coding-standards` tests-as-guardrails requirement),
-and agent collaboration during the task.
+their scope should consult `@rummage`.
 
 **Tier.** Every goal TOML may carry an optional `tier` field:
 `"high"`, `"mid"`, or absent (defaults to `"mid"`). Resolved at
@@ -110,16 +91,10 @@ enum SessionEvent {
     CleanupBlocked { goal_id: String, dirty_files: Vec<PathBuf>, error: Option<String> },
 }
 ```
-A single `mpsc::Receiver<SessionEvent>` in the run loop handles
-events from all sessions, dispatching on `goal_id`. The LLM session
-id is not an event — each per-goal loop captures it from the runner's
-return value and holds it for resumption.
 
 Sessions never read or write `.tinker/goals/`, `.tinker/notes/`, or
-`.tinker/state/` — those directories are tend-owned. Goal content
-reaches a session through `@tend` and its init message, never by
-reading goal files directly; doing so would bypass `no-peek` and
-tend's ownership of the goal tree.
+`.tinker/state/` (tend-owned); goal content reaches a session via
+`@tend` and the init message (see `no-peek`).
 
 ## WHY
 A uniform registry eliminates the distinction between "named agents"

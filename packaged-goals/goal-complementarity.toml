@@ -2,14 +2,11 @@ id = "goal-complementarity"
 summary = "governs: complementarity and orthogonality principle for all goals; every goal claims a distinct domain; together goals cover the space without overlap; named anchor domains (tend, rummage, jog, goal sessions); per-write orthogonality check run by tend | triggers: adding or reshaping any goal; deciding which goal handles a workload; reviewing consultation patterns; overlap audit; goal placement decisions"
 description = """
 ## WHAT
-Every goal claims a distinct domain. Together, goals cover the space
-without overlap — each owns a piece of the problem, none encroach on
-another's territory. This is complementarity: the goal set as a whole
-is more than the sum of its parts precisely because the parts don't
-repeat each other.
+Every goal claims a distinct domain — complementarity. Together, goals
+cover the space without overlap — each owns a piece of the problem,
+none encroach on another's territory.
 
-The anchor domains — the most load-bearing boundaries in the current
-goal tree:
+The anchor domains:
 
 - **Tend**: intent synthesis, dialectical interviewing, goal
   management. The *should* for every other goal.
@@ -20,16 +17,13 @@ goal tree:
 - **Goal sessions**: code generation from a written spec.
 
 Where domains touch, the overlap is intentional and the authoritative
-goal is named. Tend owns the *should*; rummage owns the *is* — the
-boundary is clean because both sides name it.
+goal is named.
 
-**Orthogonality check.** Before writing any goal, tend verifies:
-
-1. The goal claims a domain distinct from every other goal's. If
-   overlap exists, it is intentional and the authoritative goal is
-   named.
-2. If the goal being written is one of the anchor goals above, re-read
-   the anchor domain list and verify all boundaries still hold.
+**Orthogonality check.** Before writing any goal, tend verifies the
+domain is distinct from every other goal's, naming the authoritative
+goal at any intentional overlap; if the goal is one of the anchor goals
+above, tend re-reads the anchor domain list and confirms all boundaries
+still hold.
 
 ## WHY
 A goal set where domains overlap produces ambiguous specs — two goals

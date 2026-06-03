@@ -4,28 +4,24 @@ description = """
 ## WHAT
 Before and during significant work, every agent sends @-messages to its
 full adjacency — parent, children, and related goals — announcing what
-it's doing and inviting their input. This is a requirement, not a
-courtesy: the full adjacency defines the complete set of goals whose
-context bears on the work. The one exemption: the agent that dispatched
+it's doing and inviting their input. The full adjacency defines the
+complete set of goals whose context bears on the work. The one
+exemption: the agent that dispatched
 this work already knows what's happening and does not need to be
 consulted.
 
 Adjacent goals respond in the spirit of collaboration: contributing
 relevant context, identifying conflicts (competing file edits or
 contradictory goal interpretations), and working toward a resolution.
-Agents think on their feet — they do not wait for all responses before
-acting, but they integrate what arrives and adjust. When a conflict
+Agents act on the responses they have and integrate later ones as they
+arrive. When a conflict
 cannot be resolved between the involved agents, it surfaces to the
 dispatcher: rummage handles unresolvables from goal agents; tend handles
 unresolvables from rummage; the user handles what tend cannot resolve
 alone.
 
-This mandate is only as good as the edge graph. If a relevant goal is
-not adjacent, it will not be consulted — and no agent can compensate for
-a missing edge. A gap in consultation is a gap in graph maintenance, not
-a gap in agent discipline. This instruction in the preamble and the
-link-symmetry rules in `goal-structure-standard` are two halves of the
-same guarantee.
+This mandate is only as good as the edge graph: an un-adjacent goal is
+not consulted (see `goal-structure-standard`).
 
 ## WHY
 An agent

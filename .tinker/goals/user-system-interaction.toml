@@ -38,18 +38,6 @@ crisp: the user sees every tool's interface (they must, in order to
 operate it), and sees its internals only when those internals are
 translated into language the user already commands.
 
-This goal exists to name the underlying rule that its children only
-partially captured. `user-persona` named who the user is and the
-"tinker as compiler" framing; `shared-language` named how internal
-references get translated when they must surface; `implementation-
-ownership` later applied "tinker holds the *is*" to source code.
-None of them named the rule that determines what gets surfaced at
-all, who holds what state, and why the user can expect tinker to
-keep the implementation substrate coherent without being asked to
-track it. The stale-binary debugging session — where tinker assumed
-the user knew which artifact was running, theorized for two rounds,
-and eroded trust in a working feature — made the gap visible.
-
 """
 parent_id = "the-false-promise"
 

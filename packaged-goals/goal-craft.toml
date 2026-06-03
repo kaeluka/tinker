@@ -13,17 +13,14 @@ intent is woven into WHAT and WHY, and provenance lives in
 `.tinker/notes/notes.md`, not in the goal. A goal delivered verbatim as an agent's operating
 prompt may also carry an operating-procedure section, because its
 procedure is itself user-vetted intent about how the agent behaves —
-though every other tactic still applies. These rules apply to every
-goal file and are consumed by tend during interviews, edits, and
-cross-goal alignment.
+though every other tactic still applies.
 
 Six tactics govern the content:
 
 1. **Sparseness** (the anchor test). A claim belongs in a goal only
    if something outside the implementation anchors it: (a) user intent
    or preference, (b) an external dependency — facts about the world
-   outside the codebase, like existing systems, vendor contracts,
-   regulation, hardware — or (c) a constraint where no positive
+   outside the codebase — or (c) a constraint where no positive
    reformulation captures the same boundary. A claim that is pure
    implementation opinion has no anchor and doesn't belong.
 
@@ -54,28 +51,18 @@ Six tactics govern the content:
    Synthesis forces integration — contradictions surface where a list
    would hide them, and the goal reads as design rather than changelog.
 
-6. **Synthesis adds form only.** Every claim in the goal traces to
-   something the user stated during the interview. The synthesis
-   integrates form; it does not add content. Close to the user's
-   language; gap-filling no.
-
-These rules are enforced read-time, not by a mechanical write step.
-Tend cites this goal when it surfaces a candidate violation during an
-interview or cross-goal alignment — a claim without a clear anchor, a
-negative with a positive reformulation, content that belongs in a
-related-link, a decision-list creeping back in. Drift is handled the
-same way: when tend edits a goal and notices an anchor has dissolved,
-it surfaces and proposes rewriting or retiring the claim.
+6. **Synthesis adds form only.** Every claim traces to something the
+   user stated; synthesis integrates form, never adds content or fills
+   gaps.
 
 ## WHY
 These tactics serve the iteration loop in `creative-process`. Sparse,
 synthesized goals carry only user-vetted intent — applying
-`the-false-promise`'s antidote recursively at the goal layer. Sessions
-retain implementation autonomy because goals stay high-level; the loop
-stays fast because the user isn't over-specifying; goal agents push
-back rarely because the target is tractable. Sparseness and synthesis
-are the load-bearing pair: the outcome they serve is the loop
-converging well. Brevity compounds sparseness — prefer the shortest
+`the-false-promise`'s antidote recursively at the goal layer. Sparse,
+high-level goals keep autonomy with the session, keep the loop fast,
+and keep agent pushback rare — sparseness and synthesis are the
+load-bearing pair, serving the loop's convergence. Brevity compounds
+sparseness — prefer the shortest
 phrasing that carries the intent; a shorter goal is a better prompt
 and a cheaper read.
 

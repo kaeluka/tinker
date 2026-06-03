@@ -23,8 +23,7 @@ where an error arrives as a tool result and the agent produces no
 output rather than acknowledging it.
 
 This guarantee is delivered as a section in the framework preamble
-that every session receives. It applies uniformly to all agents: tend,
-rummage, jog, and every goal agent.
+that every session receives. It applies uniformly to every session.
 
 ## WHY
 Long-running multi-agent processes — dispatch chains, rummage
@@ -33,11 +32,8 @@ finish. An agent that silently aborts breaks the chain: no downstream
 agent is notified, no error surfaces, and no recovery is possible
 without user intervention.
 
-The progress guarantee is a liveness property. In programming language
-design, a progress theorem says a well-formed term either terminates
-or takes a step. The same invariant applies here: a well-formed agent
-session either terminates with output or takes a step toward a
-resolution. Stuck is the one state the system is designed to prevent.
+The progress guarantee is a liveness property. Stuck is the one state
+the system is designed to prevent.
 """
 parent_id = "goal-agents"
 

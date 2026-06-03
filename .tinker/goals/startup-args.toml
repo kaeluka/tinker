@@ -5,7 +5,7 @@ description = """
 When tinker receives an unrecognized argument — flag or positional — it prints an error naming the bad argument, prints help text listing all valid flags with a link to the repo (https://github.com/kaeluka/tinker), and exits with code 1. The same help text is shown for `--help`/`-h`. Error message and help text both go to stdout.
 
 ## WHY
-Unknown arguments silently ignored makes typos invisible. A user who fat-fingers a flag gets no feedback and tinker starts anyway, potentially behaving in an unexpected way. The help is a single flat flag listing — not interactive help, subcommands, or a generated man page.
+Silently ignoring unknown arguments makes typos invisible: tinker starts anyway and may misbehave. The help is a single flat flag listing.
 """
 parent_id = ""
 children = []

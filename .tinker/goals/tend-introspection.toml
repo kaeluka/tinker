@@ -9,15 +9,9 @@ to read numbers off.
 
 The mechanism is **hybrid**: an append-only **event log** for
 sequence and history, plus a **state file** holding the current
-semantic UI snapshot. The split is deliberate — a pure state file
-loses temporal information (durations, ordering); a pure log forces
-reconstructing current state by scanning. Both live under
-`.tinker/`; required directories are pre-created at startup. Tend
-reads both with its existing file tools when it needs them, to
-observe rather than to act — controlling runtime (cancelling or
-reordering queued sessions) is a separate concern, not done through
-this substrate. Tend never writes to either; goal sessions don't
-touch them; nothing outside tend reads them.
+semantic UI snapshot. Both live under
+`.tinker/`. Only tend reads the substrate, and only to observe, not
+to act.
 
 The **event log** captures: tend turn boundaries; message-level
 events in three categories — user input (full text), assistant
@@ -29,34 +23,22 @@ observable facts; `@`-dispatch emissions; cleanup-hook results;
 goal-file changes; and TUI structural state changes (selection,
 focus, scroll, queue). The session-start event captures the
 system-prompt text plus a goal-list hash so persona/goal drift is
-detectable across sessions. New categories can be added
-additively. The log format satisfies three constraints: a `kind`
-discriminator for filtering by event type; a shape suitable for
-`jq`-style aggregation; and individual events retrievable at low
-token cost (tend shouldn't have to pay for surrounding context to
-read one event). The log appends forever — no rotation; the user
+detectable across sessions. The log format carries a `kind` discriminator, supports
+`jq`-style aggregation, and lets tend retrieve a single event at low
+token cost. The log appends forever — no rotation; the user
 clears it manually if it grows. Specific event-kind names, shape,
 and retrieval tooling are implementation's call within these
 constraints.
 
-The log captures observable lifecycle and message events; tend's own
-dialectic moves — reframes, frame-checks, playbacks — stay in pane
-content and `notes.md`, not here. Capture stops at the message level:
-per-line conversation-pane text and streaming session-log content are
-subsumed by these message events and each finished-session
-transcript, so the substrate does not duplicate them.
+Capture stops at the message level; tend's own dialectic moves stay
+in pane content and `notes.md`.
 
-Finished-session events carry **observable facts only** — what
-tend sees from outside the session — with no session-declared
-outcome field. Patterns like "no work needed" emerge from the
-observables, never from the session labeling its own work.
-Implementation chooses the specific observable fields.
+Finished-session events carry **observable facts only** — no
+session-declared outcome. Implementation chooses the fields.
 
 The **state file** is JSON, semantic only: selected goal id, focus
 region, scroll offsets, and queue snapshot (running + pending with
-reasons and start/queue timestamps). Not verbatim pane text —
-that can be added later as a purely additive change if a concrete
-need emerges.
+reasons and start/queue timestamps).
 
 Writes are **async and non-blocking**, so the substrate never
 slows tend's main loop.

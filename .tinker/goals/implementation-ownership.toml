@@ -3,11 +3,10 @@ summary = "governs: goal sessions mandated to own source implementation; overrid
 description = """
 ## WHAT
 A formal mandate applied to goal sessions: they own the source-code
-implementation. Ownership is scope-bounded by the goal text plus any
-related goals, and unconstrained beyond that — sessions hold full
-autonomy over implementation choices the spec doesn't dictate, none
-over choices it does, and treat the goal as a high-level optimization
-target rather than a literal exhaustive spec. The mandate explicitly
+implementation. Ownership is scope-bounded by the goal and its
+related goals — sessions hold full autonomy over implementation the
+spec doesn't dictate, none over what it does, and treat the goal as a
+high-level optimization target, not a literal exhaustive spec. The mandate explicitly
 overrides the default LLM behavior of acting as a cautious "guest"
 who avoids deleting or radically restructuring code: a session is
 expected to demolish and rewire architecture without hesitation when
@@ -15,7 +14,7 @@ that better satisfies the goal.
 
 ## WHY
 Standard LLMs perceive a "structural taboo" against large
-architectural leaps (e.g. turning a linear pipeline into a DAG)
+architectural leaps
 because their training assumes the human owns the code and will be
 angry if it's deleted. But in tinker the human owns the *Intent*
 (Goals) and tinker owns the *Implementation* (source). To optimize
@@ -23,10 +22,7 @@ globally rather than locally, the agents need the psychological
 permission to demolish and rebuild the house; if they perceive the
 artifact as *theirs*, the taboo disappears.
 
-The first tactic for breaking the taboo is injecting this ownership
-mandate directly into the goal-session prompt, rather than building
-a separate optimization agent — the goal is the outcome (taboo
-broken), the prompt injection is just the current tactic. This ownership
+This ownership
 stops at the source — Intent (the goals) stays human-owned and tinker
 itself writes no code.
 

@@ -22,10 +22,9 @@ Two checks against the recent batch:
    them as a system message if the fix would require non-trivial
    refactoring.
 
-2. **Spec-test coverage audit**, run in both directions. Goals no
-   longer enumerate decisions in a `## DECISIONS` section —
-   load-bearing commitments are woven into each goal's WHAT/WHY
-   prose — so this is read-and-judge, not a mechanical list-walk.
+2. **Spec-test coverage audit**, run in both directions. Read each
+   goal's WHAT/WHY and judge its load-bearing commitments —
+   read-and-judge, not a mechanical list-walk.
    - *Forward (claims → tests):* ask `@tend` for each goal's WHAT/WHY,
      identify its load-bearing behavioral commitments (the things a
      session implemented that a test could pin), and check at least
@@ -36,9 +35,7 @@ Two checks against the recent batch:
    - *Reverse (tests → claims):* for each `fn test_spec_*`, confirm
      it still traces to a live commitment in some current goal. A
      test asserting behavior or wording no goal still calls for is a
-     stale guardrail — flag it (it may be enforcing a removed
-     mechanism, the way a renamed test can keep passing against dead
-     behavior).
+     stale guardrail — flag it.
    Write missing tests where you can; surface a coverage gap or a
    stale test as a system message when fixing it needs a non-trivial
    structural change first.
@@ -53,10 +50,7 @@ Real implementations exist only at the binary's composition root. Tests inject
 mocks. Business modules accept their capabilities as constructor arguments or
 generic parameters and remain pure with respect to IO.
 
-In the OCaml prior art for this project, capabilities were module signatures
-consumed by functors. In Rust, the equivalent is trait objects (Arc<dyn Cap>)
-or generic params bounded on traits. In any language, the rule is the same:
-production-only IO at the edges, capabilities in the middle.
+In any language: production-only IO at the edges, capabilities in the middle.
 
 ## 2. Ladder of polymorphism — pick the lowest rung that works
 
@@ -84,10 +78,6 @@ Choose the simplest mechanism that handles the case. Climb only when forced.
     (which is itself rung 3) demands it, or when truly unbounded extension
     by external code is required.
 
-Rationale: lower rungs are easier to read, to test, and to refactor. Higher
-rungs win flexibility at the cost of locality. Premature climbing produces
-abstractions that hide more than they reveal.
-
 ## 3. Tests as guardrails
 
 In this regime the AI writes the code and humans rarely read it. Tests are
@@ -106,10 +96,6 @@ own homework, the marking must be legible to a reviewer:
   - Other tests (internal correctness, regression, sanity) stay unmarked
     and are the AI's discretion.
 
-A reviewer reading a test file should be able to tell at a glance which
-assertions are load-bearing for the spec, which for security, and which are
-scaffolding.
-
 ## 4. Security (security.md)
 
 Security threats are too project-specific for this standard to enumerate.
@@ -127,10 +113,8 @@ propose or update it before writing security-sensitive code.
 
 ## 5. Tinkerability
 
-Code is tinkered with as well as built. Tinkering — interactive
-investigation, fuzzing, instrumentation, running a function against
-ad-hoc inputs — is how the system stays understood. These rules
-optimize for that without sacrificing encapsulation.
+Code is tinkered with — investigated, instrumented, probed — as well
+as built. Two rules keep it tinkerable without sacrificing encapsulation:
 
   - Observable internals. Important decisions and intermediate
     values should be inspectable without modifying source — a debug

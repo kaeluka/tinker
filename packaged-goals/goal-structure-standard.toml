@@ -78,28 +78,17 @@ or SCOPE section — and the content-quality tactics are governed by
 
 ## WHY
 Defaulting to new, flat files for every request creates "cognitive
-debt" — a flat soup of spaghetti intentions that's hard to read,
-maintain, and apply. A structured, coherent tree of intent
-accumulates value by making the system's goals legible at different
-levels of abstraction. This is a collaborative definition of value,
-not a rigid mechanical constraint — a guideline for creating value by
-defining what value means, not a forcing rule.
+debt" that's hard to read, maintain, and apply. A structured, coherent tree of intent
+makes the system's goals legible across levels of abstraction; this is
+a collaborative guideline for defining value, not a mechanical forcing
+rule.
 
 The parent-summary and related-link rules extend that logic. Goals
 are read on every tend turn and every fresh goal-session start but
 written rarely, so paying coherence-maintenance cost at write time
-keeps the common read path cheap and correct. Parent summaries let
-cross-goal alignment start at parents and drill down only when
-warranted. Related-links capture the cross-cutting interactions (e.g.
-`shared-language` affecting many user-facing surfaces outside its
-branch) that the containment hierarchy alone can't express.
-
-Per-link reasons on `[[children]]` entries match the design of
-`[[related]]` entries: agents navigate the goal graph by reading
-reasons and asking `@tend` for full text when warranted. Without a
-reason, a child ID is opaque — the agent must ask `@tend` to know
-whether it's relevant. With a reason, the same decision is made from
-the compact index, keeping navigation cheap.
+keeps the common read path cheap and correct — including the per-link
+reasons that let agents navigate from the compact index instead of
+pulling full text.
 
 """
 parent_id = ""

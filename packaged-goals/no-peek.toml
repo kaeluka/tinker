@@ -6,8 +6,7 @@ description = """
 Every goal is an agent. Agents access peer context by asking, not by
 reading. All information flow between agents goes through @-messages —
 an agent that needs something another agent knows sends a message; the
-recipient answers, or asks follow-up questions to ground the exchange.
-No agent opens another goal's file directly.
+recipient answers. No agent opens another goal's file directly.
 
 The edge graph — `[[related]]` and `[[children]]` links with their
 reasons — is the complete, navigable coupling map. Adding one edge A↔B
@@ -16,8 +15,7 @@ reachable through A or B, without any of them updating their own
 content. This is the compositionality property: the graph does the
 work that enumeration inside each goal otherwise would.
 
-The compact index — goal IDs, summaries, and the edge reasons whose
-navigation-index role `goal-structure-standard` defines — is usually
+The compact index — goal IDs, summaries, and edge reasons — is usually
 enough for an agent to decide whether to consult a peer and how to
 frame the first message. When it isn't, the agent asks; the receiving
 agent asks follow-up questions to ground the exchange. Dialogs replace

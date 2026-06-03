@@ -3,28 +3,23 @@ summary = "governs: @<agent-or-goal-id> one-way messaging between any session-re
 description = """
 ## WHAT
 Any agent in the session registry can send a one-way message to any
-other using `@<agent-or-goal-id>` in its output. This includes tend,
-rummage, jog, and any goal agent. The message body spans from that
-line through the end of the reply — or up to the next `@`-line if
-the reply contains several. **Only the `@`-block itself is delivered
-to the named agent**; any prose the sending agent wrote before or
-after it is not included. This means a sending agent must make each
-`@`-block self-contained: everything the receiving agent needs to act
-on must be inside the block.
+other using `@<agent-or-goal-id>` in its output. The message body
+spans from that line through the end of the reply — or up to the next
+`@`-line if the reply contains several. **Only the `@`-block itself is
+delivered to the named agent**; any prose the sending agent wrote
+before or after it is not included, so each `@`-block must be
+self-contained.
 
-The `@`-line may carry an inline opening (`@tend Here's the finding:`)
-or stand alone (`@tend`) with all content on subsequent lines; both
-forms are equivalent. The system detects these blocks after each reply
+The opening may sit inline on the `@`-line or below it. The system
+detects these blocks after each reply
 finalises, routes each to the named agent's input channel, and pushes
 a system message so the user can see the exchange.
 
-The model is an actor system, not RPC. No blocking, no formal return
-value, no call stack. Replies come naturally — an agent receiving a
-message will usually respond — but are not required. The sending agent
-retains full autonomy over any response it receives: apply it, ask a
-follow-up, or discard it. Either side can continue the exchange as long
-as it is useful. Consultations can nest freely: an agent mid-reply can
-`@`-address a third agent.
+Messaging is fire-and-forget: the sender does not block or await a
+return value. Replies come naturally but are not required. The sending
+agent retains full autonomy over any response it receives: apply it,
+ask a follow-up, or discard it. Consultations can nest freely: an agent
+mid-reply can `@`-address a third agent.
 
 The user can ask any agent to consult another; they are not required
 to broker the exchange themselves.
@@ -38,9 +33,7 @@ syntax that lets tend consult rummage also lets a goal agent report
 back to tend or ask jog a question. No agent is structurally excluded.
 
 Multi-line delivery is load-bearing: a finding that can only be
-expressed in a single line is rarely a finding. Restricting to one
-line turns the channel into a ping mechanism, which defeats the
-purpose.
+expressed in a single line is rarely a finding.
 
 The self-contained-block rule is the complement: a receiving agent has
 no access to the sender's surrounding prose — it only sees the block.

@@ -5,32 +5,23 @@ description = """
 ## WHAT
 
 Jog is a bidirectional discrepancy finder. Given two redundant sources
-of information (where one is created from the other):
+of information (where one is created from the other), jog builds a set
+of items from each and compares them.
 
-- **It creates a set of things, concepts, behaviours, etc, in each of
-  them**. It does that by dispatching @-messages to whichever agent is
-  best suited for the task. Or by asking the user (in case the user's
-  intent is one of the sources of information). When sending @-messages,
-  jog makes it clear that the intent is to read only, not to make writing
-  changes.
-- It then compares these two sets step by step. For each of the things
-  not in both, it'll inform the agent or user that asked for jog's help.
-
-Every `@tend` and `@rummage` message jog sends during a run is
-explicitly framed as read-only — "tell me what you see here, don't
-act on it." No writes, no fixes, no commissions during a jog run.
+Jog reads each source by dispatching read-only @-messages to whichever
+agent owns it (@tend for the spec, @rummage for the code) — or by asking
+the user when intent is a source — then compares the two sets step by
+step and reports every item present in one but not the other to whoever
+asked for jog's help.
 
 **Output.** Each run produces a new file under `.tinker/discrepancies/`
 documenting the findings, separated into forward and backward checks.
-When triggered by rummage post-dispatch, this discrepancy document is
-the authoritative done report — returned to rummage via `@rummage` so
-rummage can resolve findings. When triggered by the user directly, jog
-presents findings in conversation.
-
-**Invocation.** Rummage triggers jog unconditionally after every
-dispatch as the post-dispatch verification step — this is the primary
-invocation path. Jog is also available on request from the user at any
-time.
+Rummage triggers jog unconditionally after every dispatch as the
+post-dispatch verification step — the primary invocation path — and
+this discrepancy document is the authoritative done report, returned to
+rummage via `@rummage` so rummage can resolve findings. Jog is also
+available on request from the user at any time; when triggered directly,
+it presents findings in conversation.
 
 ## WHY
 

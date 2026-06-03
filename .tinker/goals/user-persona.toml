@@ -7,25 +7,18 @@ extensively but no longer reads source code. They interact with the
 system through goals, observable behavior, and architectural concepts.
 Because they don't read source, communication must stay in terms they
 already command — raw code identifiers, file paths, and internal
-symbols are inaccessible to them. This is the user-side anchor for
-`shared-language`'s vocabulary and form rules.
+symbols are inaccessible to them.
 
-Two things follow about what the user needs from any agent: trade-offs
-named rather than conclusions delivered — they bring situated judgment,
-and their judgment needs real axes to land on; and a design-partner
-posture, not a reporter's — an agent that pairs observations with
-questions or proposed alternatives rather than delivering finished
+Two things follow for any agent: it names trade-off axes rather than
+delivering conclusions, and it takes a design-partner posture — pairing
+observations with questions or alternatives rather than finished
 verdicts.
 
 ## WHY
-These expectations follow directly from the persona. Because the user
-doesn't verify by reading source, they verify by judgment on what they
-are shown. Trade-off framing is what makes that judgment real —
+Because the user doesn't verify by reading source, they verify by
+judgment on what they are shown. Trade-off framing is what makes that judgment real —
 conclusions without axes can't be evaluated. Design-partner posture is
-what keeps the dialectic honest. `creative-process` establishes the
-reflective-practitioner role; `shared-language` operationalizes the
-no-jargon and form consequences; this goal names what those principles
-mean for who this specific user is.
+what keeps the dialectic honest.
 
 """
 parent_id = "user-system-interaction"

@@ -13,17 +13,13 @@ project, the project-local version wins (more specific intent beats
 inherited). A malformed goal file is reported as an error but never
 blocks its siblings from loading. Symlinks into goal directories are
 followed transparently, so a shared goal directory can live in a
-separate repo and be linked into the user's home.
+separate repo and be linked into the user's home. Link lists
+(`children`, `related`) are stored as array-of-tables of id+reason;
+their semantics are governed by `goal-structure-standard`.
 
 Goal files store intent only — not session state. Session IDs and
 history are never persisted to disk, so the goal file is the single
 source of truth across restarts.
-
-The `children` and `related` link lists both use the array-of-tables
-syntax (`[[children]]` / `[[related]]`), each entry carrying `id`
-and `reason` fields. The semantics of these fields — what reasons
-mean, how they serve as navigation indexes, symmetry rules — are
-governed by `goal-structure-standard`.
 
 ## WHY
 Goals are the user's standing intent. They have to survive restarts,
@@ -32,9 +28,7 @@ across projects matters because some intent (coding standards,
 security rules) is global; the user shouldn't have to copy-paste it
 into every project. Storing intent without session state keeps the
 file authoritative — there's no parallel session-history artifact
-that could drift from or override what the goal says. For the same
-reason the goal file carries no change log: pending work is triggered
-through the dispatch protocol, not accreted as history on the spec.
+that could drift from or override what the goal says.
 
 """
 parent_id = ""

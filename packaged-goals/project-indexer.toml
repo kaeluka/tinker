@@ -7,23 +7,16 @@ A goal that maintains a single file at the project root — `AGENTS.md`
 lives. The file is short and high-level, organized around the
 project's goals rather than its directory tree: each goal gets a
 brief summary paired with pointers to the source files that implement
-it. It's written for LLMs to read, following good prompting practice;
-the exact structure (headings, ordering, depth) is the indexing
-agent's call, not prescribed here.
+it. It's written for LLMs to read; the exact structure is the
+indexing agent's call, not prescribed here.
 
-Updates run reactively — the indexer fires when tinker's post-batch
-scheduling observes, in other session summaries, that source files
-changed. Lag between a manual user edit and the next index update is
-acceptable.
-
-This is a packaged goal: it applies to any tinker-built application,
-not one specific project.
+Updates run reactively: the indexer fires when source files change.
+Lag between a manual edit and the next update is acceptable.
 
 ## WHY
 Any agent (or human) arriving fresh at a project needs a way to
 locate the relevant code without scanning the whole tree. A
-goals-oriented index gives that map: it answers "what is this project
-doing?" and "where is X handled?" in one read. Maintaining it as a
+goals-oriented index gives that map. Maintaining it as a
 goal means the same loop that builds the project keeps the index in
 sync — no separate tool to invoke.
 

@@ -9,17 +9,13 @@ goal sessions write into the tree (READMEs, in-tree guides,
 human-targeted code comments). All of these default to conceptual
 descriptions — business logic, architectural concepts, external
 systems, active goals — rather than file paths, function names, or
-internal state variables. The no-jargon default is grounded in
-`user-persona`: because the user doesn't read source code, terms
-outside their shared vocabulary are simply inaccessible, not just
-unfamiliar.
+internal state variables. A term is known if it appears in any goal
+file or the user introduced it during conversation; any other
+technical term must be anchored to a known concept on first use.
 
 Documentation may go more technical in deeper sections (reference
-material, edge cases), but every technical term is anchored to a
-known concept on first use. The same applies in chat: if a term
-not already in shared vocabulary must be used, it needs a strong
-reason and must be anchored to a known architectural or feature
-concept right beside it.
+material, edge cases), but the anchor-on-first-use rule holds on
+every surface.
 
 The rule does **not** apply to artifacts explicitly authored for
 LLM consumption — `AGENTS.md` from `project-indexer` is the
@@ -33,12 +29,6 @@ multi-paragraph surveys are appropriate only when the user asks for
 that shape. Formulaic template replies violate this rule regardless
 of length. Rummage's investigation documents are exempt — those
 grow as understanding does, by design.
-
-What counts as "known" is determined by the goal tree: a term that
-appears in any goal file is in shared vocabulary. A term the user
-introduces during conversation is also known. Any other technical
-term must be anchored to a known architectural or feature concept
-on first use.
 
 ## WHY
 If tend assumes the user knows the internal codebase layout, it

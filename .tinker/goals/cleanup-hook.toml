@@ -4,8 +4,7 @@ description = """
 ## WHAT
 Before any goal session runs, the system scans the project tree for
 `tinker-test-case:` markers — left by rummage's active investigation
-work (scratch tests, fuzz harnesses, instrumentation) — and
-dispatches a cheap cleanup agent to remove or revert the change each
+work — and dispatches a cheap cleanup agent to remove or revert the change each
 one labels. It retries a few times; if markers still can't be
 cleaned, the goal session is blocked and the user is told which
 files still need attention.
@@ -33,23 +32,12 @@ source:
 
 ## WHY
 Without a marker convention, investigation code accumulates and
-contaminates production. With one, rummage can probe freely —
-including in production source, including by exposing private
-symbols — and the cleanup step keeps the codebase honest. Enforcing the marker
-at write time is rummage's own discipline; this hook only cleans up
-afterward.
+contaminates production. With one, rummage can probe freely and the
+cleanup step keeps the codebase honest.
 
 Blocking on cleanup failure is deliberate: a goal session writing on
 top of half-cleaned investigation code is worse than not running at
 all.
-
-The placeholder exemption complements the start-of-comment-line
-rule. The line rule already protected string-literal and prose
-mentions, but not comment-line *examples* that show the marker
-format to teach the convention — exactly what broke when the rummage
-v2 prompt carried a code-fence example of the marker that cleanup
-couldn't remove without breaking the prompt and a test asserting the
-prompt contains it.
 
 """
 parent_id = "goal-agents"
