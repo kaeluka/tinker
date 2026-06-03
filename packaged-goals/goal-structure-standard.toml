@@ -99,6 +99,10 @@ id = "goal-craft"
 reason = "Content-quality counterpart to this goal's structural rules, and owner of the WHAT/WHY section schema. Structure ensures tree integrity (parent-summary coherence, symmetric related-links, merge/nest operations); content ensures each file is a clean prompt (anchored claims, positive framing, orthogonality, goals-as-prompts, synthesis over enumeration). Both apply on every edit."
 
 [[related]]
+id = "goal-storage"
+reason = "goal-storage owns the on-disk TOML format of the `[[children]]`/`[[related]]` link fields and the `summary`; this goal owns their meaning — reason semantics, the navigation-index role, and the symmetry rules. Format and meaning are twins, applied together on every edit."
+
+[[related]]
 id = "no-peek"
 reason = "no-peek relies on the symmetry and reason-accuracy this goal enforces — the edge graph is only a complete, navigable coupling map for no-peek's ask-don't-read policy if related-links are symmetric and their reasons are correct."
 

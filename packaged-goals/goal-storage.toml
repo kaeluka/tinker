@@ -40,7 +40,3 @@ reason = "`goal-structure-standard` defines the semantics of the link fields thi
 [[related]]
 id = "coding-standards"
 reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
-
-[[related]]
-id = "goal-agents"
-reason = "goal-agents adds a `tier` field to the goal TOML, extending the schema this goal governs. When that field is added or changed, goal-storage's parsing of the goal file must accommodate it."
