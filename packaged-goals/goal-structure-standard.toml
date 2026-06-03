@@ -1,5 +1,5 @@
 id = "goal-structure-standard"
-summary = "governs: goal tree structural rules; five operations (merge/nest-down/nest-up/new-root/retire); level-of-detail coherence heuristic; parent-summary re-check when child edited; [[children]] carry id+reason per entry; symmetric related-links both-sides (per-side reason text allowed); write-time re-validation; packaged-goal symmetry exception | triggers: creating/editing goals; structural placement decisions; related-link symmetry checks; child-link reason authoring"
+summary = "governs: goal tree structural rules; five operations (merge/nest-down/nest-up/new-root/retire); level-of-detail coherence heuristic; parent-summary re-check when child edited; [[children]] carry id+reason per entry; symmetric related-links both-sides (per-side reason text allowed); write-time re-validation; same-scope symmetry with packaged↔local and ancestor-standard one-way exceptions; each reason describes this↔neighbor not a third party | triggers: creating/editing goals; structural placement decisions; related-link symmetry checks; child-link reason authoring"
 description = """
 ## WHAT
 A set of structural rules tend uses to organize goals
@@ -41,7 +41,9 @@ Two TOML link primitives are kept distinct:
   not** (`a↔b` and `b↔c` does not imply `a↔c`; auto-transitivity
   would explode the graph back into flat scanning). Any goal can
   carry related-links, not just roots, because cross-cutting concerns
-  don't respect tree level.
+  don't respect tree level. Each reason states this goal's own
+  interaction with the named neighbor — never a relationship between
+  that neighbor and a third goal.
 
 Every goal also carries a **`summary`** field: a terse,
 grammar-stripped, keyword-dense index entry in the form `governs:
@@ -60,12 +62,15 @@ turn** and appears as one bundle in the placement sentence before writing, so th
 can redirect the whole change together rather than through
 cascading multi-turn interviews.
 
-**Symmetry exception:** a packaged goal (shared across projects)
-cannot symmetrically link to a project-local goal, because it can't
-carry knowledge of an internal goal that exists in only one project.
-Symmetry is enforced only between goals at the same scope level; a
-project-local goal may link to a packaged one as an asymmetric
-(one-way) reference.
+**Symmetry and its two exceptions.** Same-scope related-links are
+always symmetric — packaged↔packaged and project-local↔local pairs
+both list each other. Asymmetric (one-way) links arise only here:
+(1) a project-local goal links to a packaged one, since a packaged
+goal cannot name a goal that exists in only one project; (2) a
+broadly-referenced *ancestor standard* (e.g. `coding-standards`) is
+linked by its many dependents but carries no back-links, to avoid
+fan-in. A "produces code → coding-standards" link belongs only on a
+goal that actually authors a source module.
 
 The section schema each goal is written in — WHAT/WHY, no DECISIONS
 or SCOPE section — and the content-quality tactics are governed by

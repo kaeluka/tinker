@@ -1,6 +1,6 @@
 id = "goal-craft"
 tier = "high"
-summary = "governs: goal content quality; six tactics: anchor test (sparseness), positive framing, orthogonality, goals-are-prompts (5 rules), synthesis-over-enumeration, synthesis-adds-form-only; WHAT/WHY schema (no DECISIONS/HOW/SCOPE; operating-prompt goals may add a procedure section) | triggers: writing/editing any goal; candidate violation during interview/alignment; enumeration vs prose; negative framing detection"
+summary = "governs: goal content quality; six tactics: anchor test (sparseness + brevity), positive framing, orthogonality, goals-are-prompts (5 rules), synthesis-over-enumeration, synthesis-adds-form-only; WHAT/WHY schema (no DECISIONS/HOW/SCOPE; operating-prompt goals may add a procedure section) | triggers: writing/editing any goal; candidate violation during interview/alignment; enumeration vs prose; negative framing detection"
 description = """
 ## WHAT
 Operational rules for writing the content of a goal so it works as
@@ -34,7 +34,11 @@ Six tactics govern the content:
 
 3. **Orthogonality of content.** Goals are free-standing. Cross-
    cutting concerns are carried by the link mechanism (`parent_id`,
-   `children`, `related`), not duplicated inside each goal's body.
+   `children`, `related`), not duplicated inside each goal's body. A
+   goal that delivers operational text — a session preamble, an
+   agent's operating prompt — may carry a thin pointer to another
+   goal's rule but must not re-derive its semantics; the edge carries
+   the rule.
 
 4. **Goals are prompts.** Every goal does double duty as the prompt
    tend and goal sessions read. Five rules follow: (i) define terms
@@ -71,7 +75,9 @@ retain implementation autonomy because goals stay high-level; the loop
 stays fast because the user isn't over-specifying; goal agents push
 back rarely because the target is tractable. Sparseness and synthesis
 are the load-bearing pair: the outcome they serve is the loop
-converging well.
+converging well. Brevity compounds sparseness — prefer the shortest
+phrasing that carries the intent; a shorter goal is a better prompt
+and a cheaper read.
 
 """
 parent_id = "creative-process"

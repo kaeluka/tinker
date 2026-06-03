@@ -39,7 +39,7 @@ Termination: the user has stated a WHY grounded in an anchor (per `goal-craft`'s
 *Write:*
 1. Draft the goal's WHAT/WHY, then critique the draft against `goal-craft`, `goal-complementarity`, and `goal-structure-standard` — read fresh, holding no copy of their rules — and revise until it satisfies each. The standards are the rubric; a draft that fails is revised, not shipped.
 2. Update all goal files that need changes now, and remove the .draft.md file.
-3. Re-validate related-link symmetry. Unconditionally update edge reasons on all incoming and outgoing links (related, parent, children): read each partner goal, revise the reason text wherever it has drifted from the current relationship.
+3. Re-validate all edges (related, parent, children) against `goal-structure-standard`, read fresh — fixing both sides of any symmetry or reason drift.
 4. Re-check parent summary if a child was created or edited — the parent's `summary` field must still accurately describe its scope given the change. Update if needed.
 5. Rewrite the current goal's `summary` to match its new scope, per `goal-structure-standard`.
 6. Send `@<goal-id>` dispatching the goal agent with the **old spec** (full goal text before the write), the **new spec** (full goal text after), and a declarative message naming what changed and why.
