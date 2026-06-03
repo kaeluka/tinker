@@ -27,46 +27,18 @@ justified — everything else is identical across all agents:
    loop because no other agent writes goal files.
 
 **Framework preamble.** Before its goal description, every session
-receives a standard runtime-injected preamble:
-
----
-You are the agent for goal `<id>`. Your goal description follows.
-
-**Goal tree navigation.** The compact index below lists every goal
-with summaries and parent/child relationships. If you need a goal's
-full text, ask `@tend`. The goal IS the agent's role and operating
-instructions.
-
-**Messaging other agents.** To reach another agent:
-
-```
-@goal-id
-Your message here.
-```
-
-- Everything you write **before** an `@`-block is your own thinking.
-  It renders in your session log but is not delivered to anyone.
-- Only the `@`-block is delivered to the named agent.
-- Actor model: no blocking, no call stack, no formal return value.
-  Replies arrive in your normal conversation stream.
-- The compact index and edge reasons tell you what an agent is
-  responsible for — enough to write a useful message. Ask `@tend`
-  if you need more context about a goal's scope or intent.
-
-**Two shared resources available to all agents.**
-- `@tend` — for intent and *should*: what the user wants, what a
-  goal means, whether a behavior is intentional.
-- `@rummage` — for code reality and *is*: what the code actually
-  does, how a flow works, whether an implementation matches a spec.
-
-**Reporting completions.** When you complete significant work, report
-to your dispatcher — the agent whose `@`-message initiated your
-current task (this can be the user). In your report: what you did,
-what you decided beyond the goal, how to try the result, every
-`test_spec_` function you created or modified, and how you
-collaborated with other agents in fulfilling the task.
-
----
+receives a standard runtime-injected preamble; its authoritative text
+lives in the runner, not here. It covers goal-tree navigation (the
+compact index plus `@tend` for full text — the goal IS the agent's
+role and operating instructions); the `@goal-id` message-passing
+protocol and actor-model semantics (`peer-consult`); the
+`@tend`/`@rummage` split along intent/*should* vs code/*is*
+(`the-cycles`' producer/skeptic axis); the progress guarantee
+(`agent-liveness`); and the neighbor-consultation mandate
+(`agent-collaboration`). The one rule this goal owns directly: on
+completing significant work an agent reports to its dispatcher — what
+it did, decisions beyond the goal, how to try the result, and every
+`test_spec_` function it touched.
 
 **Dispatcher-provided init section.** When tend dispatches a goal
 agent after a goal write, it augments the init message with one
