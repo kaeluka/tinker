@@ -1,6 +1,6 @@
 id = "backends"
 kind = "feature"
-summary = "This goal owns the pluggable LLM backend abstraction — the runner trait wired at the composition root and its two implementations (opencode default with path-scoped agent files, and claude via --system-prompt and streaming JSON), including per-backend model-tier defaults, the claude high-tier pin to claude-opus-4-8, persona delivery, and re-injection of CLI error output into the session."
+summary = "This goal owns the pluggable LLM backend abstraction — the runner trait wired at the composition root and its two implementations (opencode default with persona agent files, and claude via --system-prompt and streaming JSON), including per-backend model-tier defaults, the claude high-tier pin to claude-opus-4-8, persona delivery, and re-injection of CLI error output into the session."
 description = """
 ## WHAT
 Tinker runs against a **pluggable backend** — the LLM CLI it shells
@@ -16,11 +16,10 @@ personas its own way:
 - **opencode** (default): runs its own configured model defaults. At
   startup writes two agent files to `~/.config/opencode/agents/`,
   always overwriting so the installed copies stay in sync. `tend.md`
-  carries the full tend description and an allowlist restricting tend
-  to `.tinker/goals/**` only (reads and writes). `tinker.md` carries
-  generic frontmatter and a denylist blocking reads and writes to all
-  `.tinker/` subdirectories. Both files enforce path-scoped access rules at the backend
-  level, not just via prompt instructions.
+  carries generic frontmatter plus the full tend description; `tinker.md`
+  carries generic frontmatter for the goal-agent sessions. Neither file
+  carries a path-scoped `permission:` block — file-access boundaries are
+  conveyed via the prompt, not enforced at the backend level.
 
 - **claude** (`--claude`): maps roles to `claude-opus-4-8` (tend, high
   tier) and `sonnet` (goal sessions, mid tier); the high tier uses a
@@ -39,13 +38,13 @@ personas its own way:
   neighbor table. This mirrors the opencode split between the stable
   agent file (`tinker.md`) and the per-dispatch trigger.
 
-  **Path-scope enforcement is softer here than in the opencode path**:
-  the claude CLI has no equivalent to opencode's `permission:` block,
-  so there are no harness-level path restrictions. `--disallowedTools`
-  is not a substitute — it denies named tools, but Bash bypasses it
-  entirely, so the invariant does not hold. Both tend and goal agents
-  rely on system-prompt-level compliance rather than runner
-  enforcement.
+  **No harness-level path enforcement on either backend today.**
+  opencode's agent files carry no `permission:` block and the claude
+  runner passes no tool-denial flags, so neither backend mechanically
+  restricts file access. Both tend and goal agents rely on prompt-level
+  compliance with the file-access boundaries their personas state;
+  mechanical guardrails are slated to be reintroduced through the
+  prompts.
 
 Which model fills each tier, per backend, is overridable at runtime
 through `model-config`, a `.tinker/config.toml` file; the per-backend
@@ -55,10 +54,8 @@ the config leaves a slot unset.
 **Error feedback.** When a CLI process exits with an error, the runner
 captures the error output and re-injects it as a message into the
 active session before the session closes, so the agent can read it
-and decide how to respond. Under opencode a permission-denied error
-signals the agent crossed the agent-file path boundary; the expected
-response is to route through a peer `@`-message rather than retry the
-blocked action.
+and decide how to respond — route through a peer `@`-message, retry a
+transient failure, or report the obstacle rather than dying silently.
 
 Startup argument handling is governed by `startup-args`. Recognised
 flags for this goal's backends are `--claude` (select the claude backend) and
@@ -71,9 +68,9 @@ on one vendor's CLI: the user picks the models they prefer at
 startup, and a new backend slots in by implementing the runner rather
 than by editing the system around it.
 
-Re-injecting the error closes the enforcement loop — an out-of-scope
-path denial becomes a signal the agent can hear and course-correct
-from, rather than a silent process death.
+Re-injecting the error closes the loop — a CLI failure becomes a signal
+the agent can hear and course-correct from, rather than a silent
+process death.
 
 """
 parent_id = ""
@@ -92,7 +89,7 @@ reason = "This goal produces code, which follows `coding-standards` (capability-
 
 [[related]]
 id = "agent-liveness"
-reason = "agent-liveness defines the progress guarantee this goal's harness mechanisms enforce: tool-denial surfacing makes denials visible so agents can reason about them; silence detection prompts agents that produce no output to take a step."
+reason = "agent-liveness defines the progress guarantee this goal's harness mechanisms enforce: tool-error surfacing makes CLI errors visible so agents can reason about them; silence detection prompts agents that produce no output to take a step."
 
 [[related]]
 id = "goal-agents"

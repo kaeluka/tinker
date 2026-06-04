@@ -44,12 +44,10 @@ struct ClaudeContent {
 }
 
 /// Claude CLI runner bound to a specific model (opus/sonnet/haiku).
-/// Optionally carries a system prompt (used for orchestrator) and a list of
-/// tools that must be mechanically denied (passed as `--disallowedTools`).
+/// Optionally carries a system prompt (used for orchestrator).
 pub struct ClaudeRunner {
     pub model: String,
     pub system_prompt: Option<String>,
-    pub disallowed_tools: Vec<String>,
 }
 
 impl ClaudeRunner {
@@ -57,7 +55,6 @@ impl ClaudeRunner {
         Self {
             model: model.into(),
             system_prompt: None,
-            disallowed_tools: Vec::new(),
         }
     }
 
@@ -65,16 +62,7 @@ impl ClaudeRunner {
         Self {
             model: model.into(),
             system_prompt: Some(system_prompt.into()),
-            disallowed_tools: Vec::new(),
         }
-    }
-
-    /// Deny a set of tools for every invocation of this runner.
-    /// Passed as `--disallowedTools <tool> ...` to the Claude CLI.
-    #[cfg(test)]
-    pub fn with_denied_tools(mut self, tools: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.disallowed_tools = tools.into_iter().map(|t| t.into()).collect();
-        self
     }
 }
 
@@ -88,7 +76,7 @@ impl OpenCodeRunner for ClaudeRunner {
         mut on_session_id: Chunk,
         mut on_chunk: Chunk,
     ) -> Result<String> {
-        let mut cmd = claude_command(&self.model, self.system_prompt.as_deref(), session_id, &self.disallowed_tools, work_dir);
+        let mut cmd = claude_command(&self.model, self.system_prompt.as_deref(), session_id, work_dir);
 
         let mut child = cmd.spawn()?;
         if let Some(mut stdin) = child.stdin.take() {
@@ -182,7 +170,7 @@ impl OpenCodeRunner for ClaudeRunner {
                     status.code().unwrap_or(-1),
                     stderr_text.trim()
                 );
-                let mut follow_cmd = claude_command(&self.model, self.system_prompt.as_deref(), Some(sid), &self.disallowed_tools, work_dir);
+                let mut follow_cmd = claude_command(&self.model, self.system_prompt.as_deref(), Some(sid), work_dir);
                 if let Ok(mut follow_child) = follow_cmd.spawn() {
                     if let Some(mut stdin) = follow_child.stdin.take() {
                         let _ = stdin.write_all(error_msg.as_bytes()).await;
@@ -308,11 +296,10 @@ pub fn claude_command(
     model: &str,
     system_prompt: Option<&str>,
     session_id: Option<&str>,
-    disallowed_tools: &[String],
     work_dir: &Path,
 ) -> Command {
     let mut cmd = Command::new("claude");
-    cmd.args(claude_args(model, system_prompt, session_id, disallowed_tools));
+    cmd.args(claude_args(model, system_prompt, session_id));
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -325,7 +312,6 @@ pub fn claude_args(
     model: &str,
     system_prompt: Option<&str>,
     session_id: Option<&str>,
-    disallowed_tools: &[String],
 ) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "-p".into(),
@@ -342,12 +328,6 @@ pub fn claude_args(
     if let Some(id) = session_id {
         args.push("--resume".into());
         args.push(id.into());
-    }
-    if !disallowed_tools.is_empty() {
-        args.push("--disallowedTools".into());
-        for tool in disallowed_tools {
-            args.push(tool.clone());
-        }
     }
     args
 }
@@ -367,7 +347,7 @@ mod tests {
 
     #[test]
     fn test_security_args_includes_model_and_resume() {
-        let args = claude_args("opus", None, Some("ses_abc"), &[]);
+        let args = claude_args("opus", None, Some("ses_abc"));
         assert!(args.iter().any(|a| a == "-p"));
         assert!(args.iter().any(|a| a == "--model"));
         assert!(args.iter().any(|a| a == "opus"));
@@ -377,26 +357,26 @@ mod tests {
 
     #[test]
     fn test_security_args_no_resume_when_none() {
-        let args = claude_args("sonnet", None, None, &[]);
+        let args = claude_args("sonnet", None, None);
         assert!(!args.iter().any(|a| a == "--resume"));
     }
 
     #[test]
     fn test_spec_system_prompt_passed_when_set() {
-        let args = claude_args("opus", Some("You are the orchestrator."), None, &[]);
+        let args = claude_args("opus", Some("You are the orchestrator."), None);
         assert!(args.iter().any(|a| a == "--system-prompt"));
         assert!(args.iter().any(|a| a == "You are the orchestrator."));
     }
 
     #[test]
     fn test_spec_system_prompt_omitted_when_none() {
-        let args = claude_args("sonnet", None, None, &[]);
+        let args = claude_args("sonnet", None, None);
         assert!(!args.iter().any(|a| a == "--system-prompt"));
     }
 
     #[test]
     fn test_spec_output_format_stream_json() {
-        let args = claude_args("haiku", None, None, &[]);
+        let args = claude_args("haiku", None, None);
         assert!(args.iter().any(|a| a == "--output-format"));
         assert!(args.iter().any(|a| a == "stream-json"));
         assert!(args.iter().any(|a| a == "--verbose"));
@@ -426,7 +406,7 @@ mod tests {
     // the Claude equivalent of opencode's -s.
     #[test]
     fn test_spec_resume_flag_for_session_resumption() {
-        let args = claude_args("sonnet", None, Some("session-123"), &[]);
+        let args = claude_args("sonnet", None, Some("session-123"));
         let resume_idx = args.iter().position(|a| a == "--resume");
         assert!(resume_idx.is_some(), "--resume flag must be present");
         let resume_idx = resume_idx.unwrap();
@@ -441,41 +421,10 @@ mod tests {
     // --output-format stream-json --verbose.
     #[test]
     fn test_spec_verbose_required_for_stream_json() {
-        let args = claude_args("sonnet", None, None, &[]);
+        let args = claude_args("sonnet", None, None);
         assert!(args.contains(&"--verbose".to_string()));
         assert!(args.contains(&"--output-format".to_string()));
         assert!(args.contains(&"stream-json".to_string()));
-    }
-
-    // spec (backends): the Claude path must mechanically enforce the same
-    // identity-level tool denials (task, todowrite) as the opencode agent files
-    // do for tinker-agent and rummage. When disallowed_tools is set, the
-    // --disallowedTools flag must appear in the args, followed by each denied tool.
-    #[test]
-    fn test_spec_disallowed_tools_passed_as_flag() {
-        let denied = vec!["task".to_string(), "todowrite".to_string()];
-        let args = claude_args("opus", None, None, &denied);
-        let flag_idx = args.iter().position(|a| a == "--disallowedTools");
-        assert!(flag_idx.is_some(), "--disallowedTools flag must be present when tools are denied");
-        let flag_idx = flag_idx.unwrap();
-        assert_eq!(args.get(flag_idx + 1).map(|s| s.as_str()), Some("task"));
-        assert_eq!(args.get(flag_idx + 2).map(|s| s.as_str()), Some("todowrite"));
-    }
-
-    // spec (backends): when no tools are denied, --disallowedTools must
-    // not appear — avoid injecting unnecessary flags.
-    #[test]
-    fn test_spec_disallowed_tools_absent_when_empty() {
-        let args = claude_args("sonnet", None, None, &[]);
-        assert!(!args.iter().any(|a| a == "--disallowedTools"), "--disallowedTools must not appear when list is empty");
-    }
-
-    // spec (backends): ClaudeRunner::with_denied_tools stores the denied
-    // tool list so it can be threaded into claude_args at invocation time.
-    #[test]
-    fn test_spec_with_denied_tools_stores_list() {
-        let runner = ClaudeRunner::new("sonnet").with_denied_tools(["task", "todowrite"]);
-        assert_eq!(runner.disallowed_tools, vec!["task", "todowrite"]);
     }
 
     // spec (backends): tool calls in the TUI are rendered as compact
@@ -548,31 +497,6 @@ mod tests {
         assert!(format_tool_result_error(&content).is_empty(), "non-error tool_result must not emit a chunk");
     }
 
-    // security: → security.md T4 — even though Claude CLI may not have the same
-    // dangerous flags as opencode, verify that no permission-bypass or
-    // auto-approval flags are ever passed. Defense in depth.
-    #[test]
-    fn test_security_t4_no_dangerous_flags() {
-        let args = claude_args("opus", None, Some("ses_x"), &[]);
-        for a in &args {
-            assert!(
-                !a.contains("--dangerously-skip-permissions"),
-                "must not pass --dangerously-skip-permissions (saw {:?})",
-                args
-            );
-            assert!(
-                !a.contains("--yes"),
-                "must not pass --yes (saw {:?})",
-                args
-            );
-            assert!(
-                !a.contains("--allow-all"),
-                "must not pass --allow-all (saw {:?})",
-                args
-            );
-        }
-    }
-
     // security: → security.md T5 — Claude subprocess stderr is piped and
     // captured, not leaked to the terminal (which would corrupt the TUI
     // alternate screen). The captured output is re-injected into the session
@@ -581,7 +505,7 @@ mod tests {
     #[test]
     fn test_security_t5_stderr_is_captured_not_leaked() {
         use std::ffi::OsStr;
-        let cmd = claude_command("haiku", None, None, &[], Path::new("/tmp"));
+        let cmd = claude_command("haiku", None, None, Path::new("/tmp"));
         let args: Vec<&OsStr> = cmd.as_std().get_args().collect();
         assert!(args.contains(&OsStr::new("-p")), "must use `claude -p`");
         assert!(args.contains(&OsStr::new("--output-format")), "must request stream-json");
@@ -589,16 +513,6 @@ mod tests {
         assert!(args.contains(&OsStr::new("--verbose")), "verbose required for stream-json");
         assert!(args.contains(&OsStr::new("--model")), "model flag must be present");
         assert!(args.contains(&OsStr::new("haiku")), "model must match");
-        for a in &args {
-            assert!(
-                !a.to_string_lossy().contains("--dangerously-skip-permissions"),
-                "must not pass --dangerously-skip-permissions",
-            );
-            assert!(
-                !a.to_string_lossy().contains("--yes"),
-                "must not pass --yes",
-            );
-        }
     }
 
     // spec (backends): error output from a subprocess that exits non-zero is

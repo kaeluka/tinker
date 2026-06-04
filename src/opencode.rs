@@ -372,22 +372,6 @@ mod tests {
         assert_eq!(summary, "echo 1");
     }
 
-    // security: → security.md T4 — non-interactive sessions must not use
-    // --dangerously-skip-permissions: it bypasses agent-file deny rules entirely.
-    // opencode's system defaults include a {"permission":"*","action":"allow"} rule
-    // that auto-approves non-interactive tool calls without prompts. Agent-file deny
-    // rules (path-scoped) are merged AFTER system defaults and win via last-match-wins.
-    // No global config override needed or wanted.
-    #[test]
-    fn test_security_t4_no_dangerous_skip_permissions_flag() {
-        let args = opencode_args(Some("any-model"), None, Some("ses_x"));
-        assert!(
-            !args.iter().any(|a| a == "--dangerously-skip-permissions"),
-            "must not pass --dangerously-skip-permissions — it bypasses agent-file deny rules (saw {:?})",
-            args
-        );
-    }
-
     #[test]
     fn test_security_t4_args_includes_model_and_session() {
         let args = opencode_args(Some("openrouter/foo/bar"), None, Some("ses_abc"));

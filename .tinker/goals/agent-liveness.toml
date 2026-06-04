@@ -39,7 +39,7 @@ reason = "The @-message path is the named recovery mechanism on denial — agent
 
 [[related]]
 id = "backends"
-reason = "backends governs the harness-side mechanisms that enforce this goal's guarantee: tool-denial surfacing (making denials visible in the conversation pane) and silence detection (the follow-up prompt when no assistant text is produced)."
+reason = "backends governs the harness-side mechanisms that enforce this goal's guarantee: tool-error surfacing (making CLI errors visible in the conversation pane) and silence detection (the follow-up prompt when no assistant text is produced)."
 
 [[related]]
 id = "no-peek"

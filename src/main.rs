@@ -34,14 +34,16 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 
 /// Frontmatter for goal-agent sessions (written to `tinker.md`).
-/// Allows all reads except tend-owned dirs; blocks all edits/writes to them.
+/// Declares the agent profile that `--agent tinker` selects. No path-scoped
+/// permission rules — file-access boundaries are conveyed via the prompt.
 const GOAL_AGENT_FRONTMATTER: &str =
-    "---\ndescription: >-\n  Tinker agent.\nmode: primary\npermission:\n  read:\n    \"*\": allow\n    \".tinker/goals/**\": deny\n    \".tinker/notes/**\": deny\n    \".tinker/state/**\": deny\n  edit:\n    \".tinker/**\": deny\n---\n";
+    "---\ndescription: >-\n  Tinker agent.\nmode: primary\n---\n";
 
 /// Frontmatter for the tend agent (written to `tend.md`).
-/// Allowlist: only `.tinker/goals/**` is accessible; everything else is blocked.
+/// Declares the agent profile that `--agent tend` selects. No path-scoped
+/// permission rules — file-access boundaries are conveyed via the prompt.
 const TEND_FRONTMATTER: &str =
-    "---\ndescription: >-\n  Tinker agent.\nmode: primary\npermission:\n  read:\n    \"*\": deny\n    \".tinker/goals/**\": allow\n  edit:\n    \"*\": deny\n    \".tinker/goals/**\": allow\n---\n";
+    "---\ndescription: >-\n  Tinker agent.\nmode: primary\n---\n";
 
 fn packaged_tend_goal() -> Goal {
     const TOML: &str = include_str!("../packaged-goals/tend.toml");
@@ -367,14 +369,11 @@ async fn main() -> Result<()> {
 
     // Write agent files at startup (always overwrite). Skip for Claude backend —
     // persona arrives via --system-prompt there, not agent files.
-    // tinker.md: used by all goal-agent sessions; denies .tinker/ dir access.
-    // tend.md: used by the tend session; restricts access to .tinker/goals/ only.
-    //
-    // opencode's system defaults include {"permission": "*", "action": "allow"} which
-    // auto-approves tool calls without interactive prompts. Agent-file deny rules are
-    // merged after system defaults and win via last-match-wins. No global config override
-    // needed — adding {"*": "allow"} to opencode.json would push a rule BEFORE agent-file
-    // rules in the merge and break deny enforcement.
+    // tinker.md: the profile selected by `--agent tinker` for goal-agent sessions.
+    // tend.md: the profile selected for the tend session (its goal description is
+    // appended as the agent body). Neither carries path-scoped permission rules —
+    // opencode's system defaults auto-approve tool calls and file-access boundaries
+    // are conveyed via the prompt, not the harness.
     if !use_claude {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
@@ -2210,46 +2209,6 @@ mod tests {
     }
 
     #[test]
-    fn test_spec_tinker_agent_does_not_deny_write_edit_bash() {
-        // Tend uses path-scoped permission rules (nested YAML), not flat tool-level
-        // denials. A flat `  write: deny` line would block all writes globally;
-        // path-scoped rules allow tend to write goal files while blocking everything else.
-        let content = tend_agent_content();
-        let after = content.strip_prefix("---\n").expect("agent file starts with frontmatter");
-        let end = after.find("\n---").expect("frontmatter has closing delimiter");
-        let frontmatter = &after[..end];
-        for tool in ["write", "edit", "bash"] {
-            let flat_denied = format!("  {}: deny", tool);
-            for line in frontmatter.lines() {
-                assert_ne!(line.trim_end(), flat_denied.as_str(),
-                    "frontmatter must use path-scoped rules, not a flat `{}` tool denial", tool);
-            }
-        }
-    }
-
-    #[test]
-    fn test_spec_tinker_agent_does_not_deny_lsp() {
-        let content = tend_agent_content();
-        let after = content.strip_prefix("---\n").expect("agent file starts with frontmatter");
-        let end = after.find("\n---").expect("frontmatter has closing delimiter");
-        let frontmatter = &after[..end];
-        for line in frontmatter.lines() {
-            assert_ne!(line.trim_end(), "  lsp: deny", "frontmatter must not deny `lsp`");
-        }
-    }
-
-    #[test]
-    fn test_spec_tinker_agent_does_not_deny_webfetch() {
-        let content = tend_agent_content();
-        let after = content.strip_prefix("---\n").expect("agent file starts with frontmatter");
-        let end = after.find("\n---").expect("frontmatter has closing delimiter");
-        let frontmatter = &after[..end];
-        for line in frontmatter.lines() {
-            assert_ne!(line.trim_end(), "  webfetch: deny", "frontmatter must not deny `webfetch`");
-        }
-    }
-
-    #[test]
     fn test_spec_tinker_static_persona_in_agent_dynamic_goals_in_init() {
         let content = tend_agent_content();
         assert!(content.starts_with("---\n"), "agent file must begin with YAML frontmatter");
@@ -2358,39 +2317,6 @@ mod tests {
         let guard: String = ["if !agent_path", ".exists()"].concat();
         assert!(!main_rs.contains(&guard),
             "main.rs must not guard the agent-file write behind an existence check");
-    }
-
-    // spec: no-peek / tend-exemption — tinker.md (goal agents) must deny read/edit/write
-    // access to the .tinker/ dirs so the harness enforces what the prompt instructs.
-    #[test]
-    fn test_spec_tinker_md_denies_tinker_dir_access() {
-        assert!(GOAL_AGENT_FRONTMATTER.contains(".tinker/goals/**"),
-            "tinker.md must deny .tinker/goals/ access");
-        assert!(GOAL_AGENT_FRONTMATTER.contains(".tinker/notes/**"),
-            "tinker.md must deny .tinker/notes/ access");
-        assert!(GOAL_AGENT_FRONTMATTER.contains(".tinker/state/**"),
-            "tinker.md must deny .tinker/state/ access");
-        assert!(GOAL_AGENT_FRONTMATTER.contains("deny"),
-            "tinker.md permission block must include deny rules");
-    }
-
-    // spec: no-peek / tend-exemption — tend.md must use an allowlist that restricts
-    // all file access to .tinker/goals/ only; everything else must be blocked.
-    #[test]
-    fn test_spec_tend_md_restricts_to_tinker_goals() {
-        let content = tend_agent_content();
-        let after = content.strip_prefix("---\n").expect("agent file starts with frontmatter");
-        let end = after.find("\n---").expect("frontmatter has closing delimiter");
-        let frontmatter = &after[..end];
-        // Catch-all deny must be present for each affected tool.
-        assert!(frontmatter.contains("\"*\": deny"),
-            "tend.md must deny all paths by default (allowlist model)");
-        // The only allowed path must be .tinker/goals/.
-        assert!(content.contains(".tinker/goals/**"),
-            "tend.md must explicitly allow .tinker/goals/");
-        // src/ must not be listed as allowed.
-        assert!(!content.contains("src/**"),
-            "tend.md must not use src/** — allowlist model blocks src/ via catch-all deny");
     }
 
     #[test]
