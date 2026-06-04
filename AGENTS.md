@@ -26,7 +26,7 @@ Terminal interface: two-column layout (conversation pane left; goal-list / goal-
 ### goal-agents
 Agent-architecture runtime: uniform per-goal session registry, `@goal-id` universal dispatch, framework preamble (VCS rules, `.tinker/` prohibition, implementation-ownership mandate, message-passing and neighbor-consultation sections), session init messages, startup-silence for `tend`, parse-correction loop.
 
-- `src/goal_session.rs` — framework preamble constants (`VCS_RULES`, `TINKER_DIR_WRITE_RULES`, `IMPLEMENTATION_OWNERSHIP_MANDATE`, `MESSAGE_PASSING_AND_PROGRESS_SECTIONS`, `NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE`), `goal_agent_framework_preamble()`, `session_init_message()`, `goal_agent_lean_init_message()`, `build_neighborhood_table()`, `run_goal()`, `run_silent()`, `SessionEvent`
+- `src/goal_session.rs` — framework preamble constants (`VCS_RULES`, `TINKER_DIR_WRITE_RULES`, `IMPLEMENTATION_OWNERSHIP_MANDATE`, `MESSAGE_PASSING_AND_PROGRESS_SECTIONS`, `NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE`), `TRIGGER_REASON_MARKER` (sentinel `\x01` char prefixed to trigger-reason messages for TUI identification), `goal_agent_framework_preamble()`, `session_init_message()`, `goal_agent_lean_init_message()`, `build_neighborhood_table()`, `run_goal()`, `run_silent()`, `SessionEvent`
 - `src/main.rs` — session registry (`running_sessions`, `SpawnGoalRequest`), `dispatch_peer_consultations()`, `handle_session_event()`, `tend_*` prompt builders, `goal_agent_system_prompt()`, main event loop
 
 ### backends

@@ -524,7 +524,7 @@ mod tests {
         );
         fs.add_file(&tinker.join("goals/ok2.toml"), &goal_toml("ok2", "second"));
 
-        let result = load_all_goals(&fs, &[tinker.clone()]).unwrap();
+        let result = load_all_goals(&fs, std::slice::from_ref(&tinker)).unwrap();
         // Both well-formed siblings load despite the broken one in between.
         assert!(result.goals.iter().any(|g| g.id == "ok1"));
         assert!(result.goals.iter().any(|g| g.id == "ok2"));
@@ -638,18 +638,15 @@ reason = "depends on c"
 
         // Summary injection: related-links must appear in the goals_summary text
         // so the orchestrator can act on cross-cutting relationships.
-        let summary = format!(
-            "{}",
-            if g.related.is_empty() {
-                String::new()
-            } else {
-                let links = g.related.iter()
-                    .map(|r| format!("{}: \"{}\"", r.id, r.reason))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!(" [related: {}]", links)
-            }
-        );
+        let summary = if g.related.is_empty() {
+            String::new()
+        } else {
+            let links = g.related.iter()
+                .map(|r| format!("{}: \"{}\"", r.id, r.reason))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(" [related: {}]", links)
+        };
         assert!(summary.contains("b: \"cross-cuts b\""), "related link b must appear in summary");
         assert!(summary.contains("c: \"depends on c\""), "related link c must appear in summary");
     }
