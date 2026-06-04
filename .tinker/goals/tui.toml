@@ -1,6 +1,6 @@
 id = "tui"
 kind = "feature"
-summary = "This goal owns the terminal interface rendering: the two-column layout with the live conversation pane on the left and the stacked goal-list, goal-text, and session-log bands on the right, plus goal-list row format, goal-ID visual consistency across surfaces, per-session conversation views, active-session switching, queue and trigger-reason display, and scroll behavior."
+summary = "This goal owns the terminal interface rendering: the two-column layout with the live conversation pane on the left and the stacked goal-list, goal-text, and session-log bands on the right, plus goal-list row format, the goal-detail header (summary and tier/kind tag above the body), goal-ID visual consistency across surfaces, per-session conversation views, active-session switching, queue and trigger-reason display, and scroll behavior."
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left
@@ -35,11 +35,16 @@ goal's summary. Only the list is selectable — the text beneath is
 read-and-scroll only. Keyboard navigation auto-scrolls the list so
 the selected goal stays visible (edge scrolling).
 
+The goal-text pane opens with a one-line header above the body: the
+goal's summary in subdued text followed by a compact type tag
+(`[kind · tier]`) in muted grey. The header makes the goal's scope
+and model tier readable at a glance without parsing the body.
+
 In the session log, the reason a session was triggered renders in
-bold at the top. The session log is independent of the active
-conversation: it shows passive output from whichever goal is
-selected in the goal list, even when the left-pane conversation is
-active on a different session.
+bold at the top. The session log pane title shows the selected goal's
+id. The session log is independent of the active conversation: it
+shows passive output from whichever goal is selected in the goal list,
+even when the left-pane conversation is active on a different session.
 
 Any text region scrolls with the mouse wheel — whichever region is
 under the cursor. New content keeps the view pinned to the bottom;
@@ -110,13 +115,22 @@ translation. Bold identifiers scan faster than plain ones on a
 navigation surface. Rows show the summary rather than the first WHAT
 line because the summary is the compact, purpose-built scope description.
 
+The detail-pane header shows the summary again because a triggered
+goal session may start outside the user's active focus — the detail
+pane is what they turn to, and the summary delivers scope before the
+body text arrives. The tier tag is there because a wrong tier degrades
+output quality or inflates cost silently for the whole session; the
+only check is seeing the assigned value while work runs. The session
+log title uses the goal id — consistent with the goal-ID identity
+principle above.
+
 """
 parent_id = ""
 children = []
 
 [[related]]
 id = "goal-agents"
-reason = "goal-agents defines the session registry (making /<goal-id> switching universal) and specifies the startup-silence exception for tend. TUI suppression of tend's startup output from the conversation pane is governed here."
+reason = "goal-agents defines the session registry (making /<goal-id> switching universal), the tier field and its session-start resolution, and the startup-silence exception for tend. TUI suppression of tend's startup output and the detail-pane tier/kind tag display are governed here."
 
 [[related]]
 id = "coding-standards"

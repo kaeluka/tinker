@@ -423,11 +423,13 @@ fn draw_goal_tree(
             Style::default().fg(Color::DarkGray),
         ))],
         Some(g) => {
-            let mut lines: Vec<Line> = g
-                .description
-                .lines()
-                .map(|l| Line::from(l.to_string()))
-                .collect();
+            let header = goal_detail_header_line(&g);
+            let mut lines: Vec<Line> = vec![header, Line::from("")];
+            lines.extend(
+                g.description
+                    .lines()
+                    .map(|l| Line::from(l.to_string()))
+            );
             if app.running_sessions.contains_key(&g.id) {
                 let reason = app.running_sessions.get(&g.id)
                     .and_then(|r| r.as_ref())
@@ -451,16 +453,7 @@ fn draw_goal_tree(
 
 fn draw_log(frame: &mut Frame, app: &mut App, area: Rect) {
     let selected_id = app.selected_goal().map(|g| g.id.clone());
-    let title = match &selected_id {
-        Some(id) => {
-            if let Some(g) = app.goals.iter().find(|g| &g.id == id) {
-                format!(" Log: {} ", truncate_str(&g.description, 28))
-            } else {
-                " Log ".to_string()
-            }
-        }
-        None => " Log ".to_string(),
-    };
+    let title = log_pane_title(selected_id.as_deref());
 
     let is_active_log = selected_id.as_deref().map(|id| app.running_sessions.contains_key(id)).unwrap_or(false);
     let border_style = if is_active_log {
@@ -520,17 +513,6 @@ fn flatten_node<'a>(node: &'a GoalNode, result: &mut Vec<(usize, &'a GoalNode)>)
     }
 }
 
-fn truncate_str(s: &str, max: usize) -> &str {
-    let mut end = 0;
-    for (i, _) in s.char_indices().take(max) {
-        end = i;
-    }
-    if s.chars().count() <= max {
-        s
-    } else {
-        &s[..end]
-    }
-}
 
 fn truncate_with_ellipsis(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
@@ -538,6 +520,25 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
     } else {
         let truncated: String = s.chars().take(max).collect();
         format!("{}...", truncated)
+    }
+}
+
+fn goal_detail_header_line(g: &crate::goal::Goal) -> Line<'static> {
+    let kind_str = g.kind.as_deref().unwrap_or("feature");
+    let tier_str = g.tier.as_deref().unwrap_or("mid");
+    let tag = format!("[{} · {}]", kind_str, tier_str);
+    let muted = Style::default().fg(Color::DarkGray);
+    Line::from(vec![
+        Span::styled(g.summary.clone(), muted),
+        Span::raw("  "),
+        Span::styled(tag, muted),
+    ])
+}
+
+fn log_pane_title(id: Option<&str>) -> String {
+    match id {
+        Some(id) => format!(" Log: {} ", id),
+        None => " Log ".to_string(),
     }
 }
 
@@ -1137,6 +1138,71 @@ mod tests {
         // Trailing " " span (the last one) must also be unstyled.
         let last = line.spans.last().unwrap();
         assert_eq!(last.style, plain, "trailing space span must be unstyled");
+    }
+
+    /// Spec (tui — goal-detail header): the first line of the goal-text pane
+    /// shows the goal's summary and a "[kind · tier]" tag, both rendered in
+    /// DarkGray so they're visually secondary to the body.
+    #[test]
+    fn test_spec_goal_detail_header_shows_summary_and_tag() {
+        let goal = Goal {
+            id: "my-goal".to_string(),
+            summary: "does the thing".to_string(),
+            description: "body text".to_string(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: Some("high".to_string()),
+            kind: Some("behavior".to_string()),
+            source_path: None,
+        };
+        let line = goal_detail_header_line(&goal);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("does the thing"), "header must contain summary");
+        assert!(text.contains("[behavior · high]"), "header must contain [kind · tier] tag");
+        for span in &line.spans {
+            if !span.content.is_empty() && span.content.as_ref() != "  " {
+                assert_eq!(
+                    span.style.fg,
+                    Some(Color::DarkGray),
+                    "header span {:?} must be DarkGray",
+                    span.content,
+                );
+            }
+        }
+    }
+
+    /// Spec (tui — goal-detail header): when kind or tier are absent the header
+    /// falls back to "feature" and "mid" respectively.
+    #[test]
+    fn test_spec_goal_detail_header_defaults_to_feature_and_mid() {
+        let goal = Goal {
+            id: "x".to_string(),
+            summary: "summary".to_string(),
+            description: String::new(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        };
+        let line = goal_detail_header_line(&goal);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            text.contains("[feature · mid]"),
+            "expected default tag '[feature · mid]', got: {:?}",
+            text,
+        );
+    }
+
+    /// Spec (tui — session log pane title): the log pane title must read
+    /// "Log: <goal-id>" when a goal is selected, using the id directly rather
+    /// than the truncated description.
+    #[test]
+    fn test_spec_log_pane_title_uses_goal_id() {
+        assert_eq!(log_pane_title(Some("my-goal")), " Log: my-goal ");
+        assert_eq!(log_pane_title(None), " Log ");
     }
 
 }

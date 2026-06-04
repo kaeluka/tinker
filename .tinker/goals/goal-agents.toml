@@ -121,7 +121,7 @@ reason = "the tier field added by this goal extends the goal TOML schema that go
 
 [[related]]
 id = "tui"
-reason = "the session registry, unified event stream, and startup-silence message change what the TUI renders; /<goal-id> switching, session log rendering, and suppression of tend's startup output from the conversation pane are governed by tui."
+reason = "the session registry, unified event stream, startup-silence message, and tier field change what the TUI renders; /<goal-id> switching, session log rendering, suppression of tend's startup output, and the detail-pane tier/kind tag are governed by tui."
 
 [[related]]
 id = "backends"

@@ -21,7 +21,7 @@ These shared agents have no source-file mapping — they are the agents themselv
 ### tui
 Terminal interface: two-column layout (conversation pane left; goal-list / goal-text / session-log stacked right), active-session switching, queue and trigger-reason display, scroll, mouse support, reason-prompt modal.
 
-- `src/tui.rs` — all rendering: `pane_rects()` (layout geometry shared with mouse handler), `draw()`, `draw_repl()`, `draw_goal_tree()` (goal-list rows: bold id + `summary` as `— preview`; goal-text shows `description`), `draw_log()`, `push_message_lines()`, `input_pane_layout()`, `running_label()`, `flatten_tree()`
+- `src/tui.rs` — all rendering: `pane_rects()` (layout geometry shared with mouse handler), `draw()`, `draw_repl()`, `draw_goal_tree()` (goal-list rows: bold id + `summary` as `— preview`; goal-text pane: `summary + [kind · tier]` header in muted gray above the `description` body), `draw_log()` (log pane title uses goal `id` directly), `push_message_lines()`, `input_pane_layout()`, `running_label()`, `flatten_tree()`
 
 ### goal-agents
 Agent-architecture runtime: uniform per-goal session registry, `@goal-id` universal dispatch, framework preamble (VCS rules, `.tinker/` prohibition, implementation-ownership mandate, message-passing and neighbor-consultation sections), session init messages, startup-silence for `tend`, parse-correction loop.
