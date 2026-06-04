@@ -1,6 +1,6 @@
 id = "coding-standards"
 kind = "behavior"
-summary = "This goal runs whenever a batch produces source-code changes and checks that the changed code conforms to the standing coding standards (capability-based dependency injection, the ladder of polymorphism, tests-as-guardrails with spec and security markers, the security.md threat model, and tinkerability) while auditing spec-test coverage in both directions."
+summary = "This goal runs whenever a batch produces source-code changes: it addresses compiler warnings and linter findings, checks conformance to the standing coding standards (capability-based DI, the polymorphism ladder, tests-as-guardrails, security.md, and tinkerability), and audits spec-test coverage in both directions."
 description = """
 Apply these coding standards to any code in this project.
 
@@ -16,14 +16,21 @@ changed since, also `no` — one run per batch is enough.
 
 ## What this goal session does when it runs
 
-Two checks against the recent batch:
+Three checks against the recent batch:
 
-1. **Style conformance.** Read each modified source file and verify
+1. **Compiler warnings and linters.** Build or check the changed code
+   using the project's standard build tool. Treat every compiler warning
+   as a finding: fix actionable warnings; for intentional ones, add the
+   language's suppression directive with a one-line reason. If a dedicated
+   linter is configured for the project, run it too and apply the same
+   fix-or-suppress discipline.
+
+2. **Style conformance.** Read each modified source file and verify
    it conforms to sections 1–5 below. Fix violations, or surface
    them as a system message if the fix would require non-trivial
    refactoring.
 
-2. **Spec-test coverage audit**, run in both directions. Read each
+3. **Spec-test coverage audit**, run in both directions. Read each
    goal's WHAT/WHY and judge its load-bearing commitments —
    read-and-judge, not a mechanical list-walk.
    - *Forward (claims → tests):* ask `@tend` for each goal's WHAT/WHY,
@@ -41,7 +48,7 @@ Two checks against the recent batch:
    stale test as a system message when fixing it needs a non-trivial
    structural change first.
 
-If both checks pass with no gaps, stop and say so briefly.
+If all checks pass with no gaps, stop and say so briefly.
 
 ## 1. Capability-based dependency injection
 
