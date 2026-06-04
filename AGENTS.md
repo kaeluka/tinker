@@ -4,6 +4,18 @@ tinker is a goal-directed coding assistant: goals live as TOML files under `.tin
 
 ---
 
+## Core agents
+
+These shared agents have no source-file mapping — they are the agents themselves, reachable via `@<id>` from any goal session.
+
+| agent | role |
+|-------|------|
+| `@tend` | Intent and *should*: holds the goal tree, answers what a goal means, conducts the interview, dispatches goal agents. Route intent questions and goal-content queries here. |
+| `@rummage` | Code reality and *is*: anchors, hypothesizes, falsifies by executing the system, then checks every finding for completeness ("what else belongs here?"), distinguishes intent questions from code drift, and produces a grounded understanding document. Route code-reality questions and spec↔code validation here. |
+| `@jog` | Discrepancy finding: reads two redundant sources via read-only peer queries, runs forward coverage and backward provenance checks, and writes findings to `.tinker/discrepancies/`. Triggered unconditionally after each rummage dispatch. |
+
+---
+
 ## Goal → source mapping
 
 ### tui
