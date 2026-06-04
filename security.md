@@ -50,17 +50,16 @@ Mitigations:
 ### T2. Cross-project session contamination
 
 The `coding-standards` goal lives in `~/.tinker/`, a global location.
-If its `session_id` were stored only in that global TOML, every project
-that picked it up via the multi-dir merge would resume the same opencode
+If session state were stored in the global TOML, every project that
+picked it up via the multi-dir merge would resume the same opencode
 session — leaking the history of one project into another.
 
 Mitigations:
-- Session IDs are stored in a per-project `<cwd>/.tinker/sessions.toml`
-  map (`goal_id → session_id`), which overrides the goal TOML's
-  `session_id` field on load.
-- The goal TOML's `session_id` is only read as a fallback for projects
-  that have not yet established their own session for a given goal.
-  → test: `test_security_t2_session_per_project`.
+- Goal TOML files contain no session state. Session IDs are ephemeral
+  runtime values held only in memory and never written back to disk.
+  Each project starts a fresh session every time it runs, so there is
+  no persistent cross-project session leak surface.
+  → test: `test_security_t2_no_session_persistence_means_no_leak`.
 
 ### T3. Unintended ancestor `.tinker/` merge
 
@@ -108,6 +107,7 @@ Mitigations:
   opencode's structured `--format json` stream and are surfaced as system
   messages in the REPL.
   → test: `test_security_t5_stderr_is_captured`.
-- The Claude backend subprocess nulls stderr (stderr not captured); errors
-  are surfaced through the structured JSON stream.
-  → test (claude): `test_security_t5_stderr_is_nulled`.
+- The Claude backend subprocess also pipes and captures stderr. Any
+  captured content is re-injected into the session's error stream rather
+  than leaking to the terminal.
+  → test (claude): `test_security_t5_stderr_is_captured_not_leaked`.

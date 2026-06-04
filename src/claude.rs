@@ -346,7 +346,7 @@ mod tests {
     }
 
     #[test]
-    fn test_security_args_includes_model_and_resume() {
+    fn test_spec_args_includes_model_and_resume() {
         let args = claude_args("opus", None, Some("ses_abc"));
         assert!(args.iter().any(|a| a == "-p"));
         assert!(args.iter().any(|a| a == "--model"));
@@ -356,7 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn test_security_args_no_resume_when_none() {
+    fn test_spec_args_no_resume_when_none() {
         let args = claude_args("sonnet", None, None);
         assert!(!args.iter().any(|a| a == "--resume"));
     }

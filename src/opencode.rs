@@ -324,6 +324,9 @@ pub fn opencode_args(model: Option<&str>, session_id: Option<&str>) -> Vec<Strin
         "run".into(),
         "--format".into(),
         "json".into(),
+        // T4 mitigation: opencode runs non-interactively; pre-approve tool calls
+        // so the session doesn't stall waiting for interactive approval input.
+        "--dangerously-skip-permissions".into(),
     ];
     if let Some(m) = model {
         args.push("-m".into());
@@ -351,7 +354,7 @@ mod tests {
     }
 
     #[test]
-    fn test_security_t4_args_includes_model_and_session() {
+    fn test_spec_args_includes_model_and_session() {
         let args = opencode_args(Some("openrouter/foo/bar"), Some("ses_abc"));
         assert!(args.iter().any(|a| a == "run"));
         assert!(args.iter().any(|a| a == "-m"));
@@ -361,9 +364,20 @@ mod tests {
     }
 
     #[test]
-    fn test_security_t4_args_no_session_when_none() {
+    fn test_spec_args_no_session_when_none() {
         let args = opencode_args(Some("m"), None);
         assert!(!args.iter().any(|a| a == "-s"));
+    }
+
+    // security (T4): opencode runs non-interactively; --dangerously-skip-permissions
+    // must always be present so the session doesn't stall on approval prompts.
+    #[test]
+    fn test_security_t4_skip_permissions_flag_present() {
+        let args = opencode_args(Some("m"), Some("ses_x"));
+        assert!(
+            args.iter().any(|a| a == "--dangerously-skip-permissions"),
+            "must pass --dangerously-skip-permissions for non-interactive operation"
+        );
     }
 
     // spec (backends): all sessions run under opencode's default agent — the
@@ -375,7 +389,7 @@ mod tests {
     }
 
     #[test]
-    fn test_default_model_omits_m_flag() {
+    fn test_spec_default_model_omits_m_flag() {
         let args = opencode_args(None, Some("ses_x"));
         assert!(!args.iter().any(|a| a == "-m"), "must not pass -m when model is None");
         assert!(args.iter().any(|a| a == "-s"));
