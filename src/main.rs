@@ -1007,11 +1007,9 @@ fn dispatch_peer_consultations(
     log: &logger::LogSender,
 ) {
     for (recipient, msg) in consultations {
-        let reply_tag = format!("<@{}>", sender);
-        let reply_close = format!("</@{}>", sender);
         let formatted = format!(
-            "[from {}] {}\n\nReply via {}your reply{}.",
-            sender, msg, reply_tag, reply_close
+            "[from {}] {}\n\nReply by sending a @{} message.",
+            sender, msg, sender
         );
         let sys = format!("<@{}> → <@{}>: {}", sender, recipient, msg);
         app.push_system_message(&sys);
@@ -2250,9 +2248,11 @@ mod tests {
     }
 
     // spec (peer-consult): dispatched messages carry an inline return-routing
-    // instruction ("Reply via <@sender>your reply</@sender>.") so the receiving
-    // agent knows to wrap its answer in a tag envelope rather than leave it as
-    // private prose.
+    // instruction naming the sender so the receiving agent knows who to reply
+    // to. The instruction must NOT use live <@id>…</@id> envelope syntax —
+    // any live envelope in the delivery message would be parsed by the harness
+    // as a real dispatch, routing placeholder text as a spurious first message
+    // and truncating the agent's actual reply.
     #[test]
     fn test_spec_peer_consult_dispatch_includes_reply_instruction() {
         let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
@@ -2271,8 +2271,18 @@ mod tests {
         );
         let msg = msg_rx.try_recv().expect("tend must receive the consultation");
         assert!(
-            msg.contains("Reply via <@rummage>"),
-            "dispatched message must carry return-routing instruction with sender name in tag-envelope syntax"
+            msg.contains("@rummage"),
+            "dispatched message must name the sender so the recipient knows the reply target"
+        );
+        // The delivery message must not contain a parseable live envelope — if
+        // it did, the harness would extract it on the next parse pass and route
+        // placeholder text back to the sender as a spurious message.
+        let ids: &[&str] = &["rummage"];
+        let spurious = parse_at_commands(&msg, ids);
+        assert!(
+            spurious.is_empty(),
+            "delivery message must not contain live <@id>…</@id> envelopes that the parser would pick up: found {:?}",
+            spurious
         );
     }
 
