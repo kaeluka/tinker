@@ -1,5 +1,5 @@
 use crate::app::{App, Focus, GoalListItem, ModalField, Phase, Role};
-use crate::app::session_base_id;
+use crate::app::{session_base_id, session_parent_id};
 use crate::goal_session::TRIGGER_REASON_MARKER;
 use crate::goal::{build_tree, GoalNode};
 use std::time::Duration;
@@ -24,6 +24,7 @@ const WERKELN_VERBS: &[&str] = &[
     "buckeln",   // dialect — bent-over work
     "schuften",  // dialect — to graft
     "basteln",   // widespread — to build/tinker
+    "verschlimmbessern", // widespread — to make something worse while trying to improve it
 ];
 /// Advance the verb roughly every 2 seconds.
 const WERKELN_INTERVAL: Duration = Duration::from_secs(2);
@@ -462,11 +463,22 @@ fn draw_goal_tree(
 
     let tree = build_tree(&app.goals);
     let flat = flatten_tree(&tree);
-    // Depth map for permanent goals — used to indent ephemerals at parent_depth + 1.
-    let depth_by_id: std::collections::HashMap<&str, usize> = flat.iter()
-        .map(|(d, n)| (n.goal.id.as_str(), *d))
+    // Depth map seeded from permanent goals, then extended with ephemeral depths
+    // so that nested sub-sessions (e.g. jog~1~3 under jog~1) indent correctly.
+    let mut depth_by_id: std::collections::HashMap<String, usize> = flat.iter()
+        .map(|(d, n)| (n.goal.id.clone(), *d))
         .collect();
     let selected_id = app.selected_item_id();
+    // items is already in depth-first order (parent before children) so each
+    // ephemeral's parent is already in depth_by_id when we reach it.
+    let items_for_depth = app.flat_items();
+    for item in &items_for_depth {
+        if let GoalListItem::Ephemeral(eph_id) = item {
+            let parent_id = session_parent_id(eph_id.as_str());
+            let parent_depth = depth_by_id.get(parent_id).copied().unwrap_or(0);
+            depth_by_id.insert(eph_id.clone(), parent_depth + 1);
+        }
+    }
     // Pre-compute the set of "base" goal IDs that have any active session,
     // including fresh sub-sessions (e.g. `fresh-agents~1` counts as `fresh-agents`).
     let running_base_ids: std::collections::HashSet<&str> = app.running_sessions.keys()
@@ -514,8 +526,7 @@ fn draw_goal_tree(
                     Line::from(spans)
                 }
                 GoalListItem::Ephemeral(session_id) => {
-                    let parent_id = session_base_id(session_id);
-                    let depth = depth_by_id.get(parent_id).copied().unwrap_or(0) + 1;
+                    let depth = depth_by_id.get(session_id.as_str()).copied().unwrap_or(1);
                     let is_active = app.running_sessions.contains_key(session_id.as_str());
 
                     let id_style = if is_selected {
@@ -576,7 +587,7 @@ fn draw_goal_tree(
             lines
         }
         Some(GoalListItem::Ephemeral(session_id)) => {
-            let parent_id = session_base_id(&session_id);
+            let parent_id = session_parent_id(&session_id);
             let is_active = app.running_sessions.contains_key(session_id.as_str());
             let header = Line::from(vec![
                 Span::styled(

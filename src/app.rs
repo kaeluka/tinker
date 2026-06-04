@@ -23,11 +23,26 @@ impl GoalListItem {
 
 }
 
-/// Strip the `~{counter}` suffix from a fresh sub-session ID, returning the
-/// parent goal ID. For ordinary session IDs (no `~`) the value is returned
-/// unchanged. Examples: `"fresh-agents~1"` → `"fresh-agents"`, `"tend"` → `"tend"`.
+/// Strip all `~{counter}` suffixes from a fresh sub-session ID, returning the
+/// root permanent goal ID. For ordinary session IDs (no `~`) the value is
+/// returned unchanged.
+/// Examples: `"fresh-agents~1"` → `"fresh-agents"`, `"jog~1~3"` → `"jog"`,
+/// `"tend"` → `"tend"`.
+/// Use this only where root normalisation is wanted (e.g. pane label, running
+/// marker on the permanent goal row). For immediate-parent lookup use
+/// `session_parent_id`.
 pub fn session_base_id(id: &str) -> &str {
     id.split_once('~').map_or(id, |(base, _)| base)
+}
+
+/// Return the immediate parent ID of a fresh sub-session ID.
+/// Strips only the trailing `~{counter}` segment, so `"jog~1~3"` → `"jog~1"`,
+/// `"jog~1"` → `"jog"`, `"jog"` → `"jog"`.
+pub fn session_parent_id(id: &str) -> &str {
+    match id.rfind('~') {
+        Some(pos) => &id[..pos],
+        None => id,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -306,18 +321,31 @@ impl App {
     }
 
     /// The combined flat list of permanent goals and ephemeral sub-sessions,
-    /// in tree order with ephemerals nested immediately after their dispatcher.
+    /// in depth-first tree order with each ephemeral nested immediately after
+    /// its immediate parent (which may itself be an ephemeral at any depth).
+    ///
+    /// Example ordering for goals=[A, B] and ephemerals=[A~1, A~1~2, A~2]:
+    ///   A, A~1, A~1~2, A~2, B
     pub fn flat_items(&self) -> Vec<GoalListItem> {
         let goals = self.flat_goals();
-        let mut items: Vec<GoalListItem> = Vec::with_capacity(goals.len() + self.ephemeral_sessions_ordered.len());
-        for goal in &goals {
-            items.push(GoalListItem::Goal(goal.clone()));
-            for eph_id in &self.ephemeral_sessions_ordered {
-                if session_base_id(eph_id) == goal.id.as_str() {
-                    items.push(GoalListItem::Ephemeral(eph_id.clone()));
-                }
+        let mut items: Vec<GoalListItem> = goals.into_iter().map(GoalListItem::Goal).collect();
+
+        // Walk items forward; for each item insert its immediate ephemeral
+        // children right after it. Newly inserted ephemerals are visited in
+        // subsequent iterations so their own children are inserted too.
+        let mut i = 0;
+        while i < items.len() {
+            let parent_id = items[i].id().to_string();
+            let children: Vec<String> = self.ephemeral_sessions_ordered.iter()
+                .filter(|eph_id| session_parent_id(eph_id.as_str()) == parent_id.as_str())
+                .cloned()
+                .collect();
+            for (j, child_id) in children.into_iter().enumerate() {
+                items.insert(i + 1 + j, GoalListItem::Ephemeral(child_id));
             }
+            i += 1;
         }
+
         items
     }
 
@@ -376,4 +404,117 @@ impl App {
         }
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- session_base_id ---
+
+    #[test]
+    fn test_spec_session_base_id_plain_id_is_unchanged() {
+        assert_eq!(session_base_id("tend"), "tend");
+    }
+
+    #[test]
+    fn test_spec_session_base_id_single_tilde_returns_root() {
+        assert_eq!(session_base_id("fresh-agents~1"), "fresh-agents");
+    }
+
+    #[test]
+    fn test_spec_session_base_id_multiple_tildes_returns_root() {
+        assert_eq!(session_base_id("jog~1~3"), "jog");
+    }
+
+    // --- session_parent_id ---
+
+    #[test]
+    fn test_spec_session_parent_id_plain_id_is_unchanged() {
+        assert_eq!(session_parent_id("tend"), "tend");
+    }
+
+    #[test]
+    fn test_spec_session_parent_id_single_tilde_returns_root() {
+        assert_eq!(session_parent_id("jog~1"), "jog");
+    }
+
+    #[test]
+    fn test_spec_session_parent_id_double_tilde_returns_intermediate() {
+        assert_eq!(session_parent_id("jog~1~3"), "jog~1");
+    }
+
+    #[test]
+    fn test_spec_session_parent_id_triple_tilde_returns_immediate_parent() {
+        assert_eq!(session_parent_id("a~1~2~5"), "a~1~2");
+    }
+
+    // --- flat_items nesting ---
+
+    fn make_app_with_ephemerals(ephemerals: Vec<&str>) -> App {
+        let mut app = App::new();
+        for e in ephemerals {
+            app.ephemeral_sessions.insert(e.to_string());
+            app.ephemeral_sessions_ordered.push(e.to_string());
+        }
+        app
+    }
+
+    fn item_ids(items: &[GoalListItem]) -> Vec<&str> {
+        items.iter().map(|i| i.id()).collect()
+    }
+
+    #[test]
+    fn test_spec_flat_items_depth1_ephemeral_appears_after_root() {
+        // jog~1 should appear after jog (no permanent goals in this minimal app,
+        // so we only check that the ordering respects parent-before-child).
+        // With no permanent goals, flat_goals() is empty; the ephemeral hangs
+        // with no permanent parent and so is not inserted by the algorithm — this
+        // exercises the degenerate case without panicking.
+        let app = make_app_with_ephemerals(vec!["jog~1"]);
+        let items = app.flat_items();
+        // No permanent goals → no ephemerals surfaced (parent not in list).
+        assert_eq!(items.len(), 0);
+    }
+
+    fn make_goal(id: &str) -> crate::goal::Goal {
+        crate::goal::Goal {
+            id: id.to_string(),
+            summary: String::new(),
+            description: String::new(),
+            source_path: None,
+            kind: None,
+            tier: None,
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+        }
+    }
+
+    #[test]
+    fn test_spec_flat_items_nested_ephemerals_depth_first_order() {
+        // Simulate: permanent goal "jog", ephemerals jog~1, jog~1~2, jog~2.
+        // Expected order: jog (Goal), jog~1, jog~1~2, jog~2.
+        let mut app = App::new();
+        app.goals = vec![make_goal("jog")];
+        for e in ["jog~1", "jog~1~2", "jog~2"] {
+            app.ephemeral_sessions.insert(e.to_string());
+            app.ephemeral_sessions_ordered.push(e.to_string());
+        }
+        let items = app.flat_items();
+        assert_eq!(item_ids(&items), vec!["jog", "jog~1", "jog~1~2", "jog~2"]);
+    }
+
+    #[test]
+    fn test_spec_flat_items_three_level_nesting() {
+        // jog~1~2~5 should appear after jog~1~2.
+        let mut app = App::new();
+        app.goals = vec![make_goal("jog")];
+        for e in ["jog~1", "jog~1~2", "jog~1~2~5"] {
+            app.ephemeral_sessions.insert(e.to_string());
+            app.ephemeral_sessions_ordered.push(e.to_string());
+        }
+        let items = app.flat_items();
+        assert_eq!(item_ids(&items), vec!["jog", "jog~1", "jog~1~2", "jog~1~2~5"]);
+    }
 }

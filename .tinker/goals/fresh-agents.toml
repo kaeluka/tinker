@@ -1,21 +1,21 @@
 id = "fresh-agents"
 kind = "feature"
-summary = "This goal owns the fresh-dispatch mechanism: goal agents dispatch to ephemeral sub-sessions of themselves to distribute tasks with inherent parallelism across bounded, focused contexts, with sub-sessions retiring when the next batch begins."
+summary = "This goal owns the fresh-dispatch mechanism: goal agents dispatch to ephemeral sub-sessions for tasks with inherent parallelism; sub-sessions receive full dispatch capability and may act as coordinators, depth is unbounded, and all sub-sessions are retired when the batch ends."
 description = """
 ## WHAT
 
-Goal agents can dispatch to ephemeral sub-sessions of themselves. A spawning agent addresses a fresh dispatch to its own goal id and an optional label; the label lets the dispatcher correlate incoming replies. The fresh sub-session receives the same startup context as the dispatcher and replies via ordinary @-messages. Decomposition is one level deep — fresh sub-sessions carry standard startup context, not fresh-dispatch capability. Completed sub-sessions remain inspectable until the next batch starts; at batch-start they are silently removed (any period during which at least one session is active or a message is pending delivery constitutes a batch).
+Goal agents can dispatch to ephemeral sub-sessions of themselves. A spawning agent addresses a fresh dispatch to its own goal id and an optional label; the label lets the dispatcher correlate incoming replies. The fresh sub-session receives the same startup context as the dispatcher — including fresh-dispatch capability — and replies via ordinary @-messages. A sub-session may itself dispatch further sub-sessions, acting as a coordinator: it remains reachable for replies until the batch ends. Each dispatched sub-task must be a genuine decomposition — narrower than the problem the dispatcher received, with the LLM deciding when a task is atomic enough not to decompose further. Completed sub-sessions remain inspectable until the next batch starts; at batch-start they are silently removed (any period during which at least one session is active or a message is pending delivery constitutes a batch).
 
 ## WHY
 
-When a task has inherent parallelism — independent sub-tasks that don't need to share context — the right default is to distribute the work. The existing dispatch model gives agents no way to do this: all work accumulates in one session, degrading quality as context grows and keeping the dispatching session burdened with content it doesn't need. Fresh dispatches make parallelism the default path: each sub-session starts clean and focused, the dispatching session stays tight, and results return via the normal reply channel.
+When a task has inherent parallelism — independent sub-tasks that don't need to share context — the right default is to distribute the work. The existing dispatch model gives agents no way to do this: all work accumulates in one session, degrading quality as context grows and keeping the dispatching session burdened with content it doesn't need. Fresh dispatches make parallelism the default path: each sub-session starts clean and focused, the dispatching session stays tight, and results return via the normal reply channel. The same rationale applies at every level: a coordinator that finds further decomposable work in its own task should distribute it too.
 
 """
 parent_id = ""
 
 [[related]]
 id = "peer-consult"
-reason = "peer-consult owns the @-block envelope detection and routing protocol; fresh-agents extends that protocol with a new address class that routes to an ephemeral sub-session of the sender rather than an existing registry entry. peer-consult is authoritative for detection and delivery; this goal owns the fresh routing variant."
+reason = "peer-consult owns the @-block envelope detection and routing protocol; fresh-agents extends that protocol with a new address class that routes to an ephemeral sub-session of the sender rather than an existing registry entry. peer-consult is authoritative for detection and delivery; this goal owns the fresh routing variant. Asymmetric: peer-consult is a packaged goal and cannot carry a back-link to this project-local goal."
 
 [[related]]
 id = "goal-agents"
@@ -27,7 +27,7 @@ reason = "fresh sub-sessions run in the shared main working directory alongside 
 
 [[related]]
 id = "tui"
-reason = "tui governs fresh sub-session display: nested layout under the dispatcher in the goals list, appearance at dispatch time rather than at turn completion, log access via selection, and label normalization so the dispatcher name represents all its sub-sessions in the pane header."
+reason = "tui governs fresh sub-session display: accurate nesting under the immediate dispatcher at all depths, appearance at dispatch time rather than at turn completion, log access via selection, and pane-label normalization to the root permanent goal name."
 
 [[related]]
 id = "coding-standards"

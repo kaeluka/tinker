@@ -554,16 +554,52 @@ async fn run_loop(
             if let Some(fresh) = req.fresh_session {
                 // Batch-start retirement: retire completed ephemeral sessions from the
                 // previous batch before inserting any new ones.  Retirement is triggered
-                // by the arrival of new work (next-batch-start), not by the departure of
-                // old work (batch-end), so sub-sessions remain inspectable through the
-                // idle period.
-                let retired = app.lock().unwrap().retire_completed_ephemeral_sessions();
-                for id in retired {
-                    session_senders.remove(&id);
+                // by the idle→active transition, not by the departure of old work, so
+                // sub-sessions remain inspectable through the idle period.
+                //
+                // Three conditions must hold simultaneously before retirement fires:
+                // (1) the dispatcher is a permanent goal agent (not an ephemeral
+                //     coordinator), confirming we are not mid-batch — a coordinator
+                //     that completes its current turn is removed from running_sessions
+                //     but must survive to receive replies from its sub-sessions;
+                // (2) no ephemeral session is currently in running_sessions, confirming
+                //     the previous batch is truly idle rather than paused between turns;
+                // (3) the permanent dispatcher goal is not itself in running_sessions,
+                //     which would indicate a batch message from a completed sub-session
+                //     is still in transit to it ("pending delivery" in the spec's batch
+                //     definition).  dispatch_peer_consultations inserts the recipient
+                //     into running_sessions when a sub-session reply is dispatched;
+                //     the permanent goal leaves running_sessions only after processing
+                //     that reply.  Firing retirement while the delivery is still pending
+                //     would retire sub-sessions prematurely within the current batch.
+                {
+                    let should_retire = {
+                        let a = app.lock().unwrap();
+                        let dispatcher_is_permanent = app::session_base_id(&fresh.dispatcher_id)
+                            == fresh.dispatcher_id.as_str();
+                        let any_ephemeral_running = a.ephemeral_sessions.iter()
+                            .any(|id| a.running_sessions.contains_key(id));
+                        let dispatcher_has_pending_delivery =
+                            a.running_sessions.contains_key(fresh.dispatcher_id.as_str());
+                        dispatcher_is_permanent
+                            && !any_ephemeral_running
+                            && !dispatcher_has_pending_delivery
+                    };
+                    if should_retire {
+                        let retired = app.lock().unwrap().retire_completed_ephemeral_sessions();
+                        for id in retired {
+                            session_senders.remove(&id);
+                        }
+                    }
                 }
 
                 // Fresh sub-session: unique ID, ephemeral, custom init.
-                let goal = app.lock().unwrap().goals.iter().find(|g| g.id == fresh.dispatcher_id).cloned();
+                // When the dispatcher is an ephemeral coordinator, resolve to the
+                // permanent base goal for init context and tier selection.
+                let permanent_goal_id = app::session_base_id(&fresh.dispatcher_id).to_string();
+                let goal = app.lock().unwrap().goals.iter()
+                    .find(|g| g.id == permanent_goal_id)
+                    .cloned();
                 if let Some(dispatcher_goal) = goal {
                     let (msg_tx_fresh, msg_rx_fresh) = mpsc::channel::<String>(16);
                     session_senders.insert(fresh.session_id.clone(), msg_tx_fresh.clone());
@@ -576,6 +612,8 @@ async fn run_loop(
                     let init_msg = if lean_init_fresh {
                         goal_session::fresh_subsession_lean_init_message(
                             &dispatcher_goal,
+                            &fresh.dispatcher_id,
+                            &fresh.session_id,
                             fresh.label.as_deref(),
                             &req.message,
                             &compact_index,
@@ -583,6 +621,8 @@ async fn run_loop(
                     } else {
                         goal_session::fresh_subsession_init_message(
                             &dispatcher_goal,
+                            &fresh.dispatcher_id,
+                            &fresh.session_id,
                             fresh.label.as_deref(),
                             &req.message,
                             &compact_index,
@@ -762,6 +802,12 @@ async fn run_loop(
             match action {
                 KeyAction::Quit => break,
                 KeyAction::SendToSession(session_id, msg) => {
+                    {
+                        let retired = app.lock().unwrap().retire_completed_ephemeral_sessions();
+                        for id in retired {
+                            session_senders.remove(&id);
+                        }
+                    }
                     if matches!(session_id.as_str(), "tend" | "rummage" | "jog") {
                         app.lock().unwrap().running_sessions.insert(session_id.clone(), None);
                     }
@@ -778,6 +824,12 @@ async fn run_loop(
                     }
                 }
                 KeyAction::ConfirmOptions { goal_id, reason, new_tier } => {
+                    {
+                        let retired = app.lock().unwrap().retire_completed_ephemeral_sessions();
+                        for id in retired {
+                            session_senders.remove(&id);
+                        }
+                    }
                     // 1. Apply tier change if the user changed it.
                     if let Some(ref tier_str) = new_tier {
                         let write_info = {
@@ -853,6 +905,16 @@ async fn run_loop(
 ///   message body — may span multiple lines
 ///   </@tend>
 ///
+/// **Scoping rule — top-level envelopes only.**
+/// Only envelopes where the opening tag begins at the start of the trimmed
+/// line are treated as live dispatches. An envelope appearing mid-line
+/// (e.g. `reply via <@tend>…</@tend>`) is explanatory prose and is silently
+/// ignored. Likewise, envelopes inside fenced code blocks (``` or ~~~) are
+/// illustrative and are not extracted. Both rules together ensure extraction
+/// applies exclusively to envelopes the agent itself is intentionally
+/// emitting, not to envelope syntax quoted or forwarded from an earlier
+/// delivery message.
+///
 /// Prose outside envelopes is not delivered to any agent.
 /// Empty envelopes (nothing between open and close tags) are silently dropped.
 /// A reply may contain multiple envelopes; each is extracted independently.
@@ -865,57 +927,75 @@ fn parse_at_commands(text: &str, known_ids: &[&str]) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     let lines: Vec<&str> = text.lines().collect();
     let mut i = 0;
+    let mut in_code_fence = false;
 
     while i < lines.len() {
         let trimmed = lines[i].trim();
+
+        // Toggle fence state and skip the fence marker line itself.
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_code_fence = !in_code_fence;
+            i += 1;
+            continue;
+        }
+        // Inside a code fence — envelope syntax is quoted/illustrative, not live.
+        if in_code_fence {
+            i += 1;
+            continue;
+        }
+
         let mut matched = false;
 
         for id in known_ids {
             let open_tag = format!("<@{}>", id);
             let close_tag = format!("</@{}>", id);
 
-            if let Some(tag_pos) = trimmed.find(open_tag.as_str()) {
-                let after_open = &trimmed[tag_pos + open_tag.len()..];
+            // The opening tag must start the trimmed line — an envelope appearing
+            // mid-line is explanatory prose (e.g. "reply via <@id>…</@id>") and
+            // must not be extracted as a live dispatch.
+            if !trimmed.starts_with(open_tag.as_str()) {
+                continue;
+            }
+            let after_open = &trimmed[open_tag.len()..];
 
-                // Check if the closing tag appears on the same line.
-                if let Some(close_pos) = after_open.find(close_tag.as_str()) {
-                    let content = after_open[..close_pos].trim().to_string();
-                    if !content.is_empty() {
-                        out.push((id.to_string(), content));
-                    }
-                    i += 1;
-                } else {
-                    // Multi-line envelope: collect body lines until closing tag.
-                    let mut body_lines: Vec<String> = Vec::new();
-                    let inline = after_open.trim().to_string();
-                    if !inline.is_empty() {
-                        body_lines.push(inline);
-                    }
-                    i += 1;
+            // Check if the closing tag appears on the same line.
+            if let Some(close_pos) = after_open.find(close_tag.as_str()) {
+                let content = after_open[..close_pos].trim().to_string();
+                if !content.is_empty() {
+                    out.push((id.to_string(), content));
+                }
+                i += 1;
+            } else {
+                // Multi-line envelope: collect body lines until closing tag.
+                let mut body_lines: Vec<String> = Vec::new();
+                let inline = after_open.trim().to_string();
+                if !inline.is_empty() {
+                    body_lines.push(inline);
+                }
+                i += 1;
 
-                    while i < lines.len() {
-                        let inner_trimmed = lines[i].trim();
-                        if let Some(close_pos) = inner_trimmed.find(close_tag.as_str()) {
-                            let before = inner_trimmed[..close_pos].trim();
-                            if !before.is_empty() {
-                                body_lines.push(before.to_string());
-                            }
-                            i += 1;
-                            break;
-                        } else {
-                            body_lines.push(lines[i].to_string());
-                            i += 1;
+                while i < lines.len() {
+                    let inner_trimmed = lines[i].trim();
+                    if let Some(close_pos) = inner_trimmed.find(close_tag.as_str()) {
+                        let before = inner_trimmed[..close_pos].trim();
+                        if !before.is_empty() {
+                            body_lines.push(before.to_string());
                         }
-                    }
-
-                    let msg = body_lines.join("\n").trim().to_string();
-                    if !msg.is_empty() {
-                        out.push((id.to_string(), msg));
+                        i += 1;
+                        break;
+                    } else {
+                        body_lines.push(lines[i].to_string());
+                        i += 1;
                     }
                 }
-                matched = true;
-                break;
+
+                let msg = body_lines.join("\n").trim().to_string();
+                if !msg.is_empty() {
+                    out.push((id.to_string(), msg));
+                }
             }
+            matched = true;
+            break;
         }
 
         if !matched {
@@ -941,9 +1021,23 @@ fn parse_fresh_dispatches(text: &str, sender_id: &str) -> Vec<(Option<String>, S
     let mut out: Vec<(Option<String>, String)> = Vec::new();
     let lines: Vec<&str> = text.lines().collect();
     let mut i = 0;
+    let mut in_code_fence = false;
 
     while i < lines.len() {
         let trimmed = lines[i].trim();
+
+        // Toggle fence state and skip the fence marker line itself.
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_code_fence = !in_code_fence;
+            i += 1;
+            continue;
+        }
+        // Inside a code fence — dispatch syntax is quoted/illustrative, not live.
+        if in_code_fence {
+            i += 1;
+            continue;
+        }
+
         if let Some(rest) = trimmed.strip_prefix(open_prefix.as_str()) {
             // Extract the label from rest up to the first '>'.
             if let Some(label_end) = rest.find('>') {
@@ -1001,8 +1095,16 @@ fn parse_fresh_dispatches(text: &str, sender_id: &str) -> Vec<(Option<String>, S
 fn scan_opening_tags(text: &str, base_id: &str) -> Vec<Option<String>> {
     let open_prefix = format!("<@{}|", base_id);
     let mut labels = Vec::new();
+    let mut in_code_fence = false;
     for line in text.lines() {
         let trimmed = line.trim();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_code_fence = !in_code_fence;
+            continue;
+        }
+        if in_code_fence {
+            continue;
+        }
         if let Some(rest) = trimmed.strip_prefix(open_prefix.as_str())
             && let Some(label_end) = rest.find('>')
         {
@@ -1018,6 +1120,11 @@ fn scan_opening_tags(text: &str, base_id: &str) -> Vec<Option<String>> {
 /// `goal_spawn_tx` for goal IDs not yet in the registry.
 /// All dispatched recipients are tracked in running_sessions so the batch-end
 /// retirement check correctly waits for every pending delivery to be processed.
+///
+/// The formatted delivery message uses plain `@{sender}` (no angle-bracket
+/// envelope syntax) for the reply instruction. A live `<@id>…</@id>` envelope
+/// in the delivery message would be re-extracted by the harness on the next
+/// parse pass and route placeholder text as a spurious first message.
 fn dispatch_peer_consultations(
     app: &mut App,
     sender: &str,
@@ -1028,20 +1135,23 @@ fn dispatch_peer_consultations(
 ) {
     for (recipient, msg) in consultations {
         let formatted = format!(
-            "[from {}] {}\n\nIf you complete work based on this message: once you are done with this, reply via <@{}>...</@{}>.",
-            sender, msg, sender, sender
+            "[from {}] {}\n\nIf you complete work based on this message: once you are done with this, reply via @{}.",
+            sender, msg, sender
         );
         let sys = format!("<@{}> → <@{}>: {}", sender, recipient, msg);
         app.push_system_message(&sys);
         log.emit(sender, logger::LogEvent::TinkerSystemMessageReceived { content: sys });
-        // Track ALL recipients in running_sessions — including interactive agents
-        // (tend / rummage / jog) — so the batch-end retirement check sees any
-        // session with a pending delivery as still active. Without this, a
-        // completed sub-session that has replied to tend creates a window where
-        // running_sessions is empty before tend begins processing the reply,
-        // causing premature retirement of ephemeral sessions.
+        // Track ALL recipients in running_sessions — permanent goals, interactive
+        // agents (tend / rummage / jog), and ephemeral coordinators — so the
+        // batch-end retirement check sees any session with a pending delivery as
+        // still active.  Without tracking ephemeral coordinators, a sub-session
+        // that replies back to its coordinator (e.g. `fresh-agents~1`) creates a
+        // window where running_sessions does not contain the coordinator, the
+        // retirement guard fires, and the coordinator is retired before it can
+        // consume the buffered reply and respond to its own dispatcher.
         let should_track = app.goals.iter().any(|g| &g.id == recipient)
-            || matches!(recipient.as_str(), "tend" | "rummage" | "jog");
+            || matches!(recipient.as_str(), "tend" | "rummage" | "jog")
+            || app.ephemeral_sessions.contains(recipient.as_str());
 
         if let Some(tx) = session_senders.get(recipient) {
             let _ = tx.try_send(formatted);
@@ -1103,14 +1213,17 @@ fn handle_session_event(
             // appears in the stream.  The full task body is unavailable until
             // Done; spawning still happens there.  If a pre-announced entry has
             // no matching close tag at Done time it is silently removed.
-            // Only non-ephemeral sessions can spawn sub-sessions (depth ≤ 1).
-            if !goal_id.contains('~') {
-                let base_id = goal_id.as_str();
+            // All sessions — including ephemeral coordinators — may spawn
+            // sub-sessions (unbounded depth).  The scan uses goal_id directly
+            // so coordinator tags `<@coord~1|label>` are recognised; the new
+            // session ID uses the dispatcher's own ID as prefix so depth is
+            // preserved: a child of `rummage~1` becomes `rummage~1~N`.
+            {
                 let accumulated = app.current_session_text
                     .get(&goal_id)
                     .cloned()
                     .unwrap_or_default();
-                let all_opens = scan_opening_tags(&accumulated, base_id);
+                let all_opens = scan_opening_tags(&accumulated, &goal_id);
                 let already_announced = app
                     .pending_fresh_announcements
                     .get(&goal_id)
@@ -1119,7 +1232,7 @@ fn handle_session_event(
                 for label in all_opens.into_iter().skip(already_announced) {
                     app.fresh_session_counter += 1;
                     let counter = app.fresh_session_counter;
-                    let session_id = format!("{}~{}", base_id, counter);
+                    let session_id = format!("{}~{}", goal_id, counter);
                     app.running_sessions.insert(session_id.clone(), None);
                     app.ephemeral_sessions.insert(session_id.clone());
                     app.ephemeral_sessions_ordered.push(session_id.clone());
@@ -1215,12 +1328,15 @@ fn handle_session_event(
             //   remove it silently (the opening tag appeared but the body or
             //   closing tag was never emitted).
             //
-            // Ephemeral sessions (IDs containing '~') cannot spawn further
-            // sub-sessions — decomposition is one level deep.
-            if !goal_id.contains('~') {
-                let base_id = goal_id.as_str();
-                let fresh_dispatches = parse_fresh_dispatches(&session_text, base_id);
-                // Consume the pre-announcement list for this base ID.
+            // All sessions — including ephemeral coordinators — may spawn
+            // further sub-sessions (unbounded depth).  Coordinators use their
+            // own session ID in dispatch tags; dispatcher_id carries the actual
+            // sender, and the permanent base ID is used for new session IDs so
+            // TUI nesting stays under the permanent goal row.
+            {
+                let perm_base = app::session_base_id(&goal_id).to_string();
+                let fresh_dispatches = parse_fresh_dispatches(&session_text, &goal_id);
+                // Consume the pre-announcement list for this dispatcher's goal_id.
                 let pre_announced = app
                     .pending_fresh_announcements
                     .remove(&goal_id)
@@ -1237,7 +1353,7 @@ fn handle_session_event(
                         // No pre-announcement for this envelope — register now.
                         app.fresh_session_counter += 1;
                         let counter = app.fresh_session_counter;
-                        let id = format!("{}~{}", base_id, counter);
+                        let id = format!("{}~{}", goal_id, counter);
                         let first_line = task.lines().next().unwrap_or("").to_string();
                         app.running_sessions.insert(id.clone(), Some(first_line));
                         app.ephemeral_sessions.insert(id.clone());
@@ -1256,12 +1372,15 @@ fn handle_session_event(
                         logger::LogEvent::TinkerSystemMessageReceived { content: sys },
                     );
                     let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
-                        goal_id: base_id.to_string(),
+                        goal_id: perm_base.clone(),
                         message: task.clone(),
                         fresh_session: Some(FreshSessionConfig {
                             session_id,
                             label: label.clone(),
-                            dispatcher_id: base_id.to_string(),
+                            // Carry the actual dispatcher ID (may be ephemeral) so
+                            // the spawn handler can route replies correctly and the
+                            // init message uses the right reply target.
+                            dispatcher_id: goal_id.clone(),
                         }),
                     });
                 }
@@ -2233,6 +2352,40 @@ mod tests {
         assert_eq!(r[2], ("jog".to_string(), "q3".to_string()));
     }
 
+    // spec (peer-consult): an envelope that starts mid-line (e.g. explanatory
+    // prose such as "reply via <@tend>…</@tend>") must NOT be extracted as a
+    // live dispatch — only envelopes whose opening tag begins the trimmed line
+    // are treated as real routing signals.
+    #[test]
+    fn test_spec_peer_consult_mid_line_envelope_not_extracted() {
+        let input = "reply via <@tend>placeholder text</@tend> once you are done";
+        let r = parse_at_commands(input, BUILTIN_IDS);
+        assert!(
+            r.is_empty(),
+            "mid-line envelope must not be extracted as a dispatch; got {:?}",
+            r
+        );
+    }
+
+    // spec (peer-consult): envelopes inside a fenced code block (``` or ~~~)
+    // are illustrative, not live — the parser must skip them entirely.
+    #[test]
+    fn test_spec_peer_consult_code_fence_envelope_not_extracted() {
+        let backtick_fence = "```\n<@tend>hello</@tend>\n```";
+        let r = parse_at_commands(backtick_fence, BUILTIN_IDS);
+        assert!(r.is_empty(), "envelope in backtick fence must not dispatch; got {:?}", r);
+
+        let tilde_fence = "~~~\n<@rummage>check this</@rummage>\n~~~";
+        let r2 = parse_at_commands(tilde_fence, BUILTIN_IDS);
+        assert!(r2.is_empty(), "envelope in tilde fence must not dispatch; got {:?}", r2);
+
+        // A real envelope after the fence must still fire.
+        let after_fence = "```\n<@tend>ignored</@tend>\n```\n<@rummage>real</@rummage>";
+        let r3 = parse_at_commands(after_fence, BUILTIN_IDS);
+        assert_eq!(r3.len(), 1);
+        assert_eq!(r3[0], ("rummage".to_string(), "real".to_string()));
+    }
+
     // spec (goal-agents): dispatch_peer_consultations requests lazy spawn when
     // the recipient is a known goal ID not yet in the session registry.
     #[test]
@@ -2918,6 +3071,37 @@ mod tests {
         );
     }
 
+    // spec (fresh-agents — coordinator retirement): when a sub-session replies to
+    // its ephemeral coordinator via @, the coordinator must be added to
+    // running_sessions so the batch-end retirement guard sees it as still-active
+    // and does not retire it before it can consume the buffered reply.
+    #[test]
+    fn test_spec_at_dispatch_tracks_ephemeral_coordinator_in_running_sessions() {
+        let (msg_tx, _msg_rx) = mpsc::channel::<String>(8);
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (senders, _, _) = make_test_session_senders(&msg_tx);
+
+        let mut app = App::new();
+        // Register a live sender for the coordinator so the message is delivered.
+        let (coord_tx, _coord_rx) = mpsc::channel::<String>(4);
+        let mut senders_with_coord = senders.clone();
+        senders_with_coord.insert("fresh-agents~1".to_string(), coord_tx);
+        // Mark the coordinator as an ephemeral session (as the runtime does).
+        app.ephemeral_sessions.insert("fresh-agents~1".to_string());
+
+        let consultations = vec![
+            ("fresh-agents~1".to_string(), "sub-task result".to_string()),
+        ];
+        dispatch_peer_consultations(
+            &mut app, "fresh-agents~2", &consultations, &senders_with_coord, &spawn_tx, &logger::noop_sender(),
+        );
+
+        assert!(
+            app.running_sessions.contains_key("fresh-agents~1"),
+            "ephemeral coordinator must appear in running_sessions when a reply is dispatched to it",
+        );
+    }
+
     // spec (parallel-goal-agents): dispatch_peer_consultations must NOT gate on
     // any "is a goal agent already running?" check. Two concurrent non-interactive
     // dispatches must both go to spawn immediately — neither is queued.
@@ -3174,6 +3358,25 @@ mod tests {
         assert_eq!(results.len(), 0, "empty fresh dispatch envelope must be ignored");
     }
 
+    // spec (fresh-agents, peer-consult): fresh dispatch envelopes inside fenced
+    // code blocks are illustrative and must not be extracted as live dispatches.
+    #[test]
+    fn test_spec_fresh_agents_code_fence_envelope_not_extracted() {
+        let fence = "```\n<@my-goal|sub1>task inside fence</@my-goal|sub1>\n```";
+        let results = parse_fresh_dispatches(fence, "my-goal");
+        assert!(
+            results.is_empty(),
+            "fresh dispatch inside code fence must not be extracted; got {:?}",
+            results
+        );
+
+        // A real dispatch after the fence must still be extracted.
+        let after = "```\n<@g|x>ignored</@g|x>\n```\n<@g|real>live task</@g|real>";
+        let r2 = parse_fresh_dispatches(after, "g");
+        assert_eq!(r2.len(), 1, "dispatch after fence must be extracted; got {:?}", r2);
+        assert_eq!(r2[0].1, "live task");
+    }
+
     // spec (fresh-agents): multiple fresh dispatches in one reply are all extracted.
     #[test]
     fn test_spec_fresh_agents_parse_multiple_dispatches() {
@@ -3239,10 +3442,11 @@ mod tests {
         );
     }
 
-    // spec (fresh-agents): fresh dispatch is NOT triggered for ephemeral sessions
-    // (IDs containing '~') — decomposition is one level deep.
+    // spec (fresh-agents): ephemeral coordinators CAN spawn further fresh sub-sessions
+    // (unbounded depth). A coordinator uses its own session ID in dispatch tags so
+    // sub-sub-sessions reply to it rather than to the permanent goal agent.
     #[test]
-    fn test_spec_fresh_agents_ephemeral_cannot_spawn_more_fresh_sessions() {
+    fn test_spec_fresh_agents_ephemeral_coordinator_can_spawn_sub_sessions() {
         let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
         let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
 
@@ -3259,10 +3463,11 @@ mod tests {
             source_path: None,
         });
 
-        // An ephemeral session ID contains '~'.
+        // A coordinator uses its OWN ephemeral ID in the dispatch tag so sub-sessions
+        // can reply to it via @-message routing.
         app.current_session_text.insert(
             "my-goal~1".into(),
-            "<@my-goal|sub>nested dispatch</@my-goal|sub>".into(),
+            "<@my-goal~1|sub>nested sub-task</@my-goal~1|sub>".into(),
         );
 
         handle_session_event(
@@ -3274,11 +3479,67 @@ mod tests {
             &logger::noop_sender(),
         );
 
-        // No fresh spawn must be enqueued (the normal @-command routing may fire,
-        // but no fresh_session spawn).
-        let maybe_fresh = spawn_rx.try_recv().ok()
+        // A fresh spawn request must be enqueued.
+        let req = spawn_rx.try_recv()
+            .ok()
             .filter(|r| r.fresh_session.is_some());
-        assert!(maybe_fresh.is_none(), "ephemeral session must not spawn further fresh sub-sessions");
+        assert!(
+            req.is_some(),
+            "ephemeral coordinator must be able to spawn further fresh sub-sessions"
+        );
+        let fresh = req.unwrap().fresh_session.unwrap();
+        // The dispatcher_id must be the coordinator's own ID so the spawn handler
+        // constructs an init message that tells the sub-session to reply to it.
+        assert_eq!(
+            fresh.dispatcher_id, "my-goal~1",
+            "dispatcher_id must be the coordinator's session ID, not the permanent base"
+        );
+        // The new session ID must nest under the coordinator, not the permanent base.
+        assert!(
+            fresh.session_id.starts_with("my-goal~1~"),
+            "sub-sub-session ID must nest under the coordinator: my-goal~1~N"
+        );
+    }
+
+    // spec (fresh-agents): batch detection — retirement must NOT fire when the
+    // dispatcher is an ephemeral coordinator (mid-batch), when any ephemeral is
+    // still running, OR when the permanent dispatcher is itself in running_sessions
+    // (a batch message from a completed sub-session is pending delivery to it).
+    // Retirement only fires on the idle→active transition: permanent dispatcher,
+    // no running ephemerals, dispatcher not awaiting a pending delivery.
+    #[test]
+    fn test_spec_fresh_agents_batch_detection_guards_retirement() {
+        let main_rs = include_str!("main.rs");
+        // The spawn handler must gate retirement on all three conditions.
+        assert!(
+            main_rs.contains("dispatcher_is_permanent"),
+            "spawn handler must check dispatcher_is_permanent before retiring",
+        );
+        assert!(
+            main_rs.contains("any_ephemeral_running"),
+            "spawn handler must check any_ephemeral_running before retiring",
+        );
+        assert!(
+            main_rs.contains("dispatcher_has_pending_delivery"),
+            "spawn handler must check dispatcher_has_pending_delivery before retiring",
+        );
+        // All three conditions must be evaluated before retire_completed_ephemeral_sessions.
+        let perm_pos = main_rs.find("dispatcher_is_permanent").unwrap();
+        let eph_pos = main_rs.find("any_ephemeral_running").unwrap();
+        let pending_pos = main_rs.find("dispatcher_has_pending_delivery").unwrap();
+        let retire_pos = main_rs.find("retire_completed_ephemeral_sessions").unwrap();
+        assert!(
+            perm_pos < retire_pos,
+            "dispatcher_is_permanent check must precede retire call",
+        );
+        assert!(
+            eph_pos < retire_pos,
+            "any_ephemeral_running check must precede retire call",
+        );
+        assert!(
+            pending_pos < retire_pos,
+            "dispatcher_has_pending_delivery check must precede retire call",
+        );
     }
 
     // spec (fresh-agents): interactive sessions (tend / rummage / jog) CAN spawn
@@ -3707,6 +3968,112 @@ mod tests {
         assert!(
             app.ephemeral_sessions.contains(&pre_id),
             "session must remain in ephemeral_sessions after Done spawns it",
+        );
+    }
+
+    // spec (fresh-agents / tui): when an ephemeral coordinator fires a Chunk event
+    // containing an opening tag addressed to itself (e.g. `<@my-goal~1|sub>`), the
+    // pre-announced sub-session ID must be nested under the coordinator — it must
+    // start with `my-goal~1~`, not the permanent base `my-goal~`.  This ensures
+    // multi-level depth is preserved and the coordinator receives replies correctly.
+    #[test]
+    fn test_spec_fresh_agents_chunk_pre_announce_uses_coordinator_id_as_prefix() {
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
+        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+
+        let mut app = App::new();
+        app.goals.push(goal::Goal {
+            id: "my-goal".into(),
+            summary: String::new(),
+            description: "the goal".into(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        });
+
+        // The dispatcher is an ephemeral coordinator (not the permanent base goal).
+        handle_session_event(
+            &mut app,
+            SessionEvent::Chunk {
+                goal_id: "my-goal~1".into(),
+                text: "<@my-goal~1|sub>\n".into(),
+            },
+            &spawn_tx,
+            &senders,
+            &crate::realfs::RealFilesystem,
+            &logger::noop_sender(),
+        );
+
+        assert_eq!(
+            app.ephemeral_sessions.len(), 1,
+            "one ephemeral session must be pre-announced",
+        );
+        let pre_id = app.ephemeral_sessions_ordered.first()
+            .cloned()
+            .expect("ordered list must contain the pre-announced entry");
+        assert!(
+            pre_id.starts_with("my-goal~1~"),
+            "pre-announced ID must nest under the coordinator (my-goal~1~N), got: {pre_id}",
+        );
+    }
+
+    // spec (fresh-agents): completed ephemeral sessions must be retired from
+    // session_senders when a `KeyAction::SendToSession` or `KeyAction::ConfirmOptions`
+    // is processed — not only at fresh-dispatch time.  This prevents stale channel
+    // entries from accumulating between batches.
+    #[test]
+    fn test_spec_fresh_agents_retire_ephemeral_sessions_on_key_actions() {
+        let main_rs = include_str!("main.rs");
+
+        // Both handler arms must call retire_completed_ephemeral_sessions followed
+        // by session_senders.remove.  We verify by checking that both markers exist
+        // and that the retire call precedes the remove call in each arm.
+
+        // SendToSession arm: locate the arm by its unique marker.
+        let send_arm_marker = "KeyAction::SendToSession(session_id, msg) => {";
+        let confirm_arm_marker = "KeyAction::ConfirmOptions { goal_id, reason, new_tier } => {";
+
+        assert!(
+            main_rs.contains(send_arm_marker),
+            "SendToSession arm must be present in main.rs",
+        );
+        assert!(
+            main_rs.contains(confirm_arm_marker),
+            "ConfirmOptions arm must be present in main.rs",
+        );
+
+        // After SendToSession arm, retire must appear before the arm ends.
+        let send_pos = main_rs.find(send_arm_marker).unwrap();
+        let confirm_pos = main_rs.find(confirm_arm_marker).unwrap();
+
+        // Find retire_completed_ephemeral_sessions occurrences after each arm start.
+        let retire_in_send = main_rs[send_pos..confirm_pos].contains("retire_completed_ephemeral_sessions");
+        assert!(
+            retire_in_send,
+            "SendToSession arm must call retire_completed_ephemeral_sessions",
+        );
+
+        // session_senders.remove must also appear in the SendToSession arm.
+        let remove_in_send = main_rs[send_pos..confirm_pos].contains("session_senders.remove");
+        assert!(
+            remove_in_send,
+            "SendToSession arm must call session_senders.remove for retired sessions",
+        );
+
+        // For ConfirmOptions: find the text between the arm start and a later unique marker.
+        let after_confirm = &main_rs[confirm_pos..];
+        let retire_in_confirm = after_confirm.contains("retire_completed_ephemeral_sessions");
+        assert!(
+            retire_in_confirm,
+            "ConfirmOptions arm must call retire_completed_ephemeral_sessions",
+        );
+        let remove_in_confirm = after_confirm.contains("session_senders.remove");
+        assert!(
+            remove_in_confirm,
+            "ConfirmOptions arm must call session_senders.remove for retired sessions",
         );
     }
 

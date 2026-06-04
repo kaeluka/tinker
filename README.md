@@ -182,10 +182,11 @@ get pulled in as the work calls for them.
 
 Every goal is an agent — an addressable session that persists for the
 project's lifetime. When a goal needs to distribute parallel work, it can
-dispatch ephemeral sub-sessions of itself: bounded contexts that run
-concurrently, then retire when their batch completes. These sub-sessions appear
-in the session view while active and participate in the same message-passing
-protocol as any other agent; they simply do not outlive their task.
+dispatch ephemeral sub-sessions of itself — each one a full participant in
+the message-passing protocol. Any sub-session can itself act as a coordinator,
+dispatching further sub-sessions to any depth. The session view nests them
+accurately under their immediate dispatcher at every level. When the batch
+ends, all sub-sessions at every depth are retired.
 
 Any agent — persistent or ephemeral — can send a message to any other by name.
 There is no central dispatcher. When a goal session finds a gap it cannot
