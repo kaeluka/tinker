@@ -293,7 +293,8 @@ pub fn build_compact_index(goals: &[Goal]) -> String {
 
     let tree = build_tree(goals);
     let entries: Vec<Entry> = tree.iter().map(|node| node_to_entry(node, "")).collect();
-    serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
+    serde_json::to_string(&entries)
+        .expect("compact index serialization failed — this is a bug in the Entry schema")
 }
 
 #[cfg(test)]
