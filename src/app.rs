@@ -182,6 +182,13 @@ pub struct App {
     pub ephemeral_sessions_ordered: Vec<String>,
     /// Monotone counter used to assign unique IDs to fresh sub-sessions.
     pub fresh_session_counter: u64,
+    /// Pre-announced ephemeral sessions indexed by their base goal ID.
+    /// Values are vecs of `(session_id, label)` in detection order, each
+    /// corresponding to an opening `<@base_id|label>` tag seen while the
+    /// session was still streaming.  Consumed at Done time: complete
+    /// envelopes are matched to pre-announced entries in order; unmatched
+    /// entries (incomplete envelopes) are removed from the goal list.
+    pub pending_fresh_announcements: HashMap<String, Vec<(String, Option<String>)>>,
     /// Index into the WERKELN_VERBS list; advanced every ~2 s while sessions run.
     pub werkeln_verb_idx: usize,
     /// When the verb index was last advanced.
@@ -223,6 +230,7 @@ impl App {
             ephemeral_sessions: HashSet::new(),
             ephemeral_sessions_ordered: Vec::new(),
             fresh_session_counter: 0,
+            pending_fresh_announcements: HashMap::new(),
             werkeln_verb_idx: 0,
             werkeln_last_advance: Instant::now(),
         }

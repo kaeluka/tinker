@@ -67,6 +67,8 @@ invocation for that goal in queue order — running first, then queued
 — each line carrying its glyph or index and trigger reason. The queue
 surface is read-only.
 
+**Ephemeral sub-sessions.** Ephemeral sub-sessions appear in the goal list as soon as they are dispatched — not deferred until the dispatching turn completes. If the dispatching turn ends without a complete envelope for a pre-announced entry, that entry is removed.
+
 **Options dialog.** Pressing Enter on a goal in the goal list opens
 an options dialog with two fields: a trigger reason and the goal's
 current tier. If the tier is changed and the goal has a running
@@ -114,6 +116,8 @@ stay visible at a glance. The queue surface is read-only by
 deliberate choice: the user wanted to see what is running without
 being able to cancel or reorder it. Queue control is a separate
 concern, deferred until there is a real need.
+
+Ephemeral sub-sessions appear at dispatch time, not at turn completion, for the same reason the system is meant to be watched while it works: the user needs to see that work is forming, not just that it landed. A burst of entries appearing alongside a finished result gives no signal about what happened in between.
 
 Goal IDs render bold and state-colored everywhere they appear — list
 rows, the pane label, and any future surface. A goal ID is a stable
@@ -164,4 +168,4 @@ reason = "tend-introspection's introspection substrate captures this goal's stru
 
 [[related]]
 id = "fresh-agents"
-reason = "fresh sub-sessions are visible in the session view while active; tui governs how they are rendered and distinguished from permanent sessions."
+reason = "fresh sub-sessions are visible in the session view while active, appearing at dispatch time rather than at turn completion; tui governs how they are rendered, when they appear, and how they are distinguished from permanent sessions."

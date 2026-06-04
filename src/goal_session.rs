@@ -55,7 +55,9 @@ pub const MESSAGE_PASSING_AND_PROGRESS_SECTIONS: &str =
      Output outside envelopes is your private working log (rendered in the log pane, \
      not delivered to other agents). Tag envelopes in your reply are extracted after \
      you finish and routed to the named recipients. No blocking calls — replies arrive \
-     in the normal message stream. **Reporting completions.** When you complete \
+     in the normal message stream. **Acknowledgements close the exchange — no reply \
+     needed.** Receiving a pure acknowledgement or done report means the exchange is \
+     complete; replying again invites a loop. **Reporting completions.** When you complete \
      significant work, report to your dispatcher — the agent whose `@`-message \
      initiated your current task (this can be the user). In your report: what you did, \
      what you decided beyond the goal, how to try the result, every `test_spec_` \

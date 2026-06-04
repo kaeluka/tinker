@@ -544,25 +544,24 @@ async fn run_loop(
         // Draw
         terminal.draw(|f| tui::draw(f, &mut app.lock().unwrap()))?;
 
-        // Batch-start retirement: retire completed ephemeral sessions only after
-        // the whole batch has gone idle (running_sessions is empty). This prevents
-        // retiring sub-session A while concurrent siblings B and C from the same
-        // batch are still active — matching the spec's "retire at the start of the
-        // next batch" semantics.
-        if app.lock().unwrap().running_sessions.is_empty() {
-            let completed = app.lock().unwrap().retire_completed_ephemeral_sessions();
-            for id in completed {
-                session_senders.remove(&id);
-            }
-        }
-
         // Drain lazy goal-agent spawn requests. For each request:
-        // - Fresh sub-session (fresh_session is Some): always create a new ephemeral
-        //   entry with the sub-session's unique ID and a custom init message.
+        // - Fresh sub-session (fresh_session is Some): retire completed ephemeral
+        //   sessions from prior batches, then create a new ephemeral entry with the
+        //   sub-session's unique ID and a custom init message.
         // - Persistent goal agent (fresh_session is None): if already in the registry,
         //   route the message; otherwise create a channel, register it, spawn a task.
         while let Ok(req) = goal_spawn_rx.try_recv() {
             if let Some(fresh) = req.fresh_session {
+                // Batch-start retirement: retire completed ephemeral sessions from the
+                // previous batch before inserting any new ones.  Retirement is triggered
+                // by the arrival of new work (next-batch-start), not by the departure of
+                // old work (batch-end), so sub-sessions remain inspectable through the
+                // idle period.
+                let retired = app.lock().unwrap().retire_completed_ephemeral_sessions();
+                for id in retired {
+                    session_senders.remove(&id);
+                }
+
                 // Fresh sub-session: unique ID, ephemeral, custom init.
                 let goal = app.lock().unwrap().goals.iter().find(|g| g.id == fresh.dispatcher_id).cloned();
                 if let Some(dispatcher_goal) = goal {
@@ -994,6 +993,26 @@ fn parse_fresh_dispatches(text: &str, sender_id: &str) -> Vec<(Option<String>, S
     out
 }
 
+/// Scans `text` for opening `<@{base_id}|label>` tags (one per line) and
+/// returns the label list in document order.  Unlike `parse_fresh_dispatches`,
+/// this does NOT require the closing tag to be present — it is used during
+/// streaming to detect dispatches as early as possible so the TUI can show
+/// them before the turn completes.
+fn scan_opening_tags(text: &str, base_id: &str) -> Vec<Option<String>> {
+    let open_prefix = format!("<@{}|", base_id);
+    let mut labels = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix(open_prefix.as_str())
+            && let Some(label_end) = rest.find('>')
+        {
+            let label_str = &rest[..label_end];
+            labels.push(if label_str.is_empty() { None } else { Some(label_str.to_string()) });
+        }
+    }
+    labels
+}
+
 /// Deliver peer consultations collected from a completed agent reply.
 /// Routes to the session registry for known agents; triggers lazy spawn via
 /// `goal_spawn_tx` for goal IDs not yet in the registry.
@@ -1009,8 +1028,8 @@ fn dispatch_peer_consultations(
 ) {
     for (recipient, msg) in consultations {
         let formatted = format!(
-            "[from {}] {}\n\nReply by sending a @{} message.",
-            sender, msg, sender
+            "[from {}] {}\n\nIf you complete work based on this message: once you are done with this, reply via <@{}>...</@{}>.",
+            sender, msg, sender, sender
         );
         let sys = format!("<@{}> → <@{}>: {}", sender, recipient, msg);
         app.push_system_message(&sys);
@@ -1078,7 +1097,39 @@ fn handle_session_event(
             if goal_id != "tend" || app.user_has_interacted {
                 app.append_agent_message(&goal_id, &text);
             }
-            app.current_session_text.entry(goal_id).or_default().push_str(&text);
+            // Use clone so goal_id remains usable after the entry borrow ends.
+            app.current_session_text.entry(goal_id.clone()).or_default().push_str(&text);
+            // Pre-announce ephemeral sub-sessions as soon as their opening tag
+            // appears in the stream.  The full task body is unavailable until
+            // Done; spawning still happens there.  If a pre-announced entry has
+            // no matching close tag at Done time it is silently removed.
+            // Only non-ephemeral sessions can spawn sub-sessions (depth ≤ 1).
+            if !goal_id.contains('~') {
+                let base_id = goal_id.as_str();
+                let accumulated = app.current_session_text
+                    .get(&goal_id)
+                    .cloned()
+                    .unwrap_or_default();
+                let all_opens = scan_opening_tags(&accumulated, base_id);
+                let already_announced = app
+                    .pending_fresh_announcements
+                    .get(&goal_id)
+                    .map(|v| v.len())
+                    .unwrap_or(0);
+                for label in all_opens.into_iter().skip(already_announced) {
+                    app.fresh_session_counter += 1;
+                    let counter = app.fresh_session_counter;
+                    let session_id = format!("{}~{}", base_id, counter);
+                    app.running_sessions.insert(session_id.clone(), None);
+                    app.ephemeral_sessions.insert(session_id.clone());
+                    app.ephemeral_sessions_ordered.push(session_id.clone());
+                    app.goal_list_scroll.last_total = app.flat_items().len();
+                    app.pending_fresh_announcements
+                        .entry(goal_id.clone())
+                        .or_default()
+                        .push((session_id, label));
+                }
+            }
         }
         SessionEvent::Done { goal_id } => {
             app.finalize_agent_message(&goal_id);
@@ -1150,46 +1201,82 @@ fn handle_session_event(
             let consultations = parse_at_commands(&session_text, &known_ids);
             dispatch_peer_consultations(app, &goal_id, &consultations, session_senders, goal_spawn_tx, log);
 
-            // Fresh-dispatch: scan for <@{goal_id}|label> envelopes and spawn
-            // ephemeral sub-sessions for each one found. Uses the base goal_id
-            // (stripping any ~counter suffix for ephemeral sessions) so that a
-            // fresh sub-session's own output is never treated as spawning more
+            // Fresh-dispatch: reconcile pre-announced ephemeral sessions
+            // (registered at Chunk time from opening tags) with the complete
+            // envelopes found in the finished turn text.
+            //
+            // • Pre-announced entry has a matching complete envelope → update
+            //   the running reason and spawn the sub-session using the
+            //   pre-assigned session ID (so the TUI row never flickers).
+            // • More complete envelopes than pre-announcements (e.g. when the
+            //   Done event fires without a preceding Chunk scan) → assign a
+            //   fresh ID and register as normal.
+            // • Pre-announced entry with no matching complete envelope →
+            //   remove it silently (the opening tag appeared but the body or
+            //   closing tag was never emitted).
+            //
+            // Ephemeral sessions (IDs containing '~') cannot spawn further
             // sub-sessions — decomposition is one level deep.
-            let base_id = if let Some(tilde_pos) = goal_id.find('~') {
-                &goal_id[..tilde_pos]
-            } else {
-                goal_id.as_str()
-            };
-            // Fresh-dispatch is disabled for ephemeral sessions only (one level
-            // deep). Interactive sessions (tend / rummage / jog) can spawn fresh
-            // sub-sessions just like any goal agent.
-            let is_ephemeral = goal_id.contains('~');
-            if !is_ephemeral {
+            if !goal_id.contains('~') {
+                let base_id = goal_id.as_str();
                 let fresh_dispatches = parse_fresh_dispatches(&session_text, base_id);
-                for (label, task) in fresh_dispatches {
-                    app.fresh_session_counter += 1;
-                    let counter = app.fresh_session_counter;
-                    let session_id = format!("{}~{}", base_id, counter);
-                    // Mark the ephemeral session as running so the TUI shows it.
+                // Consume the pre-announcement list for this base ID.
+                let pre_announced = app
+                    .pending_fresh_announcements
+                    .remove(&goal_id)
+                    .unwrap_or_default();
+
+                for (idx, (label, task)) in fresh_dispatches.iter().enumerate() {
+                    let session_id = if idx < pre_announced.len() {
+                        // Reuse the pre-assigned ID so the goal-list row is stable.
+                        let (pre_id, _) = &pre_announced[idx];
+                        let first_line = task.lines().next().unwrap_or("").to_string();
+                        app.running_sessions.insert(pre_id.clone(), Some(first_line));
+                        pre_id.clone()
+                    } else {
+                        // No pre-announcement for this envelope — register now.
+                        app.fresh_session_counter += 1;
+                        let counter = app.fresh_session_counter;
+                        let id = format!("{}~{}", base_id, counter);
+                        let first_line = task.lines().next().unwrap_or("").to_string();
+                        app.running_sessions.insert(id.clone(), Some(first_line));
+                        app.ephemeral_sessions.insert(id.clone());
+                        app.ephemeral_sessions_ordered.push(id.clone());
+                        app.goal_list_scroll.last_total = app.flat_items().len();
+                        id
+                    };
                     let first_line = task.lines().next().unwrap_or("").to_string();
-                    app.running_sessions.insert(session_id.clone(), Some(first_line.clone()));
-                    app.ephemeral_sessions.insert(session_id.clone());
-                    app.ephemeral_sessions_ordered.push(session_id.clone());
-                    // Update the scroll total immediately so the new row is within
-                    // the scrollable range in this frame (each list item is one line).
-                    app.goal_list_scroll.last_total = app.flat_items().len();
-                    let sys = format!("<@{}> → fresh sub-session `{}`: {}", goal_id, session_id, first_line);
+                    let sys = format!(
+                        "<@{}> → fresh sub-session `{}`: {}",
+                        goal_id, session_id, first_line
+                    );
                     app.push_system_message(&sys);
-                    log.emit(&goal_id, logger::LogEvent::TinkerSystemMessageReceived { content: sys });
+                    log.emit(
+                        &goal_id,
+                        logger::LogEvent::TinkerSystemMessageReceived { content: sys },
+                    );
                     let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
                         goal_id: base_id.to_string(),
-                        message: task,
+                        message: task.clone(),
                         fresh_session: Some(FreshSessionConfig {
                             session_id,
-                            label,
+                            label: label.clone(),
                             dispatcher_id: base_id.to_string(),
                         }),
                     });
+                }
+
+                // Remove pre-announced sessions that have no matching complete envelope.
+                for (idx, (pre_id, _)) in pre_announced.iter().enumerate() {
+                    if idx >= fresh_dispatches.len() {
+                        app.ephemeral_sessions.remove(pre_id);
+                        app.running_sessions.remove(pre_id);
+                        app.ephemeral_sessions_ordered.retain(|id| id != pre_id);
+                    }
+                }
+                if !pre_announced.is_empty() {
+                    // Re-sync the scroll total after any removals.
+                    app.goal_list_scroll.last_total = app.flat_items().len();
                 }
             }
 
@@ -3341,28 +3428,33 @@ mod tests {
         );
     }
 
-    // spec (fresh-agents): retirement is gated on running_sessions being empty —
-    // a completed ephemeral session is NOT retired while concurrent siblings from
-    // the same batch are still active. Retirement happens at batch-end (idle), not
-    // immediately on Done.
+    // spec (fresh-agents): retirement is triggered at next-batch-start, not at
+    // batch-end.  Completed ephemeral sessions survive the idle period and are
+    // only removed when the next fresh dispatch arrives.  The retirement call
+    // therefore lives inside the fresh-spawn branch (before inserting new
+    // sub-sessions), not in an `running_sessions.is_empty()` idle guard.
     #[test]
     fn test_spec_fresh_agents_retirement_waits_for_batch_end() {
         let main_rs = include_str!("main.rs");
-        // The batch-end guard must be present in the production code.
+        // Retirement must be called inside the fresh-spawn branch.
+        // We identify the branch by the unique marker string that opens it.
+        let fresh_branch_marker = "Batch-start retirement: retire completed ephemeral sessions from the";
         assert!(
-            main_rs.contains("running_sessions.is_empty()"),
-            "retirement must be gated on running_sessions.is_empty() (batch-end check)",
+            main_rs.contains(fresh_branch_marker),
+            "batch-start retirement must be inside the fresh-spawn branch (marker not found)",
         );
-        // The guarded retirement call must come BEFORE the spawn drain loop
-        // (retire before new batch starts), not after the event drain (which
-        // would retire immediately on Done while siblings may still be running).
-        let guard_pos = main_rs.find("running_sessions.is_empty()").unwrap();
-        let spawn_drain_pos = main_rs.find("while let Ok(req) = goal_spawn_rx.try_recv()").unwrap();
+        // The retirement call in the fresh-spawn branch must appear before
+        // the sub-session is inserted into session_senders.
+        let retire_pos = main_rs.find(fresh_branch_marker).unwrap();
+        let insert_pos = main_rs.find("session_senders.insert(fresh.session_id.clone()").unwrap();
         assert!(
-            guard_pos < spawn_drain_pos,
-            "batch-end retirement guard must appear before the spawn drain loop, \
-             not after the event drain (guard pos {guard_pos} must be < spawn drain pos {spawn_drain_pos})",
+            retire_pos < insert_pos,
+            "retirement (pos {retire_pos}) must precede session_senders.insert (pos {insert_pos})",
         );
+        // The old idle-only guard must NOT be the sole retirement trigger.
+        // (running_sessions.is_empty() may still appear in other contexts, but
+        // it must not be the retirement guard — so the fresh-branch marker
+        // is the authoritative check above.)
     }
 
     // spec (fresh-agents): fresh sub-sessions inherit the dispatcher's tier —
@@ -3383,6 +3475,239 @@ mod tests {
         assert!(snippet.contains("oc_goal_high"), "fresh tier match must wire Some(\"high\") to oc_goal_high");
         assert!(snippet.contains("oc_goal_low"),  "fresh tier match must wire Some(\"low\") to oc_goal_low");
         assert!(snippet.contains("oc_goal.clone()"), "fresh tier match must fall back to oc_goal for mid/absent");
+    }
+
+    // spec (tui / fresh-agents): a Chunk event containing an opening tag
+    // `<@goal-id|label>` must pre-register the ephemeral session in
+    // ephemeral_sessions, running_sessions, ephemeral_sessions_ordered, and
+    // update goal_list_scroll.last_total — before the turn completes.
+    #[test]
+    fn test_spec_fresh_agents_chunk_pre_announces_ephemeral_session() {
+        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
+        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+
+        let mut app = App::new();
+        app.goals.push(goal::Goal {
+            id: "my-goal".into(),
+            summary: String::new(),
+            description: "the goal".into(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        });
+        // Simulate a prior render so last_total has a baseline.
+        app.goal_list_scroll.record_render(1, 8);
+
+        // Fire a Chunk event with only the opening tag (no closing tag yet).
+        handle_session_event(
+            &mut app,
+            SessionEvent::Chunk {
+                goal_id: "my-goal".into(),
+                text: "<@my-goal|work>\n".into(),
+            },
+            &spawn_tx,
+            &senders,
+            &crate::realfs::RealFilesystem,
+            &logger::noop_sender(),
+        );
+
+        // A sub-session must have been pre-announced immediately.
+        assert_eq!(
+            app.ephemeral_sessions.len(), 1,
+            "one ephemeral session must be pre-announced on the opening tag",
+        );
+        let pre_id = app.ephemeral_sessions_ordered.first().expect("ordered list must contain the pre-announced entry").clone();
+        assert!(pre_id.starts_with("my-goal~"), "pre-announced ID must use the parent~ prefix");
+        assert!(
+            app.running_sessions.contains_key(&pre_id),
+            "pre-announced session must appear in running_sessions",
+        );
+        assert_eq!(
+            app.goal_list_scroll.last_total, 2,
+            "last_total must reflect the new goal-list row immediately",
+        );
+        // No spawn request yet — the task body arrives at Done time.
+        assert!(
+            spawn_rx.try_recv().is_err(),
+            "spawn request must NOT be enqueued at Chunk time — only at Done time",
+        );
+        // The pending map must track the pre-announced entry.
+        let pending = app.pending_fresh_announcements.get("my-goal").expect("pending_fresh_announcements must track my-goal");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].1, Some("work".to_string()), "label must be captured");
+    }
+
+    // spec (tui / fresh-agents): an opening tag seen during streaming that
+    // has no matching closing tag by turn-end must be removed from the goal
+    // list (not left as a dangling phantom entry).
+    #[test]
+    fn test_spec_fresh_agents_incomplete_envelope_removed_at_done() {
+        use crate::test_utils::MockFs;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
+        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+
+        let fs = Arc::new(MockFs::new());
+        let tinker_dir = PathBuf::from("/.tinker");
+        let goals_dir = tinker_dir.join("goals");
+        fs.add_dir(&goals_dir);
+        let goal_path = goals_dir.join("my-goal.toml");
+        fs.add_file(
+            &goal_path,
+            "id = \"my-goal\"\nsummary = \"\"\ndescription = \"desc\"\nparent_id = \"\"\n",
+        );
+
+        let mut app = App::new();
+        app.tinker_dirs = vec![tinker_dir];
+        app.goals.push(goal::Goal {
+            id: "my-goal".into(),
+            summary: String::new(),
+            description: "desc".into(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: Some(goal_path),
+        });
+
+        // Opening tag appears in a Chunk — session is pre-announced.
+        handle_session_event(
+            &mut app,
+            SessionEvent::Chunk {
+                goal_id: "my-goal".into(),
+                text: "<@my-goal|orphan>\n".into(),
+            },
+            &spawn_tx,
+            &senders,
+            &*fs,
+            &logger::noop_sender(),
+        );
+        let pre_id = app.ephemeral_sessions_ordered.first().cloned().expect("session must be pre-announced");
+        assert!(app.ephemeral_sessions.contains(&pre_id), "pre-announced session must be in ephemeral_sessions");
+
+        // Turn ends without a closing tag — no complete envelope in session text.
+        // (current_session_text already has the opening tag from the Chunk above;
+        //  Done processes whatever is accumulated — no closing tag → no complete envelope.)
+        handle_session_event(
+            &mut app,
+            SessionEvent::Done { goal_id: "my-goal".into() },
+            &spawn_tx,
+            &senders,
+            &*fs,
+            &logger::noop_sender(),
+        );
+
+        // The phantom entry must have been removed.
+        assert!(
+            !app.ephemeral_sessions.contains(&pre_id),
+            "pre-announced session with no complete envelope must be removed at Done time",
+        );
+        assert!(
+            !app.ephemeral_sessions_ordered.contains(&pre_id),
+            "pre-announced session must also be removed from ephemeral_sessions_ordered",
+        );
+        assert!(
+            !app.running_sessions.contains_key(&pre_id),
+            "pre-announced session must be removed from running_sessions",
+        );
+        // No spawn request must have been enqueued.
+        let maybe_fresh = spawn_rx.try_recv().ok().filter(|r| r.fresh_session.is_some());
+        assert!(
+            maybe_fresh.is_none(),
+            "no spawn request must be enqueued for an incomplete envelope",
+        );
+    }
+
+    // spec (tui / fresh-agents): when Chunk pre-announces a session and Done
+    // finds the matching complete envelope, the spawn request must reuse the
+    // pre-announced session ID (no counter bump, no flicker).
+    #[test]
+    fn test_spec_fresh_agents_done_reuses_pre_announced_session_id() {
+        use crate::test_utils::MockFs;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
+        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+
+        let fs = Arc::new(MockFs::new());
+        let tinker_dir = PathBuf::from("/.tinker");
+        let goals_dir = tinker_dir.join("goals");
+        fs.add_dir(&goals_dir);
+        let goal_path = goals_dir.join("my-goal.toml");
+        fs.add_file(
+            &goal_path,
+            "id = \"my-goal\"\nsummary = \"\"\ndescription = \"desc\"\nparent_id = \"\"\n",
+        );
+
+        let mut app = App::new();
+        app.tinker_dirs = vec![tinker_dir];
+        app.goals.push(goal::Goal {
+            id: "my-goal".into(),
+            summary: String::new(),
+            description: "desc".into(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: Some(goal_path),
+        });
+
+        // Opening tag appears during streaming — session pre-announced as my-goal~1.
+        handle_session_event(
+            &mut app,
+            SessionEvent::Chunk {
+                goal_id: "my-goal".into(),
+                text: "<@my-goal|label>\n".into(),
+            },
+            &spawn_tx,
+            &senders,
+            &*fs,
+            &logger::noop_sender(),
+        );
+        let pre_id = app.ephemeral_sessions_ordered.first().cloned().expect("pre-announced session must exist");
+
+        // The rest of the output arrives — closing tag present in the full turn text.
+        handle_session_event(
+            &mut app,
+            SessionEvent::Chunk {
+                goal_id: "my-goal".into(),
+                text: "do the work\n</@my-goal|label>\n".into(),
+            },
+            &spawn_tx,
+            &senders,
+            &*fs,
+            &logger::noop_sender(),
+        );
+
+        // Done fires — must reuse the pre-announced ID.
+        handle_session_event(
+            &mut app,
+            SessionEvent::Done { goal_id: "my-goal".into() },
+            &spawn_tx,
+            &senders,
+            &*fs,
+            &logger::noop_sender(),
+        );
+
+        let req = spawn_rx.try_recv().expect("spawn request must be enqueued at Done time");
+        let fresh = req.fresh_session.expect("spawn request must carry fresh_session config");
+        assert_eq!(
+            fresh.session_id, pre_id,
+            "Done must reuse the pre-announced session ID, not mint a new one",
+        );
+        assert_eq!(fresh.label, Some("label".to_string()), "label must be preserved");
+        assert!(
+            app.ephemeral_sessions.contains(&pre_id),
+            "session must remain in ephemeral_sessions after Done spawns it",
+        );
     }
 
     // spec (tier-edit): when the tier is changed and the goal has a running session,

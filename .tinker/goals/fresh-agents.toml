@@ -27,7 +27,7 @@ reason = "fresh sub-sessions run in the shared main working directory alongside 
 
 [[related]]
 id = "tui"
-reason = "tui governs fresh sub-session display: nested layout under the dispatcher in the goals list, log access via selection, and label normalization so the dispatcher name represents all its sub-sessions in the pane header."
+reason = "tui governs fresh sub-session display: nested layout under the dispatcher in the goals list, appearance at dispatch time rather than at turn completion, log access via selection, and label normalization so the dispatcher name represents all its sub-sessions in the pane header."
 
 [[related]]
 id = "coding-standards"
