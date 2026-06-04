@@ -997,7 +997,8 @@ fn parse_fresh_dispatches(text: &str, sender_id: &str) -> Vec<(Option<String>, S
 /// Deliver peer consultations collected from a completed agent reply.
 /// Routes to the session registry for known agents; triggers lazy spawn via
 /// `goal_spawn_tx` for goal IDs not yet in the registry.
-/// All non-interactive goal agents are dispatched unconditionally in parallel.
+/// All dispatched recipients are tracked in running_sessions so the batch-end
+/// retirement check correctly waits for every pending delivery to be processed.
 fn dispatch_peer_consultations(
     app: &mut App,
     sender: &str,
@@ -1014,8 +1015,14 @@ fn dispatch_peer_consultations(
         let sys = format!("<@{}> → <@{}>: {}", sender, recipient, msg);
         app.push_system_message(&sys);
         log.emit(sender, logger::LogEvent::TinkerSystemMessageReceived { content: sys });
-        let is_goal_agent = !matches!(recipient.as_str(), "tend" | "rummage" | "jog")
-            && app.goals.iter().any(|g| &g.id == recipient);
+        // Track ALL recipients in running_sessions — including interactive agents
+        // (tend / rummage / jog) — so the batch-end retirement check sees any
+        // session with a pending delivery as still active. Without this, a
+        // completed sub-session that has replied to tend creates a window where
+        // running_sessions is empty before tend begins processing the reply,
+        // causing premature retirement of ephemeral sessions.
+        let should_track = app.goals.iter().any(|g| &g.id == recipient)
+            || matches!(recipient.as_str(), "tend" | "rummage" | "jog");
 
         if let Some(tx) = session_senders.get(recipient) {
             let _ = tx.try_send(formatted);
@@ -1026,7 +1033,7 @@ fn dispatch_peer_consultations(
                 fresh_session: None,
             });
         }
-        if is_goal_agent {
+        if should_track {
             let reason = msg.lines().next().unwrap_or("").to_string();
             app.running_sessions.entry(recipient.clone()).or_insert(Some(reason));
         }
@@ -1153,11 +1160,11 @@ fn handle_session_event(
             } else {
                 goal_id.as_str()
             };
-            // Only goal agents can spawn fresh sub-sessions; skip for interactive
-            // built-ins (tend / rummage / jog) and for ephemeral sessions themselves.
+            // Fresh-dispatch is disabled for ephemeral sessions only (one level
+            // deep). Interactive sessions (tend / rummage / jog) can spawn fresh
+            // sub-sessions just like any goal agent.
             let is_ephemeral = goal_id.contains('~');
-            let is_interactive = matches!(goal_id.as_str(), "tend" | "rummage" | "jog");
-            if !is_ephemeral && !is_interactive {
+            if !is_ephemeral {
                 let fresh_dispatches = parse_fresh_dispatches(&session_text, base_id);
                 for (label, task) in fresh_dispatches {
                     app.fresh_session_counter += 1;
@@ -2775,19 +2782,20 @@ mod tests {
         );
     }
 
-    // spec (tui — queue visibility): @-dispatching to interactive chat agents
-    // (tend, rummage, jog) must NOT add them to running_sessions via the dispatch
-    // path. The ▶ marker appears only when a Chunk event arrives — i.e. the agent
-    // is actively generating a response — not merely because a message was routed.
+    // spec (fresh-agents — batch retirement): @-dispatching to interactive chat
+    // agents (tend, rummage, jog) MUST add them to running_sessions via the
+    // dispatch path. This ensures the batch-end retirement check sees a pending
+    // delivery as still-active work and does not retire ephemeral sub-sessions
+    // before the interactive agent has processed its incoming reply.
     #[test]
-    fn test_spec_at_dispatch_skips_interactive_agents_in_running_sessions() {
+    fn test_spec_at_dispatch_tracks_interactive_agents_in_running_sessions() {
         let (msg_tx, _msg_rx) = mpsc::channel::<String>(8);
         let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
         let (senders, _, _) = make_test_session_senders(&msg_tx);
 
         let mut app = App::new();
-        // Add rummage as a goal (it has a goal file) to ensure the goal-existence
-        // check alone is not sufficient to skip it.
+        // Add rummage as a goal (it has a goal file) to match the production
+        // scenario where rummage has a TOML file.
         app.goals.push(goal::Goal {
             id: "rummage".into(),
             summary: String::new(),
@@ -2810,16 +2818,16 @@ mod tests {
         );
 
         assert!(
-            !app.running_sessions.contains_key("tend"),
-            "tend must not appear in running_sessions when dispatched via @",
+            app.running_sessions.contains_key("tend"),
+            "tend must appear in running_sessions when dispatched via @ (pending delivery)",
         );
         assert!(
-            !app.running_sessions.contains_key("rummage"),
-            "rummage must not appear in running_sessions when dispatched via @",
+            app.running_sessions.contains_key("rummage"),
+            "rummage must appear in running_sessions when dispatched via @ (pending delivery)",
         );
         assert!(
-            !app.running_sessions.contains_key("jog"),
-            "jog must not appear in running_sessions when dispatched via @",
+            app.running_sessions.contains_key("jog"),
+            "jog must appear in running_sessions when dispatched via @ (pending delivery)",
         );
     }
 
@@ -3186,10 +3194,11 @@ mod tests {
         assert!(maybe_fresh.is_none(), "ephemeral session must not spawn further fresh sub-sessions");
     }
 
-    // spec (fresh-agents): fresh dispatch is NOT triggered for interactive
-    // sessions (tend / rummage / jog).
+    // spec (fresh-agents): interactive sessions (tend / rummage / jog) CAN spawn
+    // fresh sub-sessions. The is_interactive exclusion has been removed; the only
+    // remaining guard is the ephemeral-depth limit (sessions with '~' in their ID).
     #[test]
-    fn test_spec_fresh_agents_interactive_agents_cannot_fresh_dispatch() {
+    fn test_spec_fresh_agents_interactive_agents_can_fresh_dispatch() {
         for agent_id in &["tend", "rummage", "jog"] {
             let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
             let (msg_tx, _) = mpsc::channel::<String>(1);
@@ -3214,8 +3223,8 @@ mod tests {
             let maybe_fresh = spawn_rx.try_recv().ok()
                 .filter(|r| r.fresh_session.is_some());
             assert!(
-                maybe_fresh.is_none(),
-                "{agent_id} must not trigger fresh dispatch (interactive session)",
+                maybe_fresh.is_some(),
+                "{agent_id} must trigger fresh dispatch (interactive sessions can now spawn sub-sessions)",
             );
         }
     }
