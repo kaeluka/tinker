@@ -58,40 +58,23 @@ struct RawErrorData {
 
 /// Real `OpenCodeRunner` impl bound to a specific opencode model id.
 /// Construct one per role (tinker vs goal session) at the composition root.
+/// All sessions run under opencode's default agent; persona/behaviour is
+/// delivered via the session init message, not an `--agent` profile.
 pub struct RealOpenCodeRunner {
     /// When `None`, the `-m` flag is omitted and opencode uses its configured default.
     pub model: Option<String>,
-    /// Optional opencode agent profile name (e.g. "tinker").
-    /// When set, `--agent <name>` is passed to the opencode CLI.
-    pub agent: Option<String>,
 }
 
 impl RealOpenCodeRunner {
     pub fn new(model: impl Into<String>) -> Self {
         Self {
             model: Some(model.into()),
-            agent: None,
         }
     }
 
     pub fn new_default() -> Self {
         Self {
             model: None,
-            agent: None,
-        }
-    }
-
-    pub fn with_agent(model: impl Into<String>, agent: impl Into<String>) -> Self {
-        Self {
-            model: Some(model.into()),
-            agent: Some(agent.into()),
-        }
-    }
-
-    pub fn default_with_agent(agent: impl Into<String>) -> Self {
-        Self {
-            model: None,
-            agent: Some(agent.into()),
         }
     }
 }
@@ -106,7 +89,7 @@ impl OpenCodeRunner for RealOpenCodeRunner {
         mut on_session_id: Chunk,
         mut on_chunk: Chunk,
     ) -> Result<String> {
-        let mut cmd = opencode_command(self.model.as_deref(), self.agent.as_deref(), session_id, work_dir);
+        let mut cmd = opencode_command(self.model.as_deref(), session_id, work_dir);
 
         let mut child = cmd.spawn()?;
         if let Some(mut stdin) = child.stdin.take() {
@@ -192,7 +175,7 @@ impl OpenCodeRunner for RealOpenCodeRunner {
                     status.code().unwrap_or(-1),
                     stderr_text.trim()
                 );
-                let mut follow_cmd = opencode_command(self.model.as_deref(), self.agent.as_deref(), Some(sid), work_dir);
+                let mut follow_cmd = opencode_command(self.model.as_deref(), Some(sid), work_dir);
                 if let Ok(mut follow_child) = follow_cmd.spawn() {
                     if let Some(mut stdin) = follow_child.stdin.take() {
                         let _ = stdin.write_all(error_msg.as_bytes()).await;
@@ -322,12 +305,11 @@ fn short_tool_summary(tool: &str, input: &serde_json::Value) -> String {
 /// Pure function extracted for testability.
 pub fn opencode_command(
     model: Option<&str>,
-    agent: Option<&str>,
     session_id: Option<&str>,
     work_dir: &Path,
 ) -> Command {
     let mut cmd = Command::new("opencode");
-    cmd.args(opencode_args(model, agent, session_id));
+    cmd.args(opencode_args(model, session_id));
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -337,7 +319,7 @@ pub fn opencode_command(
 
 /// Build the argv tinker passes to `opencode run`. Pure function so the
 /// security test can verify what flags we pass without spawning a subprocess.
-pub fn opencode_args(model: Option<&str>, agent: Option<&str>, session_id: Option<&str>) -> Vec<String> {
+pub fn opencode_args(model: Option<&str>, session_id: Option<&str>) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "run".into(),
         "--format".into(),
@@ -346,10 +328,6 @@ pub fn opencode_args(model: Option<&str>, agent: Option<&str>, session_id: Optio
     if let Some(m) = model {
         args.push("-m".into());
         args.push(m.into());
-    }
-    if let Some(a) = agent {
-        args.push("--agent".into());
-        args.push(a.into());
     }
     if let Some(id) = session_id {
         args.push("-s".into());
@@ -374,7 +352,7 @@ mod tests {
 
     #[test]
     fn test_security_t4_args_includes_model_and_session() {
-        let args = opencode_args(Some("openrouter/foo/bar"), None, Some("ses_abc"));
+        let args = opencode_args(Some("openrouter/foo/bar"), Some("ses_abc"));
         assert!(args.iter().any(|a| a == "run"));
         assert!(args.iter().any(|a| a == "-m"));
         assert!(args.iter().any(|a| a == "openrouter/foo/bar"));
@@ -384,26 +362,21 @@ mod tests {
 
     #[test]
     fn test_security_t4_args_no_session_when_none() {
-        let args = opencode_args(Some("m"), None, None);
+        let args = opencode_args(Some("m"), None);
         assert!(!args.iter().any(|a| a == "-s"));
     }
 
+    // spec (backends): all sessions run under opencode's default agent — the
+    // --agent flag is never passed (no agent-file profile machinery).
     #[test]
-    fn test_spec_agent_flag_passed_when_set() {
-        let args = opencode_args(Some("m"), Some("tinker"), None);
-        assert!(args.iter().any(|a| a == "--agent"));
-        assert!(args.iter().any(|a| a == "tinker"));
-    }
-
-    #[test]
-    fn test_spec_agent_flag_omitted_when_none() {
-        let args = opencode_args(Some("m"), None, None);
-        assert!(!args.iter().any(|a| a == "--agent"));
+    fn test_spec_agent_flag_never_passed() {
+        let args = opencode_args(Some("m"), Some("ses_x"));
+        assert!(!args.iter().any(|a| a == "--agent"), "must never pass --agent");
     }
 
     #[test]
     fn test_default_model_omits_m_flag() {
-        let args = opencode_args(None, None, Some("ses_x"));
+        let args = opencode_args(None, Some("ses_x"));
         assert!(!args.iter().any(|a| a == "-m"), "must not pass -m when model is None");
         assert!(args.iter().any(|a| a == "-s"));
         assert!(args.iter().any(|a| a == "ses_x"));
@@ -479,7 +452,7 @@ mod tests {
     #[test]
     fn test_security_t5_stderr_is_captured() {
         use std::ffi::OsStr;
-        let cmd = opencode_command(Some("t5-model"), None, None, Path::new("/tmp"));
+        let cmd = opencode_command(Some("t5-model"), None, Path::new("/tmp"));
         let args: Vec<&OsStr> = cmd.as_std().get_args().collect();
         assert!(args.contains(&OsStr::new("run")), "must use `opencode run`");
         assert!(args.contains(&OsStr::new("--format")), "must request json format");

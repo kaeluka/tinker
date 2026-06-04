@@ -33,34 +33,16 @@ use std::{io, path::PathBuf, sync::{Arc, Mutex}, time::Duration};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
-/// Frontmatter for goal-agent sessions (written to `tinker.md`).
-/// Declares the agent profile that `--agent tinker` selects. No path-scoped
-/// permission rules — file-access boundaries are conveyed via the prompt.
-const GOAL_AGENT_FRONTMATTER: &str =
-    "---\ndescription: >-\n  Tinker agent.\nmode: primary\n---\n";
-
-/// Frontmatter for the tend agent (written to `tend.md`).
-/// Declares the agent profile that `--agent tend` selects. No path-scoped
-/// permission rules — file-access boundaries are conveyed via the prompt.
-const TEND_FRONTMATTER: &str =
-    "---\ndescription: >-\n  Tinker agent.\nmode: primary\n---\n";
-
 fn packaged_tend_goal() -> Goal {
     const TOML: &str = include_str!("../packaged-goals/tend.toml");
     toml::from_str(TOML).expect("packaged tend.toml must be valid Goal TOML")
 }
 
-/// Assembles the full tend.md content written at startup: tend frontmatter
-/// (with path-scoped permission rules) followed by the tend goal description.
-fn tend_agent_content() -> String {
-    format!("{}{}", TEND_FRONTMATTER, packaged_tend_goal().description)
-}
-
 /// System prompt for tend when running under the claude backend.
 /// Leads with the file-scope boundary so it arrives as a system-level constraint,
-/// not a buried instruction in a user-turn message. The claude backend has no
-/// equivalent to opencode's path-scoped `permission:` block in tend.md; this is
-/// the closest available substitute.
+/// not a buried instruction in a user-turn message. tend's behaviour is governed
+/// by the tend goal description (appended below); the file-scope line is the
+/// prompt-level boundary that stands in for harness enforcement.
 fn tend_system_prompt() -> String {
     format!(
         "Read and write files ONLY under .tinker/goals/ — nothing outside that path. \
@@ -72,8 +54,8 @@ fn tend_system_prompt() -> String {
 
 /// System prompt for claude goal agents. Contains the session-invariant
 /// framework preamble so it persists across session turns without repeating
-/// in every per-dispatch init message. Mirrors the opencode `tinker.md` /
-/// per-dispatch split.
+/// in every per-dispatch init message. On the opencode backend the same
+/// preamble rides in the session init message instead.
 fn goal_agent_system_prompt() -> String {
     goal_session::goal_agent_framework_preamble()
 }
@@ -344,7 +326,7 @@ async fn main() -> Result<()> {
         )
     } else if use_default_model {
         (
-            Arc::new(RealOpenCodeRunner::default_with_agent("tinker")),
+            Arc::new(RealOpenCodeRunner::new_default()),
             Arc::new(RealOpenCodeRunner::new_default()),
             Arc::new(RealOpenCodeRunner::new_default()),
             Arc::new(RealOpenCodeRunner::new_default()),
@@ -354,7 +336,7 @@ async fn main() -> Result<()> {
         let goal_m = model_config.opencode_mid(OPENCODE_GOAL_MODEL);
         let cleanup_m = model_config.opencode_low(OPENCODE_SCHEDULER_MODEL);
         (
-            Arc::new(RealOpenCodeRunner::with_agent(tinker_m, "tinker")),
+            Arc::new(RealOpenCodeRunner::new(tinker_m)),
             Arc::new(RealOpenCodeRunner::new(goal_m)),
             Arc::new(RealOpenCodeRunner::new(cleanup_m)),
             Arc::new(RealOpenCodeRunner::new(cleanup_m)),
@@ -366,23 +348,6 @@ async fn main() -> Result<()> {
         primary_tinker_dir.join("logs").join("runtime.jsonl"),
         primary_tinker_dir.join("state").join("runtime.json"),
     );
-
-    // Write agent files at startup (always overwrite). Skip for Claude backend —
-    // persona arrives via --system-prompt there, not agent files.
-    // tinker.md: the profile selected by `--agent tinker` for goal-agent sessions.
-    // tend.md: the profile selected for the tend session (its goal description is
-    // appended as the agent body). Neither carries path-scoped permission rules —
-    // opencode's system defaults auto-approve tool calls and file-access boundaries
-    // are conveyed via the prompt, not the harness.
-    if !use_claude {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("~"));
-        let agent_dir = home.join(".config/opencode/agents");
-        let _ = fs.mkdir_all(&agent_dir);
-        let _ = fs.write(&agent_dir.join("tinker.md"), GOAL_AGENT_FRONTMATTER);
-        let _ = fs.write(&agent_dir.join("tend.md"), &tend_agent_content());
-    }
 
     // Discover all .tinker dirs from cwd up. Nearest first.
     let tinker_dirs = discover_tinker_dirs(fs.as_ref(), &work_dir);
@@ -2202,25 +2167,17 @@ mod tests {
     }
 
     #[test]
-    fn test_spec_tinker_agent_file_frontmatter_is_primary_mode() {
-        let content = tend_agent_content();
-        assert!(content.starts_with("---\n"), "agent file must begin with YAML frontmatter delimiter");
-        assert!(content.contains("mode: primary"), "agent must be declared mode: primary");
-    }
-
-    #[test]
     fn test_spec_tinker_static_persona_in_agent_dynamic_goals_in_init() {
-        let content = tend_agent_content();
-        assert!(content.starts_with("---\n"), "agent file must begin with YAML frontmatter");
+        let content = packaged_tend_goal().description;
         let init = tend_init_prompt("- demo-goal-id: a demo description", "");
         assert!(init.contains("Current goals"), "init prompt must label the dynamic goals section");
         assert!(init.contains("demo-goal-id"), "init prompt must carry the dynamic goals summary verbatim");
-        assert!(!content.contains("demo-goal-id"), "agent file must not embed dynamic goal ids");
+        assert!(!content.contains("demo-goal-id"), "static tend persona must not embed dynamic goal ids");
     }
 
     #[test]
     fn test_spec_tinker_proves_by_execution_not_reading_source() {
-        let content = tend_agent_content();
+        let content = packaged_tend_goal().description;
         assert!(content.contains("code-reality questions to @rummage") || content.contains("delegates aggressively"),
             "tend prompt must require delegating code-reality questions to rummage rather than reading source directly");
     }
@@ -2282,14 +2239,14 @@ mod tests {
 
     #[test]
     fn test_spec_shared_language_form_norm_minimum_viable_shape() {
-        let content = tend_agent_content();
+        let content = packaged_tend_goal().description;
         assert!(content.contains("One question per turn") || content.contains("one question per turn"),
             "prompt must enforce one-question-per-turn");
     }
 
     #[test]
     fn test_spec_tinker_encodes_dual_duty_no_fabrication_at_inflection_points() {
-        let content = tend_agent_content();
+        let content = packaged_tend_goal().description;
         assert!(content.contains("Phase 1") || content.contains("Phase 2") || content.contains("Phase 3"),
             "prompt must describe interview phases");
         assert!(content.contains("genuinely doesn't know") || content.contains("user names it") || content.contains("investigative, not leading"),
@@ -2310,14 +2267,6 @@ mod tests {
             "main.rs must create the .tinker/state directory at startup");
     }
 
-    #[test]
-    fn test_spec_agent_file_always_overwritten_not_guarded_by_exists_check() {
-        let main_rs = include_str!("main.rs");
-        // Split to avoid this test's own source appearing in the scan.
-        let guard: String = ["if !agent_path", ".exists()"].concat();
-        assert!(!main_rs.contains(&guard),
-            "main.rs must not guard the agent-file write behind an existence check");
-    }
 
     #[test]
     fn test_spec_main_feeds_parent_id_and_children_into_goals_summary() {
@@ -2354,7 +2303,7 @@ mod tests {
 
     #[test]
     fn test_spec_tinker_prompt_parent_summary_recheck_when_child_edited() {
-        let content = tend_agent_content();
+        let content = packaged_tend_goal().description;
         assert!(content.contains("Re-check parent summary"), "prompt must include a 'Re-check parent summary' step");
     }
 
@@ -2363,7 +2312,7 @@ mod tests {
         // tend's write procedure defers the symmetry rule to goal-structure-standard
         // (read fresh) rather than restating it; the guardrail is that the prompt
         // still mandates re-validating every edge, symmetry included.
-        let content = tend_agent_content();
+        let content = packaged_tend_goal().description;
         assert!(
             content.contains("Re-validate all edges") && content.contains("symmetry"),
             "prompt must include an edge re-validation step covering related-link symmetry",

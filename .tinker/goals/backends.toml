@@ -1,6 +1,6 @@
 id = "backends"
 kind = "feature"
-summary = "This goal owns the pluggable LLM backend abstraction — the runner trait wired at the composition root and its two implementations (opencode default with persona agent files, and claude via --system-prompt and streaming JSON), including per-backend model-tier defaults, the claude high-tier pin to claude-opus-4-8, persona delivery, and re-injection of CLI error output into the session."
+summary = "This goal owns the pluggable LLM backend abstraction — the runner trait wired at the composition root and its two implementations (opencode running under its default agent with persona delivered in the session init message, and claude via --system-prompt and streaming JSON), including per-backend model-tier defaults, the claude high-tier pin to claude-opus-4-8, persona delivery, and re-injection of CLI error output into the session."
 description = """
 ## WHAT
 Tinker runs against a **pluggable backend** — the LLM CLI it shells
@@ -13,13 +13,12 @@ on the trait, not on any vendor's CLI.
 Each backend maps tinker's roles to its own models and delivers agent
 personas its own way:
 
-- **opencode** (default): runs its own configured model defaults. At
-  startup writes two agent files to `~/.config/opencode/agents/`,
-  always overwriting so the installed copies stay in sync. `tend.md`
-  carries generic frontmatter plus the full tend description; `tinker.md`
-  carries generic frontmatter for the goal-agent sessions. Neither file
-  carries a path-scoped `permission:` block — file-access boundaries are
-  conveyed via the prompt, not enforced at the backend level.
+- **opencode** (default): runs its own configured model defaults under
+  opencode's default agent — no `--agent` profile is selected and no
+  agent files are written. Every session's persona, tend included, is
+  delivered in the session init message (the goal description), not via
+  an agent file or a `permission:` block. File-access boundaries are
+  conveyed through the prompt, not enforced at the backend level.
 
 - **claude** (`--claude`): maps roles to `claude-opus-4-8` (tend, high
   tier) and `sonnet` (goal sessions, mid tier); the high tier uses a
@@ -35,13 +34,14 @@ personas its own way:
   framework preamble (message passing protocol, progress guarantee,
   rules, neighbor consultation mandate). Per-session content arrives in
   the init message: for goal agents, the goal spec, trigger reason, and
-  neighbor table. This mirrors the opencode split between the stable
-  agent file (`tinker.md`) and the per-dispatch trigger.
+  neighbor table. On opencode there is no agent file: the same
+  session-invariant preamble and the per-dispatch content both ride in
+  the session init message.
 
   **No harness-level path enforcement on either backend today.**
-  opencode's agent files carry no `permission:` block and the claude
-  runner passes no tool-denial flags, so neither backend mechanically
-  restricts file access. Both tend and goal agents rely on prompt-level
+  opencode writes no agent files and passes no `permission:` rules, and
+  the claude runner passes no tool-denial flags, so neither backend
+  mechanically restricts file access. Both tend and goal agents rely on prompt-level
   compliance with the file-access boundaries their personas state;
   mechanical guardrails are slated to be reintroduced through the
   prompts.
