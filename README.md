@@ -5,6 +5,19 @@ Features are in heavy flux. This is a design study; work is actively ongoing.
 
 ---
 
+## The model
+
+Every goal in tinker is a running agent. Each goal owns a piece of the
+spec and the code that implements it; when work begins, the goal session
+activates, reads its own spec, and writes directly to its files. Goals
+communicate by dispatching `@goal-id` messages to each other —
+consulting peers, reporting findings, delegating checks — without any
+central coordinator. This is what separates tinker from a conventional
+coding assistant: the specification is not a passive document but a live
+network of agents that enforce their own constraints.
+
+---
+
 You tell an AI what to build. The AI writes code. Now your codebase has two
 kinds of content mixed together: the things you actually wanted, and the
 things the AI guessed on its own. Over time you cannot tell them apart.

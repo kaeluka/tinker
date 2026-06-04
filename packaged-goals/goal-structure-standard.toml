@@ -127,7 +127,7 @@ reason = "no-peek relies on the symmetry and reason-accuracy this goal enforces 
 
 [[related]]
 id = "tend"
-reason = "This goal owns the `summary` field form (one natural-language sentence, kind-flavored, rewritten on every edit), the `kind` field, and the structural rules. Tend's write procedure authors the summary and classifies the kind by deferring here, holding no copy of the rule. This goal defines the form; tend executes it."
+reason = "This goal owns the `summary` field form (one natural-language sentence, kind-flavored, rewritten on every edit), the `kind` field, and the structural rules. Tend dispatches to this goal before writing (draft review) and after writing (edge re-validation), running both checks in a fresh session. This goal defines the form; tend executes it via dispatch."
 
 [[related]]
 id = "goal-complementarity"

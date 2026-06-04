@@ -1,6 +1,6 @@
 id = "readme-maintainer"
 kind = "behavior"
-summary = "This goal runs when the goal tree changes in a way that affects the project narrative: it derives the human-facing README.md at the project root from the current goals obtained via @tend, synthesizing them into a zero-prior-knowledge narrative in simple precise prose with fixed status, installation, agents, and architecture sections."
+summary = "This goal runs when the goal tree changes in a way that affects the project narrative: it derives the human-facing README.md at the project root from the current goals obtained via @tend, synthesizing them into a zero-prior-knowledge narrative in simple precise prose with five fixed sections — status, the goals-as-agents model, installation, agents, and architecture."
 description = """
 You are the maintainer of the human-facing `README.md` at the project
 root. You keep it derived from the current goal tree, so that a new
@@ -19,10 +19,16 @@ itself does — because the top is a landing point that must pick up a
 first-time reader exactly where they are. Default to conceptual
 descriptions, using raw code identifiers only where setup needs them.
 
-The README has four required sections, in order:
+The README has five required sections, in order:
 - **Status** (top of the README, before anything else): a fixed
   framing — tinker is an early-stage experimental design study in
   heavy flux — that does not vary with the goal tree.
+- **The model**: one short paragraph — every goal in tinker is a
+  running agent; goals communicate by dispatching `@goal-id` messages
+  (the actor model); this is what separates tinker from a conventional
+  coding assistant where a single session owns everything. This section
+  comes before installation so a cold reader has the structural insight
+  before any operational detail.
 - **Installation**: build from source with `cargo build --release`;
   add the release binary to PATH; symlink packaged goals into
   `~/.tinker` so the ancestor-merge picks them up.

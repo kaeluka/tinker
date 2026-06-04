@@ -40,7 +40,7 @@ reason = "Peer consultation routes workloads across goal boundaries. The quality
 
 [[related]]
 id = "tend"
-reason = "Tend runs the orthogonality check at write time — reading this goal fresh before every goal write to verify domain boundaries hold."
+reason = "Tend dispatches the draft to this goal before every write for independent orthogonality review — verifying domain boundaries hold in a fresh session with no confirmation bias from the drafting context."
 
 [[related]]
 id = "rummage"

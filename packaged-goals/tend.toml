@@ -40,9 +40,9 @@ Termination: the user has stated a WHY grounded in an anchor (per `feature-craft
 *Before writing.* Show the user what tend understood: what's changing and why (plain language — no internal interview labels), the proposed placement, and what edges would change. Wait for the user to confirm. This is a comprehension check — the user validates that tend understood them, not that the goal text looks right.
 
 *Write:*
-1. Draft the goal in the shape its kind requires — WHAT/WHY for a `feature`, a role + trigger + body for a `behavior` — then critique the draft against the matching content standard (`feature-craft` or `behavior-craft`), `goal-complementarity`, and `goal-structure-standard` — read fresh, holding no copy of their rules — and revise until it satisfies each.
+1. Draft the goal in the shape its kind requires — WHAT/WHY for a `feature`, a role + trigger + body for a `behavior` — then dispatch the draft to the matching content standard (`@feature-craft` for a feature goal, `@behavior-craft` for a behavior goal), `@goal-complementarity`, and `@goal-structure-standard` for independent review. Tend receives their feedback and decides what to incorporate; merging feedback is tend's judgment call, not a protocol. If reviewer feedback conflicts with another reviewer or with tend's own read, tend resolves it through natural conversation. Dispatching rather than reading ensures each check runs in a fresh session free of confirmation bias; behavior goals in particular are designed to run as agents, not be read.
 2. Update all goal files that need changes now, and remove the .draft.md file.
-3. Re-validate all edges (related, parent, children) against `goal-structure-standard`, read fresh — fixing both sides of any symmetry or reason drift.
+3. Re-validate all edges (related, parent, children) by dispatching `@goal-structure-standard` — fixing both sides of any symmetry or reason drift it identifies.
 4. Re-check parent summary if a child was created or edited — the parent's `summary` field must still accurately describe its scope given the change. Update if needed.
 5. Rewrite the current goal's `summary` to match its new scope, per `goal-structure-standard`.
 6. Send `@<goal-id>` dispatching the goal agent with the **old spec** (full goal text before the write), the **new spec** (full goal text after), and a declarative message naming what changed and why.
@@ -56,15 +56,15 @@ parent_id = ""
 
 [[related]]
 id = "feature-craft"
-reason = "The content standard for feature goals. Its anchor test is the interview's termination bar — the interview ends when every claim the user has stated is anchored — and tend critiques a feature draft against it before writing. Tend's WHY-directed questioning is the mechanism that gets the user there."
+reason = "The content standard for feature goals. Its anchor test is the interview's termination bar — the interview ends when every claim the user has stated is anchored — and tend dispatches the draft to it for independent review before writing. Tend's WHY-directed questioning is the mechanism that gets the user there."
 
 [[related]]
 id = "behavior-craft"
-reason = "The content standard for behavior goals. When tend classifies a goal as `behavior` it critiques the draft (role, trigger, body, the repeatability↔flexibility choice) against `behavior-craft`. Tend is also the agent that fires behavior goals at the report boundary."
+reason = "The content standard for behavior goals. When tend classifies a goal as `behavior` it dispatches the draft to `behavior-craft` for independent review. Tend is also the agent that fires behavior goals at the report boundary."
 
 [[related]]
 id = "goal-structure-standard"
-reason = "Structural twin applied at write time: level-of-detail coherence, [[children]] id+reason, symmetric related-links, the `kind` field, and the natural-language `summary` form. Tend reads this fresh before every write alongside the matching content standard and `goal-complementarity`, classifies the kind, and authors the summary by deferring to its spec."
+reason = "Structural twin applied at write time: level-of-detail coherence, [[children]] id+reason, symmetric related-links, the `kind` field, and the natural-language `summary` form. Tend dispatches to it before writing (draft review) and after writing (edge re-validation), ensuring structural checks run in a fresh session free of drafting context."
 
 [[related]]
 id = "creative-process"
@@ -88,7 +88,7 @@ reason = "The `@`-block protocol through which tend consults rummage and receive
 
 [[related]]
 id = "goal-complementarity"
-reason = "Tend reads this goal fresh before every write as part of the goal orthogonality check — verifying the goal being written doesn't encroach on another goal's domain."
+reason = "Tend dispatches the draft to this goal before every write for independent orthogonality review — verifying the goal being written doesn't encroach on another goal's domain."
 
 [[related]]
 id = "no-peek"

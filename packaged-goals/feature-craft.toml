@@ -76,4 +76,4 @@ reason = "Structural twin at write time. `goal-structure-standard` governs tree 
 
 [[related]]
 id = "tend"
-reason = "Tend applies this standard when it classifies a goal as `feature` and writes its WHAT/WHY during the interview and edit-time alignment."
+reason = "Tend dispatches the draft to this standard when it classifies a goal as `feature`, running the review in a fresh session before writing to disk."

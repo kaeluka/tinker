@@ -53,4 +53,4 @@ reason = "Structural twin at write time. `goal-structure-standard` owns tree org
 
 [[related]]
 id = "tend"
-reason = "Tend applies this standard when it classifies a goal as `behavior` and writes its trigger and body during the interview, and it is the agent that fires behavior goals at the report boundary."
+reason = "Tend dispatches the draft to this standard when it classifies a goal as `behavior`, running the review in a fresh session before writing to disk. Tend is also the agent that fires behavior goals at the report boundary."
