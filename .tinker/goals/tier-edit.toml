@@ -1,0 +1,25 @@
+id = "tier-edit"
+parent_id = "tui"
+kind = "feature"
+summary = "This goal owns the TUI tier-change interaction: a keybinding on the focused goal that steps its tier up (low → mid → high → low) and writes the updated `tier` field immediately to the goal's source TOML file."
+description = """
+## WHAT
+In the goal list, a keybinding on the focused goal steps its tier up through
+low → mid → high → low and writes the updated `tier` field to the goal's
+source TOML file immediately. The goal-detail header's [kind · tier] tag reflects the new
+value at once. The action is available on any goal that has a backing file.
+
+## WHY
+Changing a goal's tier by editing the TOML directly is too slow for
+experimentation. The tier tag is already visible in the goal-detail header;
+making it editable from the same surface closes the loop — the user sees the
+current tier and can change it without leaving the TUI.
+"""
+
+[[related]]
+id = "goal-storage"
+reason = "The write target is the goal's source TOML file; goal-storage owns the on-disk format this interaction must preserve when writing the `tier` field."
+
+[[related]]
+id = "goal-agents"
+reason = "goal-agents owns the tier field semantics — absent = mid, \"high\" = high — that govern what values tier-edit must write and display."

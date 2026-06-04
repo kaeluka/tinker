@@ -78,7 +78,7 @@ pub struct Goal {
     /// Cross-cutting related goals. Empty when the field is absent in TOML.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub related: Vec<RelatedLink>,
-    /// Model tier for sessions running this goal: "high", "mid", or absent (defaults to "mid").
+    /// Model tier for sessions running this goal: "high", "mid", "low", or absent (defaults to "mid").
     /// Resolved at session start via model-config for the current backend.
     /// Tend, rummage, and jog declare `tier = "high"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]

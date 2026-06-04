@@ -1,7 +1,7 @@
 id = "feature-craft"
 kind = "behavior"
 tier = "high"
-summary = "This goal runs when tend writes or edits a feature goal (a standing, untriggered goal — one that owns a region of the artifact, or a foundational rationale), and holds the content standard for those goals: the WHAT/WHY schema and six tactics — anchor test, positive framing, orthogonality, goals-are-prompts, synthesis over enumeration, synthesis-adds-form-only — plus brevity."
+summary = "This goal runs when tend writes or edits a feature goal (a standing, untriggered goal — one that owns a region of the artifact, or a foundational rationale), and holds the content standard for those goals: the WHAT/WHY schema and seven tactics — anchor test, positive framing, orthogonality, goals-are-prompts, synthesis over enumeration, synthesis-adds-form-only, no implementation vocabulary — plus brevity."
 description = """
 ## WHAT
 The content standard for **feature** goals — standing, untriggered
@@ -11,9 +11,9 @@ a trigger) is a feature too. A feature goal is two synthesized
 sections, **WHAT** and **WHY**, written as integrated prose rather
 than an enumerated list of decisions. There is no DECISIONS, HOW, or SCOPE section:
 user-vetted intent is woven into WHAT and WHY, and provenance lives in
-`.tinker/notes/notes.md`, not in the goal.
+the notes file, not in the goal.
 
-Six tactics govern the content:
+Seven tactics govern the content:
 
 1. **Sparseness** (the anchor test). A claim belongs only if something
    outside the implementation anchors it: (a) user intent or
@@ -50,6 +50,13 @@ Six tactics govern the content:
    user stated; synthesis integrates form, never adds content or fills
    gaps.
 
+7. **No implementation vocabulary.** Goal text must be readable
+   without source access. Code identifiers — struct fields, function
+   names, file paths, type names — do not belong in the body. Name
+   the concept, not the identifier. Goals surface to the user as
+   readable intent; source terms break that read and erode
+   `shared-language`'s benefit over time.
+
 Brevity compounds sparseness — prefer the shortest phrasing that
 carries the intent; a shorter goal is a better prompt and a cheaper
 read.
@@ -77,3 +84,7 @@ reason = "Structural twin at write time. `goal-structure-standard` governs tree 
 [[related]]
 id = "tend"
 reason = "Tend dispatches the draft to this standard when it classifies a goal as `feature`, running the review in a fresh session before writing to disk."
+
+[[related]]
+id = "shared-language"
+reason = "shared-language enforces the no-raw-identifier rule at runtime output; tactic 7 (no implementation vocabulary) enforces it at goal-authoring time — both sides of the same boundary."

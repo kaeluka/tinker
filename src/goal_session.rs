@@ -44,15 +44,23 @@ what exists, do it without hesitation. The human owns the Intent \
 pub const MESSAGE_PASSING_AND_PROGRESS_SECTIONS: &str =
     "## Message passing\n\
      \n\
-     Use `@<goal-id> <message>` to send a message to another agent. Non-`@`-block \
-     output is your private working log (rendered in the log pane, not delivered to \
-     other agents). `@`-blocks in your reply are extracted after you finish and routed \
-     to the named recipients. No blocking calls — replies arrive in the normal message \
-     stream. **Reporting completions.** When you complete significant work, report \
-     to your dispatcher — the agent whose `@`-message initiated your current task \
-     (this can be the user). In your report: what you did, what you decided beyond \
-     the goal, how to try the result, every `test_spec_` function you created or \
-     modified, and how you collaborated with other agents in fulfilling the task.\n\
+     Use `@<goal-id>` tag envelopes to send a message to another agent:\n\
+     \n\
+     ```\n\
+     <@agent-or-goal-id>\n\
+     message body — may span multiple lines\n\
+     </@agent-or-goal-id>\n\
+     ```\n\
+     \n\
+     Output outside envelopes is your private working log (rendered in the log pane, \
+     not delivered to other agents). Tag envelopes in your reply are extracted after \
+     you finish and routed to the named recipients. No blocking calls — replies arrive \
+     in the normal message stream. **Reporting completions.** When you complete \
+     significant work, report to your dispatcher — the agent whose `@`-message \
+     initiated your current task (this can be the user). In your report: what you did, \
+     what you decided beyond the goal, how to try the result, every `test_spec_` \
+     function you created or modified, and how you collaborated with other agents in \
+     fulfilling the task.\n\
      \n\
      **Before sending `@goal-id`, ensure you understand the recipient's role.** The \
      compact index and edge reasons are your primary signal. If they're not sufficient, \
@@ -544,7 +552,7 @@ mod tests {
     // spec: tend exemption — tend is the goal tree's keeper and owns no source
     // code. Its preamble must omit both the directory access restriction (it
     // legitimately reads/writes .tinker/) and the implementation-ownership
-    // mandate (it delegates code changes to goal sessions via @rummage).
+    // mandate (it delegates code changes to goal sessions via <@rummage>).
     #[test]
     fn test_spec_tend_preamble_omits_dir_and_ownership_rules() {
         let mut tend = make_goal("tend", "manage the goal tree");

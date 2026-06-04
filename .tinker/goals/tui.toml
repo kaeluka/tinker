@@ -1,6 +1,6 @@
 id = "tui"
 kind = "feature"
-summary = "This goal owns the terminal interface rendering: the two-column layout with the live conversation pane on the left and the stacked goal-list, goal-text, and session-log bands on the right, plus goal-list row format, the goal-detail header (summary and tier/kind tag above the body), goal-ID visual consistency across surfaces, per-session conversation views, active-session switching, queue and trigger-reason display, and scroll behavior."
+summary = "This goal owns the terminal interface rendering: the two-column layout with the live conversation pane on the left and the stacked goal-list, goal-text, and session-log bands on the right, plus goal-list row format, the goal-detail header (summary and tier/kind tag above the body, with in-place tier cycling), goal-ID visual consistency across surfaces, per-session conversation views, active-session switching, queue and trigger-reason display, and scroll behavior."
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left
@@ -126,7 +126,10 @@ principle above.
 
 """
 parent_id = ""
-children = []
+
+[[children]]
+id = "tier-edit"
+reason = "owns the keybinding and immediate TOML write-back that makes the tier tag in the goal-detail header editable in place"
 
 [[related]]
 id = "goal-agents"

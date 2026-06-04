@@ -327,21 +327,23 @@ async fn main() -> Result<()> {
     )?;
     let model_config = config::load_model_config(fs.as_ref(), &config_path);
 
-    // Three runner instances: high-tier (tend/rummage/jog + other high goals),
-    // mid-tier (default goal sessions), cleanup (cheapest).
-    let (oc_goal_high, oc_goal, oc_cleanup_runner):
-        (Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>) = if use_claude {
+    // Four runner instances: high-tier (tend/rummage/jog + other high goals),
+    // mid-tier (default goal sessions), low-tier (low goal sessions), cleanup (cheapest).
+    let (oc_goal_high, oc_goal, oc_goal_low, oc_cleanup_runner):
+        (Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>) = if use_claude {
         let tinker_m = model_config.claude_high(CLAUDE_TINKER_MODEL);
         let goal_m = model_config.claude_mid(CLAUDE_GOAL_MODEL);
         let cleanup_m = model_config.claude_low(CLAUDE_SCHEDULER_MODEL);
         (
             Arc::new(ClaudeRunner::with_system_prompt(tinker_m, tend_system_prompt())),
             Arc::new(ClaudeRunner::with_system_prompt(goal_m, goal_agent_system_prompt())),
+            Arc::new(ClaudeRunner::with_system_prompt(cleanup_m, goal_agent_system_prompt())),
             Arc::new(ClaudeRunner::new(cleanup_m)),
         )
     } else if use_default_model {
         (
             Arc::new(RealOpenCodeRunner::default_with_agent("tinker")),
+            Arc::new(RealOpenCodeRunner::new_default()),
             Arc::new(RealOpenCodeRunner::new_default()),
             Arc::new(RealOpenCodeRunner::new_default()),
         )
@@ -352,6 +354,7 @@ async fn main() -> Result<()> {
         (
             Arc::new(RealOpenCodeRunner::with_agent(tinker_m, "tinker")),
             Arc::new(RealOpenCodeRunner::new(goal_m)),
+            Arc::new(RealOpenCodeRunner::new(cleanup_m)),
             Arc::new(RealOpenCodeRunner::new(cleanup_m)),
         )
     };
@@ -459,6 +462,7 @@ async fn main() -> Result<()> {
         &mut goal_spawn_rx,
         oc_goal,
         oc_goal_high,
+        oc_goal_low,
         oc_cleanup_runner,
         fs.clone(),
         work_dir.clone(),
@@ -487,6 +491,7 @@ async fn run_loop(
     goal_spawn_rx: &mut mpsc::Receiver<SpawnGoalRequest>,
     oc_goal: Arc<dyn OpenCodeRunner>,
     oc_goal_high: Arc<dyn OpenCodeRunner>,
+    oc_goal_low: Arc<dyn OpenCodeRunner>,
     oc_cleanup_runner: Arc<dyn OpenCodeRunner>,
     fs: Arc<dyn Filesystem>,
     work_dir: std::path::PathBuf,
@@ -560,6 +565,7 @@ async fn run_loop(
                     session_senders.insert(req.goal_id.clone(), msg_tx_goal.clone());
                     let oc_for_goal = match goal.tier.as_deref() {
                         Some("high") => oc_goal_high.clone(),
+                        Some("low") => oc_goal_low.clone(),
                         _ => oc_goal.clone(),
                     };
                     let session_tx_goal = session_tx.clone();
@@ -737,6 +743,22 @@ async fn run_loop(
                         });
                     }
                 }
+                KeyAction::CycleTier(goal_id) => {
+                    let write_info = {
+                        let mut a = app.lock().unwrap();
+                        if let Some(g) = a.goals.iter_mut().find(|g| g.id == goal_id) {
+                            let next = cycle_tier(g.tier.as_deref());
+                            g.tier = next.map(|s| s.to_string());
+                            let serialized = toml::to_string_pretty(g).ok();
+                            Some((g.source_path.clone(), serialized))
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some((Some(path), Some(content))) = write_info {
+                        let _ = fs.write(&path, &content);
+                    }
+                }
                 KeyAction::None => {}
             }
         }
@@ -748,63 +770,84 @@ async fn run_loop(
     Ok(())
 }
 
-/// Parse `@<agent-name> <message>` lines from an agent reply.
-/// Extracts `@`-blocks from an agent reply.
+/// Extracts `<@id>…</@id>` tag envelopes from a finalised agent reply.
 ///
-/// Each block begins at an `@<known-id>` line and extends through all subsequent
-/// lines until the next `@`-line or end of text. The `@`-line may carry inline
-/// content (`@tend msg`) or stand alone with the message on body lines. Both
-/// forms are equivalent. Prose before the first `@`-line is not delivered.
-/// Empty blocks (no inline content and no body lines) are silently dropped.
+/// Each envelope begins with `<@{id}>` and ends with `</@{id}>`, where `id`
+/// is a member of `known_ids`. The opening tag may carry inline content on
+/// the same line (`<@tend>message</@tend>`) or the body may span subsequent
+/// lines:
+///
+///   <@tend>
+///   message body — may span multiple lines
+///   </@tend>
+///
+/// Prose outside envelopes is not delivered to any agent.
+/// Empty envelopes (nothing between open and close tags) are silently dropped.
+/// A reply may contain multiple envelopes; each is extracted independently.
 ///
 /// `known_ids` is the set of agent IDs that can receive `@`-routed messages.
-/// Only `@<id>` lines where `id` is in this set open a new block.
 ///
-/// Returns `(recipient, message)` pairs where `message` is the full block body.
+/// Returns `(recipient, message)` pairs where `message` is the trimmed
+/// content between the opening and closing tags.
 fn parse_at_commands(text: &str, known_ids: &[&str]) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
-    let mut current: Option<(String, Vec<String>)> = None;
+    let lines: Vec<&str> = text.lines().collect();
+    let mut i = 0;
 
-    for line in text.lines() {
-        let trimmed = line.trim();
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        let mut matched = false;
 
-        // Detect whether this line opens a new @-block.
-        let mut new_block: Option<(String, String)> = None;
         for id in known_ids {
-            let prefix = format!("@{}", id);
-            if let Some(rest) = trimmed.strip_prefix(prefix.as_str()) {
-                // Valid if followed by space (inline) or nothing (standalone).
-                if rest.is_empty() || rest.starts_with(' ') {
-                    new_block = Some((id.to_string(), rest.trim_start().to_string()));
-                    break;
+            let open_tag = format!("<@{}>", id);
+            let close_tag = format!("</@{}>", id);
+
+            if let Some(tag_pos) = trimmed.find(open_tag.as_str()) {
+                let after_open = &trimmed[tag_pos + open_tag.len()..];
+
+                // Check if the closing tag appears on the same line.
+                if let Some(close_pos) = after_open.find(close_tag.as_str()) {
+                    let content = after_open[..close_pos].trim().to_string();
+                    if !content.is_empty() {
+                        out.push((id.to_string(), content));
+                    }
+                    i += 1;
+                } else {
+                    // Multi-line envelope: collect body lines until closing tag.
+                    let mut body_lines: Vec<String> = Vec::new();
+                    let inline = after_open.trim().to_string();
+                    if !inline.is_empty() {
+                        body_lines.push(inline);
+                    }
+                    i += 1;
+
+                    while i < lines.len() {
+                        let inner_trimmed = lines[i].trim();
+                        if let Some(close_pos) = inner_trimmed.find(close_tag.as_str()) {
+                            let before = inner_trimmed[..close_pos].trim();
+                            if !before.is_empty() {
+                                body_lines.push(before.to_string());
+                            }
+                            i += 1;
+                            break;
+                        } else {
+                            body_lines.push(lines[i].to_string());
+                            i += 1;
+                        }
+                    }
+
+                    let msg = body_lines.join("\n").trim().to_string();
+                    if !msg.is_empty() {
+                        out.push((id.to_string(), msg));
+                    }
                 }
+                matched = true;
+                break;
             }
         }
 
-        if let Some((recipient, inline)) = new_block {
-            // Close the previous block before opening this one.
-            if let Some((prev_recipient, prev_lines)) = current.take() {
-                let msg = prev_lines.join("\n").trim().to_string();
-                if !msg.is_empty() {
-                    out.push((prev_recipient, msg));
-                }
-            }
-            let mut lines: Vec<String> = Vec::new();
-            if !inline.is_empty() {
-                lines.push(inline);
-            }
-            current = Some((recipient, lines));
-        } else if let Some((_, ref mut lines)) = current {
-            lines.push(line.to_string());
-        }
-        // else: prose before any @-block — not part of any delivery.
-    }
-
-    // Close the final block.
-    if let Some((recipient, lines)) = current {
-        let msg = lines.join("\n").trim().to_string();
-        if !msg.is_empty() {
-            out.push((recipient, msg));
+        if !matched {
+            i += 1;
         }
     }
 
@@ -824,8 +867,13 @@ fn dispatch_peer_consultations(
     log: &logger::LogSender,
 ) {
     for (recipient, msg) in consultations {
-        let formatted = format!("[from {}] {}\n\nReply via @{}.", sender, msg, sender);
-        let sys = format!("@{} → @{}: {}", sender, recipient, msg);
+        let reply_tag = format!("<@{}>", sender);
+        let reply_close = format!("</@{}>", sender);
+        let formatted = format!(
+            "[from {}] {}\n\nReply via {}your reply{}.",
+            sender, msg, reply_tag, reply_close
+        );
+        let sys = format!("<@{}> → <@{}>: {}", sender, recipient, msg);
         app.push_system_message(&sys);
         log.emit(sender, logger::LogEvent::TinkerSystemMessageReceived { content: sys });
         let is_goal_agent = !matches!(recipient.as_str(), "tend" | "rummage" | "jog")
@@ -994,6 +1042,20 @@ enum KeyAction {
     SendToSession(String, String),
     /// Dispatch a goal agent session with an optional trigger reason.
     RunGoal(String, Option<String>),
+    /// Cycle the tier of the named goal and persist the change to disk.
+    CycleTier(String),
+}
+
+/// Advance a goal's tier one step through the cycle: absent/mid → high → low → absent/mid.
+/// Returns the next tier value (None means "absent", which serializes as the default mid).
+fn cycle_tier(current: Option<&str>) -> Option<&'static str> {
+    match current {
+        None       => Some("low"),
+        Some("low")  => Some("mid"),
+        Some("mid")  => Some("high"),
+        Some("high") => Some("low"),
+        _          => Some("low"),
+    }
 }
 
 const MOUSE_SCROLL_STEP: usize = 3;
@@ -1172,6 +1234,10 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                 }
                 None => KeyAction::None,
             },
+            (_, KeyCode::Char('t')) => match app.selected_goal() {
+                Some(g) if g.source_path.is_some() => KeyAction::CycleTier(g.id),
+                _ => KeyAction::None,
+            },
             _ => KeyAction::None,
         },
     }
@@ -1199,11 +1265,11 @@ mod tests {
     // (same reason)
 
     // REMOVED: test_spec_summary_routes_directly_to_tend_not_batched
-    // (SummaryReady variant retired — goal agents @tend directly on completion)
+    // (SummaryReady variant retired — goal agents send <@tend> directly on completion)
 
     // spec: goal-agents — SummaryReady was a transitional SessionEvent variant
     // that routed goal-session summaries to tend via the event channel. Goal agents
-    // now @tend directly, so the variant has been removed. LlmSessionId is likewise
+    // now send <@tend> directly, so the variant has been removed. LlmSessionId is likewise
     // gone: the session id is captured from the runner's return value, not an event.
     // This exhaustive-match test compiles only while both variants stay absent.
     #[test]
@@ -1649,6 +1715,27 @@ mod tests {
         );
     }
 
+    // spec (goal-agents): A goal with tier="low" must dispatch to oc_goal_low, which
+    // is wired to the low-tier model (claude_low / opencode_low). This ensures the
+    // "low" tier value is routed through the backend model-config, not silently folded
+    // into the mid-tier default.
+    #[test]
+    fn test_spec_low_tier_goal_uses_low_runner() {
+        let main_rs = include_str!("main.rs");
+        assert!(
+            main_rs.contains("Some(\"low\") => oc_goal_low"),
+            "lazy spawn must route tier=low goals to oc_goal_low",
+        );
+        assert!(
+            main_rs.contains("model_config.claude_low(CLAUDE_SCHEDULER_MODEL)"),
+            "oc_goal_low on the claude path must be wired to claude_low(CLAUDE_SCHEDULER_MODEL)",
+        );
+        assert!(
+            main_rs.contains("model_config.opencode_low(OPENCODE_SCHEDULER_MODEL)"),
+            "oc_goal_low on the opencode path must be wired to opencode_low(OPENCODE_SCHEDULER_MODEL)",
+        );
+    }
+
     // spec (jog): Jog runs on the strongest model tier via tier="high" in its TOML.
     // Description injected via session_init_message, not as a system prompt.
     #[test]
@@ -1762,15 +1849,15 @@ mod tests {
         assert_eq!(app.active_session, "tend", "active_session must be unchanged after unknown slash");
     }
 
-    // spec (peer-consult): parse_at_commands extracts @tend, @rummage, @jog
-    // lines from agent output. Non-matching lines are silently skipped.
-    // The function now takes a `known_ids` slice so routing works for any
-    // registered session ID, not just the three built-in agents.
+    // spec (peer-consult): parse_at_commands extracts <@tend>, <@rummage>,
+    // <@jog> tag envelopes from agent output. Prose outside envelopes is
+    // silently dropped. The function takes a `known_ids` slice so routing
+    // works for any registered session ID, not just the three built-in agents.
     const BUILTIN_IDS: &[&str] = &["tend", "rummage", "jog"];
 
     #[test]
     fn test_spec_peer_consult_parse_at_tinker() {
-        let r = parse_at_commands("@tend what does this module do?", BUILTIN_IDS);
+        let r = parse_at_commands("<@tend>what does this module do?</@tend>", BUILTIN_IDS);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].0, "tend");
         assert_eq!(r[0].1, "what does this module do?");
@@ -1778,7 +1865,7 @@ mod tests {
 
     #[test]
     fn test_spec_peer_consult_parse_at_rummage() {
-        let r = parse_at_commands("@rummage can you trace the call?", BUILTIN_IDS);
+        let r = parse_at_commands("<@rummage>can you trace the call?</@rummage>", BUILTIN_IDS);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].0, "rummage");
         assert_eq!(r[0].1, "can you trace the call?");
@@ -1786,7 +1873,7 @@ mod tests {
 
     #[test]
     fn test_spec_peer_consult_parse_at_jog() {
-        let r = parse_at_commands("@jog do you still mean X by this?", BUILTIN_IDS);
+        let r = parse_at_commands("<@jog>do you still mean X by this?</@jog>", BUILTIN_IDS);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].0, "jog");
         assert_eq!(r[0].1, "do you still mean X by this?");
@@ -1794,7 +1881,8 @@ mod tests {
 
     #[test]
     fn test_spec_peer_consult_parse_prose_before_block_excluded() {
-        let r = parse_at_commands("some prose\n@tend hello\n@rummage check this", BUILTIN_IDS);
+        let input = "some prose\n<@tend>hello</@tend>\n<@rummage>check this</@rummage>";
+        let r = parse_at_commands(input, BUILTIN_IDS);
         assert_eq!(r.len(), 2);
         assert_eq!(r[0], ("tend".to_string(), "hello".to_string()));
         assert_eq!(r[1], ("rummage".to_string(), "check this".to_string()));
@@ -1802,35 +1890,38 @@ mod tests {
 
     #[test]
     fn test_spec_peer_consult_parse_block_body_included() {
-        let r = parse_at_commands("@tend hello\nbody line one\nbody line two\n@rummage check", BUILTIN_IDS);
+        let input = "<@tend>\nhello\nbody line one\nbody line two\n</@tend>\n<@rummage>check</@rummage>";
+        let r = parse_at_commands(input, BUILTIN_IDS);
         assert_eq!(r.len(), 2);
         assert!(
             r[0].1.contains("hello") && r[0].1.contains("body line one"),
-            "@tend block must include both inline and body lines"
+            "tag envelope must include all lines between open and close tags"
         );
         assert_eq!(r[1], ("rummage".to_string(), "check".to_string()));
     }
 
     #[test]
     fn test_spec_peer_consult_parse_at_without_message_ignored() {
-        let r = parse_at_commands("@tend", BUILTIN_IDS);
-        assert_eq!(r.len(), 0, "empty @tend block must not be delivered");
+        let r = parse_at_commands("<@tend></@tend>", BUILTIN_IDS);
+        assert_eq!(r.len(), 0, "empty tag envelope must not be delivered");
     }
 
     #[test]
     fn test_spec_peer_consult_parse_multiline_body() {
-        let r = parse_at_commands("@rummage\nfirst line\nsecond line", BUILTIN_IDS);
+        let input = "<@rummage>\nfirst line\nsecond line\n</@rummage>";
+        let r = parse_at_commands(input, BUILTIN_IDS);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].0, "rummage");
         assert!(
             r[0].1.contains("first line") && r[0].1.contains("second line"),
-            "standalone @-block body must include all subsequent lines"
+            "multi-line tag envelope body must include all lines between open and close tags"
         );
     }
 
     #[test]
     fn test_spec_peer_consult_parse_multiple_at_lines() {
-        let r = parse_at_commands("@tend q1\n@rummage q2\n@jog q3", BUILTIN_IDS);
+        let input = "<@tend>q1</@tend>\n<@rummage>q2</@rummage>\n<@jog>q3</@jog>";
+        let r = parse_at_commands(input, BUILTIN_IDS);
         assert_eq!(r.len(), 3);
         assert_eq!(r[0], ("tend".to_string(), "q1".to_string()));
         assert_eq!(r[1], ("rummage".to_string(), "q2".to_string()));
@@ -1899,7 +1990,7 @@ mod tests {
     #[test]
     fn test_spec_peer_consult_parse_accepts_goal_id() {
         let ids = &["tend", "rummage", "goal-agents"];
-        let r = parse_at_commands("@goal-agents start working on the registry", ids);
+        let r = parse_at_commands("<@goal-agents>start working on the registry</@goal-agents>", ids);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].0, "goal-agents");
         assert_eq!(r[0].1, "start working on the registry");
@@ -1946,8 +2037,9 @@ mod tests {
     }
 
     // spec (peer-consult): dispatched messages carry an inline return-routing
-    // instruction ("Reply via @<sender>.") so the receiving agent knows to wrap
-    // its answer in an @-block rather than leave it as private prose.
+    // instruction ("Reply via <@sender>your reply</@sender>.") so the receiving
+    // agent knows to wrap its answer in a tag envelope rather than leave it as
+    // private prose.
     #[test]
     fn test_spec_peer_consult_dispatch_includes_reply_instruction() {
         let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
@@ -1966,8 +2058,8 @@ mod tests {
         );
         let msg = msg_rx.try_recv().expect("tend must receive the consultation");
         assert!(
-            msg.contains("Reply via @rummage"),
-            "dispatched message must carry return-routing instruction with sender name"
+            msg.contains("Reply via <@rummage>"),
+            "dispatched message must carry return-routing instruction with sender name in tag-envelope syntax"
         );
     }
 
@@ -1999,8 +2091,8 @@ mod tests {
         let sys = app.messages.iter().find(|m| m.role == app::Role::System);
         assert!(sys.is_some(), "a system message must be pushed for the consultation");
         let text = &sys.unwrap().text;
-        assert!(text.contains("@tend"), "system message must name the sender");
-        assert!(text.contains("@rummage"), "system message must name the recipient");
+        assert!(text.contains("<@tend>"), "system message must name the sender");
+        assert!(text.contains("<@rummage>"), "system message must name the recipient");
         assert!(text.contains("trace the init flow"), "system message must include the message content");
         let _ = rummage_rx.try_recv();
     }
@@ -2678,6 +2770,120 @@ mod tests {
             main_rs.contains("submission_sets_running"),
             "RunGoal handler must use submission_sets_running to gate running_sessions insertion",
         );
+    }
+
+    // spec (tier-edit): cycle_tier advances in ascending order: low → mid → high → low.
+    // Absent (the default, displayed as "mid") enters the cycle at "low" on the first press.
+    #[test]
+    fn test_spec_cycle_tier_full_cycle() {
+        assert_eq!(cycle_tier(None), Some("low"), "absent (default) must enter the cycle at low");
+        assert_eq!(cycle_tier(Some("low")), Some("mid"), "low must advance to mid (ascending)");
+        assert_eq!(cycle_tier(Some("mid")), Some("high"), "mid must advance to high (ascending)");
+        assert_eq!(cycle_tier(Some("high")), Some("low"), "high must wrap back to low");
+    }
+
+    // spec (tier-edit): pressing 't' in Focus::Tree on a goal with a source_path
+    // returns CycleTier(goal_id), allowing the event loop to write the change.
+    #[test]
+    fn test_spec_t_in_tree_returns_cycle_tier_for_goal_with_source_path() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.goals = vec![goal::Goal {
+            id: "tui".into(),
+            summary: String::new(),
+            description: "build the tui".into(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: Some(std::path::PathBuf::from("/proj/.tinker/goals/tui.toml")),
+        }];
+        app.focus = Focus::Tree;
+        let action = handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+            &logger::noop_sender(),
+            BUILTIN_SESSION_IDS,
+        );
+        assert!(
+            matches!(&action, KeyAction::CycleTier(id) if id == "tui"),
+            "'t' in tree on a goal with source_path must return CycleTier(goal_id)",
+        );
+    }
+
+    // spec (tier-edit): pressing 't' on a goal without a source_path (packaged goal
+    // that has no backing file in the current project) must be a no-op.
+    #[test]
+    fn test_spec_t_in_tree_noop_for_goal_without_source_path() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.goals = vec![goal::Goal {
+            id: "tui".into(),
+            summary: String::new(),
+            description: "build the tui".into(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        }];
+        app.focus = Focus::Tree;
+        let action = handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+            &logger::noop_sender(),
+            BUILTIN_SESSION_IDS,
+        );
+        assert!(
+            matches!(action, KeyAction::None),
+            "'t' in tree on a goal without source_path must be a no-op",
+        );
+    }
+
+    // spec (tier-edit): the CycleTier event-loop handler updates app.goals in-place
+    // and serialises the change to the goal's source file via the Filesystem capability.
+    #[test]
+    fn test_spec_cycle_tier_updates_goal_and_writes_to_disk() {
+        use crate::test_utils::MockFs;
+        use std::path::PathBuf;
+        let fs = MockFs::new();
+        let path = PathBuf::from("/proj/.tinker/goals/tui.toml");
+        // Pre-populate the file (MockFs requires the file to exist before write in some impls).
+        // Write a minimal valid goal TOML.
+        let initial = "id = \"tui\"\ndescription = \"the tui\"\nparent_id = \"\"\n";
+        fs.add_file(&path, initial);
+
+        let mut app = App::new();
+        app.goals = vec![goal::Goal {
+            id: "tui".into(),
+            summary: String::new(),
+            description: "the tui".into(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: Some(path.clone()),
+        }];
+
+        // Simulate what the event loop does: cycle the tier on the goal.
+        {
+            let g = app.goals.iter_mut().find(|g| g.id == "tui").unwrap();
+            let next = cycle_tier(g.tier.as_deref());
+            g.tier = next.map(|s| s.to_string());
+            let content = toml::to_string_pretty(g).unwrap();
+            fs.write(&path, &content).unwrap();
+        }
+
+        // In-memory goal must now have tier = Some("low") — absent enters the cycle at low.
+        let g = app.goals.iter().find(|g| g.id == "tui").unwrap();
+        assert_eq!(g.tier.as_deref(), Some("low"), "in-memory tier must enter cycle at low on first press from absent");
+
+        // On-disk file must contain the new tier.
+        let on_disk = fs.read_to_string(&path).unwrap();
+        assert!(on_disk.contains("tier = \"low\""), "on-disk TOML must reflect the new tier; got:\n{}", on_disk);
     }
 
 }

@@ -1,12 +1,12 @@
 # AGENTS.md — tinker project index
 
-tinker is a goal-directed coding assistant: goals live as TOML files under `.tinker/goals/`, each one drives a per-goal agent session, and a TUI surfaces the live conversation alongside the goal tree. All agent-to-agent communication happens via `@<goal-id>` message blocks routed through the session registry.
+tinker is a goal-directed coding assistant: goals live as TOML files under `.tinker/goals/`, each one drives a per-goal agent session, and a TUI surfaces the live conversation alongside the goal tree. All agent-to-agent communication happens via `<@goal-id>…</@goal-id>` tag envelopes routed through the session registry.
 
 ---
 
 ## Core agents
 
-These shared agents have no source-file mapping — they are the agents themselves, reachable via `@<id>` from any goal session.
+These shared agents have no source-file mapping — they are the agents themselves, reachable via `<@id>…</@id>` from any goal session.
 
 | agent | role |
 |-------|------|
@@ -45,6 +45,11 @@ User-editable `.tinker/config.toml`: six optional per-backend tier slots (high/m
 On-disk TOML format at `.tinker/goals/<id>.toml`: ancestor-directory merge (cwd-most wins on duplicate ids), malformed-file reporting without blocking siblings, transparent symlink following, `[[children]]` / `[[related]]` link shape.
 
 - `src/goal.rs` — `Goal` (fields include `kind: Option<String>` — `"feature"` or `"behavior"`, optional on legacy goals), `RelatedLink`, `ChildLink`, `GoalNode`; `GOAL_SCHEMA_KEYS_ORDER` (single source of truth for schema key order used in prompts and parse-error correction); `discover_tinker_dirs()`, `load_all_goals()`, `load_goals()`, `save_goal()`, `build_tree()`, `build_compact_index()` (emits `kind` in each compact index entry), `build_full_text_index()`
+
+### tier-edit
+TUI tier-change interaction: `t` on a focused goal cycles its tier (absent/mid → high → low → absent/mid) and writes the updated `tier` field immediately to the goal's source TOML file; the goal-detail header's `[kind · tier]` tag reflects the new value at once.
+
+- `src/main.rs` — `cycle_tier()` (three-value cycle logic), `KeyAction::CycleTier(goal_id)` variant, key-event dispatch (`t` in the goal-tree returns `CycleTier` for any goal with a `source_path`), and the `CycleTier` event-loop handler that mutates `app.goals` in-place, serializes via `toml::to_string_pretty()`, and writes via `fs.write()`
 
 ### goal-placement
 Placement reviewer: when tend creates or edits a goal, checks that it lives in the directory matching its scope — packaged (`~/.tinker/goals/`) for content valid across any tinker project, project-local (`.tinker/goals/`) for content specific to this project — and flags drift when edits make a packaged goal project-specific.

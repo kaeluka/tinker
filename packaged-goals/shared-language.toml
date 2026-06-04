@@ -61,3 +61,7 @@ reason = "rummage's chat turns are user-facing output this standard governs — 
 [[related]]
 id = "jog"
 reason = "jog's deepening conversation with the user is a user-facing surface this standard governs."
+
+[[related]]
+id = "feature-craft"
+reason = "feature-craft's tactic 7 (no implementation vocabulary) enforces the no-raw-identifier rule at goal-authoring time; shared-language enforces it at runtime output — both sides of the same boundary."

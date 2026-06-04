@@ -52,7 +52,7 @@ Goal agents needing a code inventory of what currently exists in
 their scope should consult `@rummage`.
 
 **Tier.** Every goal TOML may carry an optional `tier` field:
-`"high"`, `"mid"`, or absent (defaults to `"mid"`). Resolved at
+`"high"`, `"mid"`, `"low"`, or absent (defaults to `"mid"`). Resolved at
 session start via `model-config`. Tend, rummage, and jog declare
 `tier = "high"`.
 
@@ -150,3 +150,7 @@ reason = "tend-introspection records observables of this goal's session lifecycl
 [[related]]
 id = "readme-maintainer"
 reason = "readme-maintainer's 'The model' section derives its content from this goal's architecture — every goal is an agent, @goal-id dispatch, actor model; when this goal's architecture changes, that section must update."
+
+[[related]]
+id = "tier-edit"
+reason = "tier-edit owns the TUI keybinding that mutates the tier field this goal defines — the interaction surface for the value this goal's tier semantics govern."

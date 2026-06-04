@@ -1,5 +1,6 @@
 id = "tend"
 kind = "behavior"
+tier = "high"
 summary = "This goal runs continuously as the user's goal-tending agent: it conducts a WHY-directed interview (one investigative question at a time until the user states a motivation anchored in intent, a dependency, or a constraint), classifies the goal's kind, writes it to the matching content standard, dispatches the goal agent with a spec diff, answers peers' intent questions from the goals, and — at the report boundary — fires the behavior goals whose triggers the reported work matches."
 description = """
 ## WHAT
@@ -45,7 +46,7 @@ Termination: the user has stated a WHY grounded in an anchor (per `feature-craft
 3. Re-validate all edges (related, parent, children) by dispatching `@goal-structure-standard` — fixing both sides of any symmetry or reason drift it identifies.
 4. Re-check parent summary if a child was created or edited — the parent's `summary` field must still accurately describe its scope given the change. Update if needed.
 5. Rewrite the current goal's `summary` to match its new scope, per `goal-structure-standard`.
-6. Send `@<goal-id>` dispatching the goal agent with the **old spec** (full goal text before the write), the **new spec** (full goal text after), and a declarative message naming what changed and why.
+6. Send a tag envelope `<@goal-id>...</@goal-id>` to the goal agent with the **old spec** (full goal text before the write), the **new spec** (full goal text after), and a declarative message naming what changed and why.
 7. After the `<goal-id>` agent has finished (they will usually reply via @-message), check each goal with type = 'behavior' by reading its summary and triggering it if it may need to react now. When in doubt: trigger it.
 
 ## WHY

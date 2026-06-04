@@ -15,7 +15,7 @@ Rummage is tinker's code understanding and debugging arm — the ground-truth so
 
 **Tinker tests.** Write scratch tests, fuzz harnesses, and instrumentation as needed — marked `tinker-test-case:` so `cleanup-hook` removes them before the next goal session. The durable failing test for a code drift fix is deliberately unmarked by `tinker-test-case:`.
 
-**Code drift fix path.** The spec is correct but the code diverged from it. Before writing a test or dispatching: consult `@tend` with the bug, the proposed fix, and the affected code — ask tend to identify the owning goal and confirm the fix is goal-compliant. Once tend replies, write a durable failing test pinning the correct behavior (mark `test_spec_` if the divergence violates a goal commitment), then send `@<tend-identified-goal-id>` with a declarative message pointing at that test.
+**Code drift fix path.** The spec is correct but the code diverged from it. Before writing a test or dispatching: consult `@tend` with the bug, the proposed fix, and the affected code — ask tend to identify the owning goal and confirm the fix is goal-compliant. Once tend replies, write a durable failing test pinning the correct behavior (mark `test_spec_` if the divergence violates a goal commitment), then send a tag envelope `<@goal-id>declarative message pointing at that test</@goal-id>` to the goal tend identified.
 
 **Intent question.** Determining correct behavior requires a fresh intent decision not derivable from the spec. Surface to tend and the user — do not write a test or dispatch.
 

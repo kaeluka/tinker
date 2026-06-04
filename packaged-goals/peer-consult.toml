@@ -1,26 +1,30 @@
 id = "peer-consult"
 kind = "feature"
-summary = "This goal owns the @-block agent-to-agent messaging channel: the detection of @<agent-or-goal-id> blocks in a finalised reply, the multi-line body span and self-contained-block scoping, fire-and-forget routing to the named agent's input channel, and the system message that surfaces each exchange to the user."
+summary = "This goal owns the @-block agent-to-agent messaging channel: the detection of <@agent-or-goal-id>…</@agent-or-goal-id> envelopes in a finalised reply, tag-boundary scoping, fire-and-forget routing to the named agent's input channel, and the system message that surfaces each exchange to the user."
 description = """
 ## WHAT
 Any agent in the session registry can send a one-way message to any
-other using `@<agent-or-goal-id>` in its output. The message body
-spans from that line through the end of the reply — or up to the next
-`@`-line if the reply contains several. **Only the `@`-block itself is
-delivered to the named agent**; any prose the sending agent wrote
-before or after it is not included, so each `@`-block must be
-self-contained.
+other by placing a tag envelope in its output:
 
-The message text may begin inline on the `@`-line or on the line below. The system
-detects these blocks after each reply
-finalises, routes each to the named agent's input channel, and pushes
-a system message so the user can see the exchange.
+    <@agent-or-goal-id>
+    message body — may span multiple lines
+    </@agent-or-goal-id>
 
+The message body is everything between the opening and closing tags.
+The envelope content is delivered to the named agent, framed with a sender
+attribution and a reply prompt; **prose outside the tags is not included**,
+so each envelope must be self-contained. A message to an unrecognised ID
+is dropped silently.
+
+The system detects these envelopes after each reply finalises, routes
+each to the named agent's input channel, and pushes a system message so
+the user can see the exchange.
+
+A reply may contain multiple envelopes; each is routed independently.
 Messaging is fire-and-forget: the sender does not block or await a
 return value. Replies come naturally but are not required. The sending
 agent retains full autonomy over any response it receives: apply it,
-ask a follow-up, or discard it. Consultations can nest freely: an agent
-mid-reply can `@`-address a third agent.
+ask a follow-up, or discard it. Consultations can nest freely.
 
 The user can ask any agent to consult another; they are not required
 to broker the exchange themselves.
@@ -33,20 +37,21 @@ The protocol is uniform across the whole agent population: the same
 syntax that lets tend consult rummage also lets a goal agent report
 back to tend or ask jog a question. No agent is structurally excluded.
 
-Multi-line delivery is load-bearing: a finding that can only be
-expressed in a single line is rarely a finding.
+Tag-boundary scoping is load-bearing: the envelope makes the routing
+signal unambiguous regardless of where it appears in the output, so
+only an explicit envelope triggers dispatch.
 
 The self-contained-block rule is the complement: a receiving agent has
-no access to the sender's surrounding prose — it only sees the block.
-Without the rule agents would silently rely on context they never
-actually delivered, producing incomplete or misleading consultations.
+no access to the sender's surrounding prose — it only sees the envelope
+content. Without the rule agents would silently rely on context they
+never actually delivered, producing incomplete or misleading consultations.
 
 """
 parent_id = ""
 
 [[related]]
 id = "tend"
-reason = "tend is a session-registry agent governed by the @-block protocol this goal defines: it consults peers via @rummage and @jog and receives @tend reports from goal agents, all delivered under peer-consult's self-contained-block and multi-line rules."
+reason = "tend is a session-registry agent governed by the @-block protocol this goal defines: it consults peers via @rummage and @jog and receives @tend reports from goal agents, all delivered under peer-consult's self-contained-block and tag-boundary rules."
 
 [[related]]
 id = "rummage"
@@ -54,7 +59,7 @@ reason = "rummage is a session-registry agent that communicates with tend, goal 
 
 [[related]]
 id = "jog"
-reason = "jog participates as both sender and receiver of `@` messages alongside its existing deepening conversation with the user."
+reason = "jog participates as both sender and receiver of tag-envelope @-messages alongside its existing deepening conversation with the user."
 
 [[related]]
 id = "goal-complementarity"
