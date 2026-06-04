@@ -1170,6 +1170,9 @@ fn handle_session_event(
                     app.running_sessions.insert(session_id.clone(), Some(first_line.clone()));
                     app.ephemeral_sessions.insert(session_id.clone());
                     app.ephemeral_sessions_ordered.push(session_id.clone());
+                    // Update the scroll total immediately so the new row is within
+                    // the scrollable range in this frame (each list item is one line).
+                    app.goal_list_scroll.last_total = app.flat_items().len();
                     let sys = format!("<@{}> → fresh sub-session `{}`: {}", goal_id, session_id, first_line);
                     app.push_system_message(&sys);
                     log.emit(&goal_id, logger::LogEvent::TinkerSystemMessageReceived { content: sys });
@@ -1455,6 +1458,14 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
             }
             (_, KeyCode::Up) | (_, KeyCode::Char('k')) => {
                 app.select_prev_goal();
+                KeyAction::None
+            }
+            (_, KeyCode::PageDown) => {
+                app.goal_list_scroll.scroll_down(MOUSE_SCROLL_STEP);
+                KeyAction::None
+            }
+            (_, KeyCode::PageUp) => {
+                app.goal_list_scroll.scroll_up(MOUSE_SCROLL_STEP);
                 KeyAction::None
             }
             (_, KeyCode::Enter) => match app.selected_goal() {
@@ -3404,6 +3415,118 @@ mod tests {
         );
         let on_disk = fs.read_to_string(&path).unwrap();
         assert!(on_disk.contains("tier = \"high\""), "new tier must be written to disk; got:\n{}", on_disk);
+    }
+
+    // spec (tui — Bug 1): inserting an ephemeral sub-session must immediately
+    // update goal_list_scroll.last_total so mouse scroll can reach the new row
+    // in the same frame (before the next draw call updates last_total).
+    #[test]
+    fn test_spec_ephemeral_insertion_updates_scroll_total() {
+        use crate::test_utils::MockFs;
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
+        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+
+        // Set up a MockFs with a goal TOML so that the Done event's goal-reload
+        // keeps the goal in app.goals (rather than wiping it).
+        // load_goals joins tinker_dir with "goals", so tinker_dir must be "/.tinker".
+        let fs = Arc::new(MockFs::new());
+        let tinker_dir = PathBuf::from("/.tinker");
+        let goals_dir = tinker_dir.join("goals");
+        fs.add_dir(&goals_dir);
+        let goal_path = goals_dir.join("my-goal.toml");
+        fs.add_file(
+            &goal_path,
+            "id = \"my-goal\"\nsummary = \"\"\ndescription = \"desc\"\nparent_id = \"\"\n",
+        );
+
+        let mut app = App::new();
+        app.tinker_dirs = vec![tinker_dir];
+        app.goals.push(goal::Goal {
+            id: "my-goal".into(),
+            summary: String::new(),
+            description: "desc".into(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: Some(goal_path),
+        });
+
+        // Simulate a prior render: last_total reflects 1 item (the goal itself).
+        app.goal_list_scroll.record_render(1, 8);
+        assert_eq!(app.goal_list_scroll.last_total, 1, "precondition: last_total is 1 before insertion");
+
+        // Fire a Done event with a fresh dispatch envelope — this inserts an ephemeral.
+        app.current_session_text.insert(
+            "my-goal".into(),
+            "<@my-goal|work>do the task</@my-goal|work>".into(),
+        );
+        handle_session_event(
+            &mut app,
+            SessionEvent::Done { goal_id: "my-goal".into() },
+            &spawn_tx,
+            &senders,
+            &*fs,
+            &logger::noop_sender(),
+        );
+
+        // After insertion the list has 2 items (1 goal + 1 ephemeral);
+        // last_total must reflect that immediately, before the next render.
+        assert_eq!(
+            app.goal_list_scroll.last_total, 2,
+            "last_total must be updated to 2 after ephemeral insertion so mouse scroll can reach it",
+        );
+    }
+
+    // spec (tui — Bug 2): PageDown and PageUp in Focus::Tree must scroll the
+    // goal list viewport without changing the selection.
+    #[test]
+    fn test_spec_goal_list_keyboard_viewport_scroll() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::new();
+        // Populate goals so the list has something to scroll.
+        for i in 0..10 {
+            app.goals.push(goal::Goal {
+                id: format!("goal-{}", i),
+                summary: String::new(),
+                description: String::new(),
+                parent_id: String::new(),
+                children: vec![],
+                related: vec![],
+                tier: None,
+                kind: None,
+                source_path: None,
+            });
+        }
+        // Simulate a render: 10 items, height 3 (so max_y = 7).
+        app.goal_list_scroll.record_render(10, 3);
+        app.goal_list_scroll.y = Some(0);
+        app.focus = Focus::Tree;
+
+        let sel_before = app.selected_goal;
+
+        // PageDown must scroll the viewport down.
+        handle_key(&mut app, KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.selected_goal, sel_before, "PageDown must not change selection");
+        assert!(
+            app.goal_list_scroll.y > Some(0),
+            "PageDown must advance the goal list viewport; got {:?}", app.goal_list_scroll.y,
+        );
+
+        let y_after_down = app.goal_list_scroll.y;
+
+        // PageUp must scroll the viewport back up.
+        handle_key(&mut app, KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.selected_goal, sel_before, "PageUp must not change selection");
+        assert!(
+            app.goal_list_scroll.y < y_after_down,
+            "PageUp must move the goal list viewport back toward the top; got {:?}", app.goal_list_scroll.y,
+        );
     }
 
 }
