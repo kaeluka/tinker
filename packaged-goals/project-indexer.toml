@@ -26,9 +26,5 @@ parent_id = ""
 children = []
 
 [[related]]
-id = "readme-maintainer"
-reason = "Dual documentation goals: project-indexer maintains the LLM-facing map (AGENTS.md), while readme-maintainer maintains the human-facing narrative (README.md)."
-
-[[related]]
 id = "shared-language"
 reason = "shared-language exempts LLM-targeted artifacts from its user-facing vocabulary rule; AGENTS.md, maintained by this goal, is the named canonical exemption — kept at full technical fidelity because its audience is another agent, not the user."

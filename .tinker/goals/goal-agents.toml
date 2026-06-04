@@ -149,4 +149,4 @@ reason = "tend-introspection records observables of this goal's session lifecycl
 
 [[related]]
 id = "readme-maintainer"
-reason = "readme-maintainer's 'The model' section derives its content from this goal's architecture — every goal is an agent, @goal-id dispatch, actor model; when this goal's architecture changes, that section must update. Asymmetric: readme-maintainer is a packaged goal and cannot carry a back-link to this project-local goal."
+reason = "readme-maintainer's 'The model' section derives its content from this goal's architecture — every goal is an agent, @goal-id dispatch, actor model; when this goal's architecture changes, that section must update."

@@ -60,9 +60,6 @@ reason = "jog participates as both sender and receiver of `@` messages alongside
 id = "goal-complementarity"
 reason = "`goal-complementarity` is the design rationale for why consultation quality depends on domain gap: routing to a goal with a stronger domain for the workload produces better output. This channel is the runtime mechanism; that goal is the design rationale."
 
-[[related]]
-id = "readme-maintainer"
-reason = "readme-maintainer consults @tend over the @-block protocol this goal governs to read the goal tree for README synthesis."
 
 [[children]]
 id = "no-peek"

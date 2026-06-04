@@ -48,16 +48,19 @@ tinker-built project a self-updating human entry point that cannot
 drift, because it only reflects the tree.
 """
 parent_id = ""
-children = []
+
+[[related]]
+id = "goal-agents"
+reason = "readme-maintainer's 'The model' section derives its content from this goal's architecture — every goal is an agent, @goal-id dispatch, actor model; when this goal's architecture changes, that section must update."
 
 [[related]]
 id = "project-indexer"
-reason = "Dual documentation goals: project-indexer maintains the LLM-facing map (AGENTS.md), while readme-maintainer maintains the human-facing narrative (README.md)."
+reason = "Dual documentation goals: project-indexer maintains the LLM-facing map (AGENTS.md), while readme-maintainer maintains the human-facing narrative (README.md). Asymmetric: project-indexer is a packaged goal and cannot carry a back-link to this project-local goal."
 
 [[related]]
 id = "tend"
-reason = "readme-maintainer synthesizes the human-facing README by asking @tend for the current goal tree; tend answers the read-only intent query from the goals it keeps."
+reason = "readme-maintainer synthesizes the human-facing README by asking @tend for the current goal tree; tend answers the read-only intent query from the goals it keeps. Asymmetric: tend is a packaged goal and cannot carry a back-link to this project-local goal."
 
 [[related]]
 id = "peer-consult"
-reason = "readme-maintainer's README synthesis runs over an @tend query; peer-consult governs the @-block protocol and delivery rules that carry that request."
+reason = "readme-maintainer's README synthesis runs over an @tend query; peer-consult governs the @-block protocol and delivery rules that carry that request. Asymmetric: peer-consult is a packaged goal and cannot carry a back-link to this project-local goal."

@@ -46,6 +46,11 @@ On-disk TOML format at `.tinker/goals/<id>.toml`: ancestor-directory merge (cwd-
 
 - `src/goal.rs` — `Goal` (fields include `kind: Option<String>` — `"feature"` or `"behavior"`, optional on legacy goals), `RelatedLink`, `ChildLink`, `GoalNode`; `GOAL_SCHEMA_KEYS_ORDER` (single source of truth for schema key order used in prompts and parse-error correction); `discover_tinker_dirs()`, `load_all_goals()`, `load_goals()`, `save_goal()`, `build_tree()`, `build_compact_index()` (emits `kind` in each compact index entry), `build_full_text_index()`
 
+### goal-placement
+Placement reviewer: when tend creates or edits a goal, checks that it lives in the directory matching its scope — packaged (`~/.tinker/goals/`) for content valid across any tinker project, project-local (`.tinker/goals/`) for content specific to this project — and flags drift when edits make a packaged goal project-specific.
+
+- No dedicated source file — pure behavior goal enforced through tend's session prompting at write time.
+
 ### cleanup-hook
 Pre-session cleanup: scans the project tree for `tinker-test-case:` markers left by rummage, dispatches a cheap agent to remove each one, retries up to 3 times, blocks the session if any marker survives.
 
