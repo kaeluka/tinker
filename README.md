@@ -117,9 +117,11 @@ Two axes organize them into a system rather than a list:
 **Rummage** checks whether the code does what the goal says. When something
 needs explaining — a bug, surprising output, behavior you do not trust, code
 you are about to change — rummage investigates: reads what is there, writes
-scratch tests, traces the problem from symptom to cause. When it confirms
-the code diverged from the goal, it writes a failing test and sends the
-owning goal agent a message pointing at the test.
+scratch tests, traces the problem from symptom to cause. After each finding
+it asks what else belongs there — the call sites that use the same path, the
+tests that cover the same behavior, the adjacent code that would have the
+same bug. When it confirms the code diverged from the goal, it writes a
+failing test and sends the owning goal agent a message pointing at the test.
 
 **Jog** checks for gaps between any two layers. It builds a set of things in
 each source — what the spec says, what the code does — by sending read-only
