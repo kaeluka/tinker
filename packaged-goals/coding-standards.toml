@@ -16,6 +16,8 @@ changed since, also `no` — one run per batch is enough.
 
 ## What this goal session does when it runs
 
+When the batch contains multiple source files or goals to check independently, distribute the work using fresh sub-sessions — one per file or check — rather than accumulating all checks in a single context.
+
 Three checks against the recent batch:
 
 1. **Compiler warnings and linters.** Build or check the changed code
@@ -144,5 +146,4 @@ as built. Two rules keep it tinkerable without sacrificing encapsulation:
     guardrail tests) never carry the marker.
 """
 parent_id = ""
-children = []
-related = []
+tier = "high"
