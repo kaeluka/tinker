@@ -237,7 +237,7 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
             Role::User(id) | Role::Agent(id) => id == &app.active_session,
         };
         if visible {
-            push_message_lines(&mut lines, msg);
+            push_message_lines(&mut lines, msg, msg_area.width);
         }
     }
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
@@ -278,7 +278,7 @@ fn input_pane_layout(prompt: &str, input: &str, cursor: &str, width: u16, max: u
     (height, scroll)
 }
 
-fn push_message_lines(lines: &mut Vec<Line<'static>>, msg: &crate::app::Message) {
+fn push_message_lines(lines: &mut Vec<Line<'static>>, msg: &crate::app::Message, pane_width: u16) {
     match &msg.role {
         Role::User(_) => {
             lines.push(Line::from(vec![
@@ -290,9 +290,20 @@ fn push_message_lines(lines: &mut Vec<Line<'static>>, msg: &crate::app::Message)
             ]));
         }
         Role::System => {
+            const LABEL: &str = "sys    "; // 7 chars
+            let available = (pane_width as usize).saturating_sub(LABEL.len());
+            let first_line = msg.text.lines().next().unwrap_or("");
+            let has_more = msg.text.contains('\n') || first_line.chars().count() > available;
+            let display = if has_more && available > 0 {
+                let budget = available.saturating_sub(1); // 1 for the '…' char
+                let truncated: String = first_line.chars().take(budget).collect();
+                format!("{}…", truncated)
+            } else {
+                first_line.to_string()
+            };
             lines.push(Line::from(vec![
-                Span::styled("sys    ", Style::default().fg(Color::Yellow)),
-                Span::styled(msg.text.clone(), Style::default().fg(Color::DarkGray)),
+                Span::styled(LABEL, Style::default().fg(Color::Yellow)),
+                Span::styled(display, Style::default().fg(Color::DarkGray)),
             ]));
         }
         Role::Agent(id) => {
@@ -938,7 +949,7 @@ mod tests {
             text: "triggered: `goal-a`: investigate the failing test".to_string(),
         };
         let mut lines: Vec<Line> = vec![];
-        push_message_lines(&mut lines, &msg);
+        push_message_lines(&mut lines, &msg, 200);
         assert!(!lines.is_empty(), "triggered: system message must produce at least one line");
         let text_span = lines[0].spans.iter().find(|s| s.content.contains("triggered:"));
         assert!(
@@ -952,6 +963,91 @@ mod tests {
         );
     }
 
+    /// Spec (tui): a short single-line system message must render unchanged when it fits.
+    #[test]
+    fn test_spec_system_message_short_no_truncation() {
+        let msg = crate::app::Message {
+            role: Role::System,
+            text: "hello world".to_string(),
+        };
+        let mut lines: Vec<Line> = vec![];
+        push_message_lines(&mut lines, &msg, 200);
+        let content: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            content.contains("hello world"),
+            "short single-line message must appear unchanged: got {:?}",
+            content,
+        );
+        assert!(
+            !content.contains('…'),
+            "no ellipsis for a short message that fits",
+        );
+    }
+
+    /// Spec (tui): a multi-line system message must show only the first line with '…' appended.
+    #[test]
+    fn test_spec_system_message_multiline_truncated_to_first_line() {
+        let msg = crate::app::Message {
+            role: Role::System,
+            text: "first line\nsecond line\nthird line".to_string(),
+        };
+        let mut lines: Vec<Line> = vec![];
+        push_message_lines(&mut lines, &msg, 200);
+        assert_eq!(lines.len(), 1, "multi-line system message must produce exactly one rendered line");
+        let content: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            content.contains("first line"),
+            "first line must be present: got {:?}",
+            content,
+        );
+        assert!(
+            content.contains('…'),
+            "ellipsis must be appended when message has multiple lines: got {:?}",
+            content,
+        );
+        assert!(
+            !content.contains("second line"),
+            "subsequent lines must not appear: got {:?}",
+            content,
+        );
+    }
+
+    /// Spec (tui): a system message whose first line exceeds the pane width must be truncated
+    /// to fit within that width, with '…' appended.
+    #[test]
+    fn test_spec_system_message_long_line_truncated_to_pane_width() {
+        // label is 7 chars ("sys    "), so available body width = pane_width - 7
+        let pane_width: u16 = 20; // available for body = 13 chars
+        let long_text = "a".repeat(50);
+        let msg = crate::app::Message {
+            role: Role::System,
+            text: long_text.clone(),
+        };
+        let mut lines: Vec<Line> = vec![];
+        push_message_lines(&mut lines, &msg, pane_width);
+        assert_eq!(lines.len(), 1, "long system message must produce exactly one rendered line");
+        let body: String = lines[0]
+            .spans
+            .iter()
+            .filter(|s| !s.content.starts_with("sys"))
+            .map(|s| s.content.as_ref())
+            .collect();
+        let char_count = body.chars().count();
+        let available = (pane_width as usize).saturating_sub(7);
+        assert!(
+            char_count <= available,
+            "rendered body must fit within available width ({}); got {} chars: {:?}",
+            available,
+            char_count,
+            body,
+        );
+        assert!(
+            body.contains('…'),
+            "ellipsis must be appended on truncation: got {:?}",
+            body,
+        );
+    }
+
     fn apply_filter<'a>(messages: &'a [&'a crate::app::Message], active_session: &str) -> Vec<Line<'static>> {
         let mut lines: Vec<Line> = vec![];
         for msg in messages {
@@ -960,7 +1056,7 @@ mod tests {
                 Role::User(id) | Role::Agent(id) => id == active_session,
             };
             if visible {
-                push_message_lines(&mut lines, msg);
+                push_message_lines(&mut lines, msg, 200);
             }
         }
         lines
