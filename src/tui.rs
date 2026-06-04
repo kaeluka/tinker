@@ -1,4 +1,4 @@
-use crate::app::{App, Focus, Phase, Role};
+use crate::app::{App, Focus, ModalField, Phase, Role};
 use crate::goal_session::TRIGGER_REASON_MARKER;
 use crate::goal::{build_tree, GoalNode};
 use ratatui::{
@@ -70,24 +70,31 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 }
 
-/// Render the reason-prompt modal as a centered overlay. Clears the
-/// underlying area first so the panes don't bleed through.
+/// Render the options dialog as a centered overlay. The dialog has two fields:
+/// a trigger reason (text input) and the goal's current tier (cycle selector).
+/// Clears the underlying area first so panes don't bleed through.
 fn draw_modal(frame: &mut Frame, app: &App) {
     let modal = match &app.modal {
         Some(m) => m,
         None => return,
     };
     let area = frame.area();
-    // Center a 60%-wide, 5-row box.
-    let width = (area.width as u32 * 60 / 100).max(40).min(area.width as u32) as u16;
-    let height: u16 = 5;
+
+    // Show a warning row when the tier has been changed and the goal is running.
+    let tier_changed = modal.tier != modal.initial_tier;
+    let session_running = app.running_sessions.contains_key(&modal.goal_id);
+    let show_warning = tier_changed && session_running;
+
+    // Height: 2 fields + 1 blank + 1 hint + 2 borders + optional warning row.
+    let height: u16 = if show_warning { 8 } else { 7 };
+    let width = (area.width as u32 * 60 / 100).max(44).min(area.width as u32) as u16;
     let x = area.x + area.width.saturating_sub(width) / 2;
     let y = area.y + area.height.saturating_sub(height) / 2;
     let rect = Rect { x, y, width, height };
 
     frame.render_widget(Clear, rect);
 
-    let title = format!(" Trigger reason — `{}` ", modal.goal_id);
+    let title = format!(" Options — `{}` ", modal.goal_id);
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
@@ -95,16 +102,61 @@ fn draw_modal(frame: &mut Frame, app: &App) {
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
 
-    let hint = "Enter to fire · Esc to cancel · empty reason ⇒ no reason";
-    let lines = vec![
-        Line::from(vec![
-            Span::styled("> ", Style::default().fg(Color::Yellow)),
-            Span::raw(modal.input.clone()),
-            Span::styled("█", Style::default().fg(Color::Cyan)),
-        ]),
+    let reason_focused = modal.focused_field == ModalField::Reason;
+    let tier_focused   = modal.focused_field == ModalField::Tier;
+
+    let cursor_style = Style::default().fg(Color::Cyan);
+    let label_active = Style::default().fg(Color::Yellow);
+    let label_dim    = Style::default().fg(Color::DarkGray);
+    let tier_value_style = Style::default().fg(Color::White);
+
+    // Field 1: trigger reason.
+    let reason_line = Line::from(vec![
+        Span::styled(
+            "  Reason: ",
+            if reason_focused { label_active } else { label_dim },
+        ),
+        Span::raw(modal.input.clone()),
+        if reason_focused {
+            Span::styled("█", cursor_style)
+        } else {
+            Span::raw("")
+        },
+    ]);
+
+    // Field 2: tier selector — Left/Right to cycle when focused.
+    let tier_line = Line::from(vec![
+        Span::styled(
+            "    Tier: ",
+            if tier_focused { label_active } else { label_dim },
+        ),
+        if tier_focused {
+            Span::styled("‹ ", cursor_style)
+        } else {
+            Span::styled("  ", label_dim)
+        },
+        Span::styled(modal.tier.clone(), tier_value_style),
+        if tier_focused {
+            Span::styled(" ›", cursor_style)
+        } else {
+            Span::raw("")
+        },
+    ]);
+
+    let hint = "Tab = switch field · Enter = confirm · Esc = cancel";
+    let mut lines = vec![
+        reason_line,
+        tier_line,
         Line::from(""),
-        Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))),
     ];
+    if show_warning {
+        lines.push(Line::from(Span::styled(
+            "  ⚠ tier change will reset the running session",
+            Style::default().fg(Color::Yellow),
+        )));
+    }
+    lines.push(Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))));
+
     frame.render_widget(
         Paragraph::new(lines).wrap(Wrap { trim: false }),
         inner,

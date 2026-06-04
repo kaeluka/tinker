@@ -1,6 +1,5 @@
 id = "rummage"
 kind = "behavior"
-tier = "high"
 summary = "This goal runs when any agent needs code reality, technical validation, or a counterexample: it anchors, hypothesizes, falsifies by executing the system, checks every finding for completeness (what else belongs here?), distinguishes intent questions from code drift, and produces a grounded understanding document."
 description = """
 ## WHAT
@@ -29,6 +28,7 @@ Skepticism applied before investigation cuts bad paths cheaply. Completeness app
 
 """
 parent_id = ""
+tier = "high"
 
 [[related]]
 id = "tend"

@@ -1,6 +1,6 @@
 id = "tui"
 kind = "feature"
-summary = "This goal owns the terminal interface rendering: the two-column layout with the live conversation pane on the left and the stacked goal-list, goal-text, and session-log bands on the right, plus goal-list row format, the goal-detail header (summary and tier/kind tag above the body, with in-place tier cycling), goal-ID visual consistency across surfaces, per-session conversation views, active-session switching, queue and trigger-reason display, and scroll behavior."
+summary = "This goal owns the terminal interface rendering: the two-column layout with the live conversation pane on the left and the stacked goal-list, goal-text, and session-log bands on the right, plus goal-list row format, the goal-detail header (summary and tier/kind tag above the body), goal-ID visual consistency across surfaces, per-session conversation views, active-session switching, the options dialog (trigger reason, goal settings, session-reset warning), queue and trigger-reason display, and scroll behavior."
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left
@@ -67,9 +67,16 @@ invocation for that goal in queue order — running first, then queued
 — each line carrying its glyph or index and trigger reason. The queue
 surface is read-only.
 
-**Manual triggers.** When the user triggers a goal by hand — Enter
-in the goal list — a modal text-input dialog collects the trigger
-reason.
+**Options dialog.** Pressing Enter on a goal in the goal list opens
+an options dialog with two fields: a trigger reason and the goal's
+current tier. If the tier is changed and the goal has a running
+session, the dialog warns that confirming will reset the session. On
+confirm, the trigger reason is used, the updated tier is written to
+the goal's source file, and the running session (if any) is reset.
+The options dialog is the designated home for goal and model settings
+— future settings land here, not on ad-hoc keybindings. The startup
+message and the `/help` output both mention that Enter on a goal
+opens options.
 
 ## WHY
 Tinker is meant to be watched while it works. A single REPL would
@@ -129,7 +136,7 @@ parent_id = ""
 
 [[children]]
 id = "tier-edit"
-reason = "owns the keybinding and immediate TOML write-back that makes the tier tag in the goal-detail header editable in place"
+reason = "owns the options dialog — trigger reason, goal tier, session-reset warning, and immediate write-back to the goal's source file"
 
 [[related]]
 id = "goal-agents"

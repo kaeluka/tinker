@@ -21,15 +21,30 @@ pub enum Focus {
     Tree,
 }
 
-/// State for the reason-prompt modal that pops up when the user triggers a
-/// goal via Enter in the goal tree (or `/run` with no arguments). The modal
-/// owns keyboard focus while `App.modal` is `Some`; submitting fires the goal
-/// with the typed reason, escape cancels. Closing the modal doesn't touch
-/// `App.focus`, so the previous pane focus is preserved automatically.
+/// Which field has keyboard focus inside the options dialog.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ModalField {
+    Reason,
+    Tier,
+}
+
+/// State for the options dialog opened via Enter in the goal tree. The dialog
+/// collects a trigger reason and lets the user inspect / change the goal's
+/// tier. The modal owns keyboard focus while `App.modal` is `Some`; submitting
+/// fires the goal with the typed reason (and writes a changed tier to disk),
+/// escape cancels. Closing the modal doesn't touch `App.focus`.
 #[derive(Debug, Clone)]
 pub struct ModalState {
     pub goal_id: String,
+    /// Trigger-reason text (field 1).
     pub input: String,
+    /// Tier value shown in the dialog: "mid" | "high" | "low".
+    /// "mid" is used as the display label for the absent (None) case.
+    pub tier: String,
+    /// Tier when the dialog was opened — used to detect changes.
+    pub initial_tier: String,
+    /// Which field currently has the cursor.
+    pub focused_field: ModalField,
 }
 
 

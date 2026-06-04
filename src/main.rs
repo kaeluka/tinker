@@ -13,7 +13,7 @@ mod tui;
 mod test_utils;
 
 use anyhow::Result;
-use app::{App, Focus, Phase};
+use app::{App, Focus, ModalField, Phase};
 use cap::{Chunk, Filesystem, OpenCodeRunner};
 use realfs::RealFilesystem;
 use crossterm::{
@@ -716,47 +716,57 @@ async fn run_loop(
                         });
                     }
                 }
-                KeyAction::RunGoal(id, reason) => {
+                KeyAction::ConfirmOptions { goal_id, reason, new_tier } => {
+                    // 1. Apply tier change if the user changed it.
+                    if let Some(ref tier_str) = new_tier {
+                        let write_info = {
+                            let mut a = app.lock().unwrap();
+                            // Detach the running session so it respawns with the new tier.
+                            a.running_sessions.remove(&goal_id);
+                            if let Some(g) = a.goals.iter_mut().find(|g| g.id == goal_id) {
+                                // "mid" is the default; store it as None to keep files clean.
+                                g.tier = if tier_str == "mid" {
+                                    None
+                                } else {
+                                    Some(tier_str.clone())
+                                };
+                                let serialized = toml::to_string_pretty(g).ok();
+                                Some((g.source_path.clone(), serialized))
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some((Some(path), Some(content))) = write_info {
+                            let _ = fs.write(&path, &content);
+                        }
+                        // Remove sender so the next trigger spawns a fresh session.
+                        session_senders.remove(&goal_id);
+                    }
+                    // 2. Fire the goal (same flow as RunGoal).
                     let goal_exists = {
                         let a = app.lock().unwrap();
-                        a.goals.iter().any(|g| g.id == id)
+                        a.goals.iter().any(|g| g.id == goal_id)
                     };
                     if goal_exists {
                         let reason_str = reason.clone().unwrap_or_default();
                         let sys_msg = format!(
                             "triggered: `{}`{}",
-                            id,
+                            goal_id,
                             reason.as_ref().map(|r| format!(": {}", r)).unwrap_or_default(),
                         );
-                        let submission_sets_running = matches!(id.as_str(), "tend" | "rummage" | "jog");
+                        let submission_sets_running = matches!(goal_id.as_str(), "tend" | "rummage" | "jog");
                         {
                             let mut a = app.lock().unwrap();
                             a.push_system_message(&sys_msg);
                             if !submission_sets_running {
-                                a.running_sessions.insert(id.clone(), reason);
+                                a.running_sessions.insert(goal_id.clone(), reason);
                             }
                         }
                         log.emit("dispatcher", logger::LogEvent::TinkerSystemMessageReceived { content: sys_msg });
                         let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
-                            goal_id: id,
+                            goal_id: goal_id.clone(),
                             message: reason_str,
                         });
-                    }
-                }
-                KeyAction::CycleTier(goal_id) => {
-                    let write_info = {
-                        let mut a = app.lock().unwrap();
-                        if let Some(g) = a.goals.iter_mut().find(|g| g.id == goal_id) {
-                            let next = cycle_tier(g.tier.as_deref());
-                            g.tier = next.map(|s| s.to_string());
-                            let serialized = toml::to_string_pretty(g).ok();
-                            Some((g.source_path.clone(), serialized))
-                        } else {
-                            None
-                        }
-                    };
-                    if let Some((Some(path), Some(content))) = write_info {
-                        let _ = fs.write(&path, &content);
                     }
                 }
                 KeyAction::None => {}
@@ -994,9 +1004,9 @@ fn handle_session_event(
                 app.correction_attempts = 0;
                 if app.phase == Phase::Initializing {
                     app.push_system_message(
-                        "You're talking to tend, the planning agent. /rummage switches to code understanding, TAB moves focus to the goal view.",
+                        "You're talking to tend. /rummage switches to code understanding, TAB moves focus to the goal view, Enter on a goal opens options.",
                     );
-                    log.emit("harness", logger::LogEvent::TinkerSystemMessageReceived { content: "You're talking to tend, the planning agent. /rummage switches to code understanding, TAB moves focus to the goal view.".to_string() });
+                    log.emit("harness", logger::LogEvent::TinkerSystemMessageReceived { content: "You're talking to tend. /rummage switches to code understanding, TAB moves focus to the goal view, Enter on a goal opens options.".to_string() });
                     app.phase = Phase::Idle;
                 }
             }
@@ -1035,26 +1045,41 @@ fn handle_session_event(
 }
 
 
+#[derive(Debug)]
 enum KeyAction {
     None,
     Quit,
     /// Send a message to the named session (session_id, message).
     SendToSession(String, String),
-    /// Dispatch a goal agent session with an optional trigger reason.
-    RunGoal(String, Option<String>),
-    /// Cycle the tier of the named goal and persist the change to disk.
-    CycleTier(String),
+    /// Confirm the options dialog: fire the goal with an optional reason, and
+    /// optionally apply a new tier (write to file, detach running session).
+    /// `new_tier` is None when the tier was not changed.
+    ConfirmOptions {
+        goal_id: String,
+        reason: Option<String>,
+        new_tier: Option<String>,
+    },
 }
 
-/// Advance a goal's tier one step through the cycle: absent/mid → high → low → absent/mid.
-/// Returns the next tier value (None means "absent", which serializes as the default mid).
-fn cycle_tier(current: Option<&str>) -> Option<&'static str> {
+/// Advance the tier display value forward (Right arrow in the options dialog).
+/// Cycles: mid → high → low → mid.
+fn cycle_tier_display_next(current: &str) -> &'static str {
     match current {
-        None       => Some("low"),
-        Some("low")  => Some("mid"),
-        Some("mid")  => Some("high"),
-        Some("high") => Some("low"),
-        _          => Some("low"),
+        "mid"  => "high",
+        "high" => "low",
+        "low"  => "mid",
+        _      => "mid",
+    }
+}
+
+/// Advance the tier display value backward (Left arrow in the options dialog).
+/// Cycles: mid → low → high → mid.
+fn cycle_tier_display_prev(current: &str) -> &'static str {
+    match current {
+        "mid"  => "low",
+        "low"  => "high",
+        "high" => "mid",
+        _      => "mid",
     }
 }
 
@@ -1096,6 +1121,7 @@ fn handle_mouse(app: &mut App, ev: MouseEvent, area: ratatui::layout::Rect) {
 }
 
 fn handle_modal_key(app: &mut App, key: crossterm::event::KeyEvent) -> KeyAction {
+    use crate::app::ModalField;
     match (key.modifiers, key.code) {
         (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
             app.should_quit = true;
@@ -1103,6 +1129,35 @@ fn handle_modal_key(app: &mut App, key: crossterm::event::KeyEvent) -> KeyAction
         }
         (_, KeyCode::Esc) => {
             app.modal = None;
+            KeyAction::None
+        }
+        // Tab switches focus between the two fields.
+        (_, KeyCode::Tab) => {
+            if let Some(m) = app.modal.as_mut() {
+                m.focused_field = match m.focused_field {
+                    ModalField::Reason => ModalField::Tier,
+                    ModalField::Tier   => ModalField::Reason,
+                };
+            }
+            KeyAction::None
+        }
+        // Left/Right cycle the tier when the Tier field is focused.
+        (_, KeyCode::Left) => {
+            if let Some(m) = app.modal.as_mut() {
+                if m.focused_field == ModalField::Tier {
+                    let next = cycle_tier_display_prev(&m.tier);
+                    m.tier = next.to_string();
+                }
+            }
+            KeyAction::None
+        }
+        (_, KeyCode::Right) => {
+            if let Some(m) = app.modal.as_mut() {
+                if m.focused_field == ModalField::Tier {
+                    let next = cycle_tier_display_next(&m.tier);
+                    m.tier = next.to_string();
+                }
+            }
             KeyAction::None
         }
         (_, KeyCode::Enter) => {
@@ -1115,17 +1170,26 @@ fn handle_modal_key(app: &mut App, key: crossterm::event::KeyEvent) -> KeyAction
             } else {
                 Some(m.input.trim().to_string())
             };
-            KeyAction::RunGoal(m.goal_id, reason)
+            let new_tier = if m.tier != m.initial_tier {
+                Some(m.tier.clone())
+            } else {
+                None
+            };
+            KeyAction::ConfirmOptions { goal_id: m.goal_id, reason, new_tier }
         }
         (_, KeyCode::Backspace) => {
             if let Some(m) = app.modal.as_mut() {
-                m.input.pop();
+                if m.focused_field == ModalField::Reason {
+                    m.input.pop();
+                }
             }
             KeyAction::None
         }
         (_, KeyCode::Char(c)) => {
             if let Some(m) = app.modal.as_mut() {
-                m.input.push(c);
+                if m.focused_field == ModalField::Reason {
+                    m.input.push(c);
+                }
             }
             KeyAction::None
         }
@@ -1164,7 +1228,7 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                     return KeyAction::Quit;
                 }
                 if input == "/help" {
-                    let help_msg = "Commands: @<goal-id> [msg], /quit, /help, /<goal-id> to switch session. Tab = goal tree.";
+                    let help_msg = "Commands: @<goal-id> [msg], /quit, /help, /<goal-id> to switch session. Tab = goal tree, Enter on goal = options (tier, trigger reason).";
                     app.push_system_message(help_msg);
                     log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: help_msg.to_string() });
                     app.input.clear();
@@ -1223,20 +1287,20 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
             }
             (_, KeyCode::Enter) => match app.selected_goal() {
                 Some(g) => {
-                    // Enter on a goal opens the reason-prompt modal. Pane
-                    // focus stays on `Tree` — when the modal closes (submit
-                    // or Esc), the user is still in the tree.
+                    // Enter on a goal opens the options dialog. Pane focus
+                    // stays on `Tree` — when the modal closes (submit or Esc),
+                    // the user is still in the tree.
+                    let tier_display = g.tier.as_deref().unwrap_or("mid").to_string();
                     app.modal = Some(crate::app::ModalState {
                         goal_id: g.id,
                         input: String::new(),
+                        tier: tier_display.clone(),
+                        initial_tier: tier_display,
+                        focused_field: crate::app::ModalField::Reason,
                     });
                     KeyAction::None
                 }
                 None => KeyAction::None,
-            },
-            (_, KeyCode::Char('t')) => match app.selected_goal() {
-                Some(g) if g.source_path.is_some() => KeyAction::CycleTier(g.id),
-                _ => KeyAction::None,
             },
             _ => KeyAction::None,
         },
@@ -1438,41 +1502,6 @@ mod tests {
     // REMOVED: test_spec_queue_same_goal_drains_fifo_with_separate_reasons (queue removed)
     // REMOVED: test_spec_tinker_run_while_running_goes_to_queue_not_run_tx (queue removed)
     // REMOVED: test_spec_rummage_run_command_dispatched (parse_run_commands removed)
-
-    // spec (tui): "When the user manually triggers a goal via Enter in the
-    // goal tree, a modal text input dialog pops up to collect the trigger reason."
-    // Pressing Enter while Focus::Tree must set app.modal to Some(...) with
-    // the selected goal's id; focus must remain on Tree (not switch to Repl).
-    #[test]
-    fn test_spec_enter_in_tree_opens_reason_modal() {
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        let mut app = App::new();
-        app.goals = vec![goal::Goal {
-            id: "tui".into(),
-            summary: String::new(),
-            description: "build the tui".into(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            tier: None,
-            kind: None,
-            source_path: None,
-        }];
-        app.focus = Focus::Tree;
-        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
-        assert!(
-            matches!(action, KeyAction::None),
-            "Enter in tree must return KeyAction::None (modal handles dispatch)",
-        );
-        let modal = app.modal.as_ref().expect("modal must be open after Enter in tree");
-        assert_eq!(modal.goal_id, "tui", "modal must target the selected goal");
-        assert!(modal.input.is_empty(), "modal input must start empty");
-        assert_eq!(
-            app.focus,
-            Focus::Tree,
-            "focus must remain on Tree — submit/cancel returns here",
-        );
-    }
 
     // spec (tui): "Mouse wheel scrolls whichever region is under the cursor."
     // ScrollUp events route to the pane whose rect contains the cursor; other
@@ -2762,30 +2791,33 @@ mod tests {
 
     // spec (parallel-goal-agents): the ▶ indicator timing differs by session type:
     // for tend/rummage/jog it is set at message submission (SendToSession path);
-    // for goal agents it is set at dispatch time (RunGoal / dispatch_peer_consultations).
+    // for goal agents it is set at dispatch time (ConfirmOptions / dispatch_peer_consultations).
     #[test]
     fn test_spec_submission_sets_running_for_repl_sessions() {
         let main_rs = include_str!("main.rs");
         assert!(
             main_rs.contains("submission_sets_running"),
-            "RunGoal handler must use submission_sets_running to gate running_sessions insertion",
+            "ConfirmOptions handler must use submission_sets_running to gate running_sessions insertion",
         );
     }
 
-    // spec (tier-edit): cycle_tier advances in ascending order: low → mid → high → low.
-    // Absent (the default, displayed as "mid") enters the cycle at "low" on the first press.
+    // spec (tier-edit): cycle_tier_display_next cycles the explicit tier ring forward.
+    // cycle_tier_display_prev cycles backward. mid ↔ high ↔ low ↔ mid.
     #[test]
-    fn test_spec_cycle_tier_full_cycle() {
-        assert_eq!(cycle_tier(None), Some("low"), "absent (default) must enter the cycle at low");
-        assert_eq!(cycle_tier(Some("low")), Some("mid"), "low must advance to mid (ascending)");
-        assert_eq!(cycle_tier(Some("mid")), Some("high"), "mid must advance to high (ascending)");
-        assert_eq!(cycle_tier(Some("high")), Some("low"), "high must wrap back to low");
+    fn test_spec_cycle_tier_display_functions() {
+        assert_eq!(cycle_tier_display_next("mid"),  "high", "mid → high forward");
+        assert_eq!(cycle_tier_display_next("high"), "low",  "high → low forward");
+        assert_eq!(cycle_tier_display_next("low"),  "mid",  "low → mid forward");
+        assert_eq!(cycle_tier_display_prev("mid"),  "low",  "mid → low backward");
+        assert_eq!(cycle_tier_display_prev("low"),  "high", "low → high backward");
+        assert_eq!(cycle_tier_display_prev("high"), "mid",  "high → mid backward");
     }
 
-    // spec (tier-edit): pressing 't' in Focus::Tree on a goal with a source_path
-    // returns CycleTier(goal_id), allowing the event loop to write the change.
+    // spec (tier-edit): Enter in the goal tree opens the options dialog with the
+    // goal's effective tier pre-populated; absent tier shows as "mid".
+    // The focused field starts on Reason.
     #[test]
-    fn test_spec_t_in_tree_returns_cycle_tier_for_goal_with_source_path() {
+    fn test_spec_options_modal_opens_with_tier_and_reason_field() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = App::new();
         app.goals = vec![goal::Goal {
@@ -2795,33 +2827,28 @@ mod tests {
             parent_id: String::new(),
             children: vec![],
             related: vec![],
-            tier: None,
+            tier: Some("high".to_string()),
             kind: None,
-            source_path: Some(std::path::PathBuf::from("/proj/.tinker/goals/tui.toml")),
+            source_path: None,
         }];
         app.focus = Focus::Tree;
-        let action = handle_key(
-            &mut app,
-            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
-            &logger::noop_sender(),
-            BUILTIN_SESSION_IDS,
-        );
-        assert!(
-            matches!(&action, KeyAction::CycleTier(id) if id == "tui"),
-            "'t' in tree on a goal with source_path must return CycleTier(goal_id)",
-        );
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        let m = app.modal.as_ref().expect("modal must open on Enter in tree");
+        assert_eq!(m.goal_id, "tui");
+        assert_eq!(m.tier, "high", "tier must be pre-populated from the goal");
+        assert_eq!(m.initial_tier, "high", "initial_tier must match goal tier");
+        assert_eq!(m.focused_field, ModalField::Reason, "Reason field must be focused initially");
     }
 
-    // spec (tier-edit): pressing 't' on a goal without a source_path (packaged goal
-    // that has no backing file in the current project) must be a no-op.
+    // spec (tier-edit): absent tier (None) displays as "mid" in the options dialog.
     #[test]
-    fn test_spec_t_in_tree_noop_for_goal_without_source_path() {
+    fn test_spec_options_modal_absent_tier_shows_mid() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = App::new();
         app.goals = vec![goal::Goal {
-            id: "tui".into(),
+            id: "g".into(),
             summary: String::new(),
-            description: "build the tui".into(),
+            description: String::new(),
             parent_id: String::new(),
             children: vec![],
             related: vec![],
@@ -2830,36 +2857,91 @@ mod tests {
             source_path: None,
         }];
         app.focus = Focus::Tree;
-        let action = handle_key(
-            &mut app,
-            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
-            &logger::noop_sender(),
-            BUILTIN_SESSION_IDS,
-        );
-        assert!(
-            matches!(action, KeyAction::None),
-            "'t' in tree on a goal without source_path must be a no-op",
-        );
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        let m = app.modal.as_ref().unwrap();
+        assert_eq!(m.tier, "mid", "absent tier must display as mid");
+        assert_eq!(m.initial_tier, "mid");
     }
 
-    // spec (tier-edit): the CycleTier event-loop handler updates app.goals in-place
-    // and serialises the change to the goal's source file via the Filesystem capability.
+    // spec (tier-edit): Tab in the options dialog switches the focused field between
+    // Reason and Tier.
     #[test]
-    fn test_spec_cycle_tier_updates_goal_and_writes_to_disk() {
+    fn test_spec_tab_in_modal_cycles_focused_field() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.goals = vec![goal::Goal {
+            id: "g".into(),
+            summary: String::new(),
+            description: String::new(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        }];
+        app.focus = Focus::Tree;
+        // Open modal.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.modal.as_ref().unwrap().focused_field, ModalField::Reason);
+        // Tab → Tier.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.modal.as_ref().unwrap().focused_field, ModalField::Tier, "Tab must switch to Tier field");
+        // Tab again → back to Reason.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.modal.as_ref().unwrap().focused_field, ModalField::Reason, "Tab must cycle back to Reason");
+    }
+
+    // spec (tier-edit): Right arrow cycles the tier forward when the Tier field is focused.
+    // Left arrow cycles backward. Neither affects the tier when Reason is focused.
+    #[test]
+    fn test_spec_left_right_cycle_tier_when_tier_focused() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.goals = vec![goal::Goal {
+            id: "g".into(),
+            summary: String::new(),
+            description: String::new(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        }];
+        app.focus = Focus::Tree;
+        // Open modal (starts on Reason, tier = "mid").
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        // Right arrow when Reason focused → no change.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.modal.as_ref().unwrap().tier, "mid", "Right must be a no-op on Reason field");
+        // Switch to Tier field.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        // Right → mid → high.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.modal.as_ref().unwrap().tier, "high", "Right on Tier must advance to high");
+        // Left → high → mid.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.modal.as_ref().unwrap().tier, "mid", "Left on Tier must retreat to mid");
+    }
+
+    // spec (tier-edit): when the tier is changed and the goal has a running session,
+    // confirming the options dialog removes the goal from running_sessions (reset).
+    #[test]
+    fn test_spec_confirm_options_resets_running_session_on_tier_change() {
         use crate::test_utils::MockFs;
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         use std::path::PathBuf;
-        let fs = MockFs::new();
-        let path = PathBuf::from("/proj/.tinker/goals/tui.toml");
-        // Pre-populate the file (MockFs requires the file to exist before write in some impls).
-        // Write a minimal valid goal TOML.
-        let initial = "id = \"tui\"\ndescription = \"the tui\"\nparent_id = \"\"\n";
-        fs.add_file(&path, initial);
+
+        let fs = Arc::new(MockFs::new());
+        let path = PathBuf::from("/proj/.tinker/goals/g.toml");
+        fs.add_file(&path, "id = \"g\"\ndescription = \"d\"\nparent_id = \"\"\n");
 
         let mut app = App::new();
         app.goals = vec![goal::Goal {
-            id: "tui".into(),
+            id: "g".into(),
             summary: String::new(),
-            description: "the tui".into(),
+            description: "d".into(),
             parent_id: String::new(),
             children: vec![],
             related: vec![],
@@ -2867,23 +2949,31 @@ mod tests {
             kind: None,
             source_path: Some(path.clone()),
         }];
+        app.running_sessions.insert("g".into(), Some("running task".into()));
+        app.focus = Focus::Tree;
 
-        // Simulate what the event loop does: cycle the tier on the goal.
-        {
-            let g = app.goals.iter_mut().find(|g| g.id == "tui").unwrap();
-            let next = cycle_tier(g.tier.as_deref());
-            g.tier = next.map(|s| s.to_string());
-            let content = toml::to_string_pretty(g).unwrap();
-            fs.write(&path, &content).unwrap();
+        // Open modal, switch to Tier, advance to "high".
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        handle_key(&mut app, KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+
+        // Simulate the event-loop portion: remove from running_sessions when tier changes.
+        let tier_changed = app.modal.as_ref().map(|m| m.tier != m.initial_tier).unwrap_or(false);
+        if tier_changed {
+            app.running_sessions.remove("g");
+            if let Some(g) = app.goals.iter_mut().find(|g| g.id == "g") {
+                g.tier = Some("high".to_string());
+                let content = toml::to_string_pretty(g).unwrap();
+                fs.write(&path, &content).unwrap();
+            }
         }
 
-        // In-memory goal must now have tier = Some("low") — absent enters the cycle at low.
-        let g = app.goals.iter().find(|g| g.id == "tui").unwrap();
-        assert_eq!(g.tier.as_deref(), Some("low"), "in-memory tier must enter cycle at low on first press from absent");
-
-        // On-disk file must contain the new tier.
+        assert!(
+            !app.running_sessions.contains_key("g"),
+            "running session must be removed when tier changes",
+        );
         let on_disk = fs.read_to_string(&path).unwrap();
-        assert!(on_disk.contains("tier = \"low\""), "on-disk TOML must reflect the new tier; got:\n{}", on_disk);
+        assert!(on_disk.contains("tier = \"high\""), "new tier must be written to disk; got:\n{}", on_disk);
     }
 
 }

@@ -1,19 +1,23 @@
 id = "tier-edit"
 parent_id = "tui"
 kind = "feature"
-summary = "This goal owns the TUI tier-change interaction: a keybinding on the focused goal that steps its tier up (low → mid → high → low) and writes the updated `tier` field immediately to the goal's source TOML file."
+summary = "This goal owns the options dialog opened by Enter in the goal list: it collects a trigger reason and the goal's current tier, warns when a tier change on a running session will reset it, writes the updated tier to the goal's source file on confirm, and resets the session."
 description = """
 ## WHAT
-In the goal list, a keybinding on the focused goal steps its tier up through
-low → mid → high → low and writes the updated `tier` field to the goal's
-source TOML file immediately. The goal-detail header's [kind · tier] tag reflects the new
-value at once. The action is available on any goal that has a backing file.
+In the goal list, pressing Enter opens an options dialog. The dialog has two
+fields: a trigger reason and the goal's current tier. If the tier is changed
+and the goal has a running session, the dialog warns that confirming will
+reset that session. On confirm, the updated tier is written to the goal's
+source file immediately; if a session was running, it is reset to start
+fresh on the new model. Tier is accessible only through the options dialog.
 
 ## WHY
-Changing a goal's tier by editing the TOML directly is too slow for
-experimentation. The tier tag is already visible in the goal-detail header;
-making it editable from the same surface closes the loop — the user sees the
-current tier and can change it without leaving the TUI.
+Tier change implies session reset — a consequential action that needs to be
+deliberate. The options dialog is already the surface for triggering goals
+intentionally; consolidating tier there gives the user a single, visible
+place to review and adjust goal settings before committing, with the
+consequences stated at the moment of decision. The dialog is also the
+designated home for future goal and model settings.
 """
 
 [[related]]
