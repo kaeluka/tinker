@@ -1,5 +1,6 @@
 id = "backends"
-summary = "governs: pluggable LLM backend abstraction (runner trait at composition root); opencode default (tend.md + tinker.md written at startup with path-scoped permissions) vs claude --claude (--system-prompt, streaming JSON); claude high tier pinned to claude-opus-4-8 (not opus alias) to avoid unvalidated model versions; per-backend model-tier defaults overridable via model-config; CLI error output re-injected into session so agents can reason about recovery | triggers: backend implementation; persona delivery between backends; adding third backend; startup flag changes; high-tier model pin; agent file permission rules; error handling behavior"
+kind = "feature"
+summary = "This goal owns the pluggable LLM backend abstraction — the runner trait wired at the composition root and its two implementations (opencode default with path-scoped agent files, and claude via --system-prompt and streaming JSON), including per-backend model-tier defaults, the claude high-tier pin to claude-opus-4-8, persona delivery, and re-injection of CLI error output into the session."
 description = """
 ## WHAT
 Tinker runs against a **pluggable backend** — the LLM CLI it shells

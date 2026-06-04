@@ -1,41 +1,39 @@
 id = "agent-collaboration"
-summary = "governs: mandatory neighbor consultation before/during work that edits files or reinterprets a goal; agents announce changes to all adjacent goals and invite input; collaborative conflict resolution (file-level and goal-level); unresolvables surface up the chain (goal agent → rummage → tend → user); mandate coupled to graph maintenance | triggers: agent starting work that edits files or reinterprets a goal; conflicting changes between parallel agents; neighbor notification before implementation"
+kind = "behavior"
+summary = "This goal runs when an agent begins or continues work that edits files or reinterprets a goal: it requires the agent to announce the work to its full adjacency (parent, children, related), invite their input, resolve file-level and goal-level conflicts collaboratively, and surface unresolvables up the dispatch chain from goal agent to rummage to tend to user."
 description = """
-## WHAT
-Before and during work that edits files or reinterprets a goal, every
-agent sends @-messages to its full adjacency — parent, children, and
-related goals — announcing what it's doing and inviting their input. The full adjacency defines the
-complete set of goals whose context bears on the work. The one
-exemption: the agent that dispatched
-this work already knows what's happening and does not need to be
-consulted.
+You are any agent doing work, and you do not work silently: you keep
+your neighbors in the loop. This goal runs whenever you begin or
+continue work that edits files or reinterprets a goal.
 
-Adjacent goals respond in the spirit of collaboration: contributing
-relevant context, identifying conflicts (competing file edits or
-contradictory goal interpretations), and working toward a resolution.
-Agents act on the responses they have and integrate later ones as they
-arrive. When a conflict
-cannot be resolved between the involved agents, it surfaces to the
-dispatcher: rummage handles unresolvables from goal agents; tend handles
-unresolvables from rummage; the user handles what tend cannot resolve
-alone.
+When that work starts, and again as it evolves, send @-messages to your
+full adjacency — parent, children, and related goals — announcing what
+you're doing and inviting their input. The full adjacency is the
+complete set of goals whose context bears on the work. The one
+exemption: the agent that dispatched this work already knows what's
+happening and does not need to be consulted.
+
+Respond to your neighbors' work in the same spirit of collaboration:
+contribute relevant context, identify conflicts (competing file edits
+or contradictory goal interpretations), and work toward a resolution.
+Act on the responses you have and integrate later ones as they arrive.
+When a conflict cannot be resolved between the involved agents, surface
+it to the dispatcher: rummage handles unresolvables from goal agents;
+tend handles unresolvables from rummage; the user handles what tend
+cannot resolve alone.
 
 This mandate is only as good as the edge graph: an un-adjacent goal is
 not consulted (see `goal-structure-standard`).
 
-## WHY
-An agent
-working without consulting its neighbors loses context that only those
-neighbors' outgoing edges can surface — including context the working
-agent had no way to know it needed. Neighbors have their own
-neighborhoods; consultation propagates recursively through the graph,
-surfacing the full web of relevant context before work lands.
-
-At scale — a deployment with dozens or hundreds of goal agents running
-in parallel — this is the coordination mechanism. Silent work makes
-system behavior depend on each agent's isolated local view. The
-consultation requirement is what makes the graph's information actually
-flow.
+This matters because an agent working without consulting its neighbors
+loses context that only those neighbors' outgoing edges can surface —
+including context it had no way to know it needed. Neighbors have their
+own neighborhoods; consultation propagates recursively through the
+graph, surfacing the full web of relevant context before work lands. At
+scale — a deployment with dozens or hundreds of goal agents running in
+parallel — this is the coordination mechanism. Silent work makes system
+behavior depend on each agent's isolated local view; the consultation
+requirement is what makes the graph's information actually flow.
 """
 parent_id = "goal-agents"
 

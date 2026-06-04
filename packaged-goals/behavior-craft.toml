@@ -1,0 +1,56 @@
+id = "behavior-craft"
+kind = "behavior"
+tier = "high"
+summary = "This goal runs when tend writes or edits a behavior goal (one that is triggered — runs at certain points), and holds its standard: good prompt engineering — a clear role, a stated trigger, motivation, and a deliberate choice between spelled-out steps (repeatability) and stated intent (flexibility)."
+description = """
+## WHAT
+The standard for **behavior** goals — goals that are triggered and run
+at certain points. A behavior goal is delivered verbatim as the
+operating prompt of the agent that runs it, so it is written as a good
+prompt, not as a WHAT/WHY spec. There is no template; a good behavior
+goal has:
+
+- **A role.** Open by telling the agent what it is and what it is for
+  here — its standing role.
+- **A trigger.** State when it runs, in plain language ("runs when… /
+  checks that… / ensures…"). The trigger is what tend reads to fire
+  the goal and what the agent reads to know its moment; it doubles as
+  the `summary`.
+- **Motivation.** Say why the behavior matters, not only what to do —
+  motivation lets the agent generalize to situations the prompt did
+  not foresee.
+- **A deliberate procedure choice.** Spell out ordered steps when
+  repeatability matters (the result must be the same every time);
+  state intent and trust the agent when flexibility matters (judgment
+  beats a script). Pick the point on the repeatability↔flexibility
+  axis the task calls for; default to neither.
+
+The prompt hygiene shared with every goal still applies: define terms
+before use, keep vocabulary consistent, reference other goals by id,
+lead with the load-bearing point, and prefer the shortest phrasing
+that carries the intent.
+
+## WHY
+A behavior goal's job is to make an agent act well at the right
+moment, so good prompt engineering is the right standard — the goal
+*is* the prompt. The WHAT/WHY shape (`feature-craft`) describes a
+thing to build and reads as a worse prompt for an agent that must
+*act*: it buries the trigger, omits the role, and forbids the ordered
+steps some behaviors need. This standard states its principles in its
+own words rather than pointing at any external prompt guide, because a
+goal must be self-contained.
+
+"""
+parent_id = "creative-process"
+
+[[related]]
+id = "feature-craft"
+reason = "The two content standards split by `kind`: `behavior-craft` governs behavior goals (triggered, good prompt engineering), `feature-craft` governs feature goals (WHAT/WHY, owns the artifact). Together they replace the former single content standard; tend applies whichever matches the goal's kind."
+
+[[related]]
+id = "goal-structure-standard"
+reason = "Structural twin at write time. `goal-structure-standard` owns tree organization, the `kind` field, and the natural-language summary — all applying to both kinds; `behavior-craft` owns the prompt quality of a behavior goal. Both apply on every behavior-goal edit."
+
+[[related]]
+id = "tend"
+reason = "Tend applies this standard when it classifies a goal as `behavior` and writes its trigger and body during the interview, and it is the agent that fires behavior goals at the report boundary."

@@ -1,44 +1,35 @@
 id = "no-peek"
-summary = "governs: agents access peer context through @-messages only; no reading other goals' files; edge graph is complete coupling map; compositionality: adding one edge propagates connectivity to all agents reachable through either endpoint; tend exempt as goal-tree keeper | triggers: any cross-agent information access; evaluating whether to read vs. ask; new agent-to-agent coupling; tend exemption boundary"
+kind = "behavior"
+summary = "This goal runs whenever an agent needs context another agent holds: it ensures the agent asks via an @-message rather than reading the peer goal's file, so the edge graph stays the complete coupling map, with tend exempt as the goal-tree keeper that reads files directly."
 description = """
-## WHAT
-
-Every goal is an agent. Agents access peer context by asking, not by
-reading. All information flow between agents goes through @-messages —
-an agent that needs something another agent knows sends a message; the
-recipient answers. No agent opens another goal's file directly.
-
-The edge graph — `[[related]]` and `[[children]]` links with their
-reasons — is the complete, navigable coupling map. Adding one edge A↔B
-is a local change whose connectivity propagates to every agent
-reachable through A or B, without any of them updating their own
-content. This is the compositionality property: the graph does the
-work that enumeration inside each goal otherwise would.
-
-The compact index — goal IDs, summaries, and edge reasons — is usually
-enough for an agent to decide whether to consult a peer and how to
-frame the first message. When it isn't, the agent asks; the receiving
-agent asks follow-up questions to ground the exchange.
+Whenever you need context another agent holds, you are a
+message-sender, not a file-reader: ask for it with an `@`-message
+rather than opening the peer goal's file. Every goal is an agent, and
+all information flow between agents goes through `@`-messages — you
+send a message, the recipient answers and asks follow-ups to ground
+the exchange. The compact index — goal IDs, summaries, and edge
+reasons — is usually enough to decide whom to consult and how to frame
+the first message; when it isn't, you ask.
 
 **Tend is exempt.** Tend is the goal tree's keeper — it holds the full
-tree and reads goal files directly. All other agents route
-goal-content questions through @tend rather than opening files.
+tree and reads goal files directly. Every other agent routes
+goal-content questions through `@tend` rather than opening files.
 
-## WHY
-
-File reads force explicit enumeration: every agent that needs context
-from a peer must know that peer's ID and open its file. As the goal
-tree grows, those enumerations multiply independently — the same
-content gets re-read by many agents, and the coupling lives in goal
-prose rather than in the edge structure. The graph stops being the
-source of truth.
-
-The @-message model doesn't have this failure mode. Coupling is a
-property of the graph, not of what each node has memorized about its
-neighbors. Goals can be added, split, or retired without touching
-every agent that might have been reading them. At scale, this is the
-difference between a system that stays navigable and one that drowns
-in redundant enumeration.
+This keeps the edge graph — `[[related]]` and `[[children]]` links
+with their reasons — as the complete, navigable coupling map. Adding
+one edge A↔B is a local change whose connectivity propagates to every
+agent reachable through A or B without any of them editing their own
+content; the graph does the work that enumeration inside each goal
+otherwise would. File reads break this: every agent that reads a peer
+must know its ID and open its file, so as the tree grows those
+enumerations multiply, the same content is re-read everywhere, and
+coupling lives in goal prose instead of the edge structure — the graph
+stops being the source of truth. The `@`-message model has no such
+failure mode: coupling is a property of the graph, not of what each
+node has memorized about its neighbors, so goals can be added, split,
+or retired without touching every agent that might have read them. At
+scale this is the difference between a system that stays navigable and
+one that drowns in redundant enumeration.
 """
 parent_id = "peer-consult"
 

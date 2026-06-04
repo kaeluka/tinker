@@ -1,5 +1,6 @@
 id = "user-persona"
-summary = "governs: user persona; experienced dev who doesn't read source code; needs design-partner posture (observations+questions, not verdicts); named trade-off axes not conclusions | triggers: communication style decisions; jargon avoidance; framing recommendations as Pareto trade-offs"
+kind = "behavior"
+summary = "This goal runs whenever an agent communicates with the user: it ensures the agent speaks in terms the user commands rather than raw code identifiers, names trade-off axes instead of delivering conclusions, and takes a design-partner posture pairing observations with questions or alternatives."
 description = """
 ## WHAT
 The user persona: an experienced software developer who uses AI tools

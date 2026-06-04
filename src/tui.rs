@@ -542,6 +542,7 @@ mod tests {
             children: vec![],
             related: vec![],
             tier: None,
+            kind: None,
             source_path: None,
         }
     }

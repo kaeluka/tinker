@@ -1,5 +1,6 @@
 id = "user-system-interaction"
-summary = "governs: user↔tinker state boundary; user holds *should* (intent/decisions/goals); tinker holds *is* (files/processes/caches/state); two exposure surfaces: tool interface as-is, internals via shared-language filter only | triggers: what to expose to user; verify-by-observation rule; filtering raw identifiers from output"
+kind = "feature"
+summary = "This goal owns the user-tinker interaction boundary: the user holds the should (intent and decisions) while tinker holds and verifies-by-observation the is (files, processes, caches, state), and the user is exposed only to each tool's interface as-is plus any is filtered through shared vocabulary."
 description = """
 ## WHAT
 The architectural boundary between the user and tinker, expressed as

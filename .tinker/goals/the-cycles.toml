@@ -1,5 +1,6 @@
 id = "the-cycles"
-summary = "governs: intent↔spec↔code cycle (forward: generation; backward: verification); producer/skeptic axis (tend+goal-agents vs rummage+jog); adjacency ownership (intent↔spec: tend+jog; spec↔code: goal-agents+rummage); input-observability axis; goal-complementarity as design principle | triggers: understanding where goals fit in cycle; commissioning across adjacencies; framing new goals; auditing domain complementarity"
+kind = "feature"
+summary = "This goal owns the map of tinker's agents onto the intent↔spec↔code cycle — the three-layer stack, the forward (generation) and backward (verification) directions, and the producer/skeptic and input-observability axes that place each agent and make commissioning legible."
 description = """
 ## WHAT
 The map of tinker's agents onto the intent↔spec↔code cycle. The

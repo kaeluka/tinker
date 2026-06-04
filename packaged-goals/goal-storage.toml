@@ -1,5 +1,6 @@
 id = "goal-storage"
-summary = "governs: goal file storage as TOML at .tinker/goals/<id>.toml; ancestor-directory merge (cwd-most wins on duplicates); malformed file reported without blocking siblings; session IDs in memory only (not persisted); [[children]] and [[related]] both carry id+reason | triggers: goal file format/parsing; ancestor merge behavior; schema changes affecting storage layer"
+kind = "feature"
+summary = "This goal owns the on-disk storage layer for goals: the TOML file format at .tinker/goals/<id>.toml, the ancestor-directory merge where the cwd-most version wins on duplicate ids, malformed-file reporting that does not block siblings, transparent symlink following, the intent-only rule that keeps session state out of the file, and the id+reason shape of the [[children]] and [[related]] link fields."
 description = """
 ## WHAT
 Goals are persistent files associated with a project. They live

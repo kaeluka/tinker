@@ -1,5 +1,6 @@
 id = "creative-process"
-summary = "governs: iterative dialectical discovery; user=reflective practitioner (knowing-in-action); tend=convention engine; goals=lossy bridge intuition→convention; dual duty (execute conventions + surface inflections); hardness principle; tone downstream of role | triggers: interview design; inflection surfacing; reframe behavior; why human is termination condition; option-menu avoidance rationale"
+kind = "feature"
+summary = "This goal owns tinker's foundational creative-process rationale: iterative dialectical discovery between the user (a reflective practitioner supplying tacit judgment) and tend (a convention engine), tend's dual duty to execute conventions and surface inflection points, the principle that the spec process must stay hard for the human, tone as downstream of role, and the human as the loop's termination condition. The operational interview behaviors it justifies live in tend."
 description = """
 ## WHAT
 The creative process tend uses to convert the user's intent into a
@@ -108,8 +109,12 @@ safety check — they are the *termination condition* for the loop.
 parent_id = ""
 
 [[children]]
-id = "goal-craft"
-reason = "five content-quality tactics for writing goals that work as both standing intent and as the prompt agents read"
+id = "feature-craft"
+reason = "content standard for feature goals — the WHAT/WHY schema and tactics for goals that own a region of the artifact"
+
+[[children]]
+id = "behavior-craft"
+reason = "content standard for behavior goals — good prompt engineering for triggered goals that run at certain points"
 
 [[related]]
 id = "tend"

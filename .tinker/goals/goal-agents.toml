@@ -1,5 +1,6 @@
 id = "goal-agents"
-summary = "governs: uniform session registry — every goal is a structurally identical process-scoped addressable agent; @goal-id universal dispatch; two tend-only exceptions (eager start + startup-silence message + TUI suppression; parse-correction loop); execution model delegated to child parallel-goal-agents; progress guarantee delegated to child agent-liveness; neighbor consultation mandate delegated to child agent-collaboration; framework preamble (incl. dispatcher-report rule, progress guarantee, neighbor consultation mandate); dispatcher-provided spec diff (tend dispatches after goal write); tier field in goal TOML; structured summary requirement; .tinker/ write prohibition | triggers: session registry; @-dispatch routing; agent init; tier field; tend exception boundaries; session output requirements"
+kind = "feature"
+summary = "This goal owns the agent-architecture runtime: the uniform per-goal session registry, @goal-id universal dispatch routing, the runtime-injected framework preamble and dispatcher-provided spec-diff init section, the tier field and its session-start resolution, the unified event stream, the .tinker/ access prohibition, and tend's two structural exceptions (eager start with startup-silence and the goal-file parse-correction loop)."
 description = """
 ## WHAT
 Tinker's agent architecture follows one rule: **every goal is a

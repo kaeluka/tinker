@@ -1,5 +1,6 @@
 id = "peer-consult"
-summary = "governs: @<agent-or-goal-id> one-way messaging between any session-registry agents; multi-line body (next @-line or end of reply terminates); only the @-block is delivered (not surrounding prose); actor model (no call stack, no blocking, no return value); nesting allowed; child no-peek: agents ask peers rather than reading their files | triggers: implementing @-message routing; agent-to-agent messaging; deciding when to consult; @-block scope and delivery rules; cross-agent information-access decisions"
+kind = "feature"
+summary = "This goal owns the @-block agent-to-agent messaging channel: the detection of @<agent-or-goal-id> blocks in a finalised reply, the multi-line body span and self-contained-block scoping, fire-and-forget routing to the named agent's input channel, and the system message that surfaces each exchange to the user."
 description = """
 ## WHAT
 Any agent in the session registry can send a one-way message to any

@@ -1,5 +1,6 @@
 id = "tend-introspection"
-summary = "governs: runtime introspection substrate at .tinker/logs/runtime.jsonl and .tinker/state/runtime.json; append-only event log (turns/messages/sessions/cleanup/TUI); debounced state snapshot; async non-blocking writes | triggers: adding event types; reading tend's own runtime state; session lifecycle tracking"
+kind = "feature"
+summary = "This goal owns tend's runtime introspection substrate — the append-only event log at .tinker/logs/runtime.jsonl capturing turns, messages, goal-session lifecycle, dispatch, cleanup, goal-file changes, and TUI state, plus the semantic UI state snapshot at .tinker/state/runtime.json, written async and non-blocking so tend can observe its own state."
 description = """
 ## WHAT
 A runtime introspection substrate that lets tend inspect its own

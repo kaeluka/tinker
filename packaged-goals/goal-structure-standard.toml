@@ -1,5 +1,6 @@
 id = "goal-structure-standard"
-summary = "governs: goal tree structural rules; five operations (merge/nest-down/nest-up/new-root/retire); level-of-detail coherence heuristic; parent-summary re-check when child edited; [[children]] carry id+reason per entry; symmetric related-links both-sides (per-side reason text allowed); write-time re-validation; same-scope symmetry with packaged↔local and ancestor-standard one-way exceptions; each reason describes this↔neighbor not a third party | triggers: creating/editing goals; structural placement decisions; related-link symmetry checks; child-link reason authoring"
+kind = "behavior"
+summary = "This goal runs whenever tend creates or edits a goal: it holds the tree's structural rules — the five operations (merge/nest-down/nest-up/new-root/retire), level-of-detail coherence, parent-summary re-check, id+reason on every [[children]] and [[related]] link, related-link symmetry with the packaged↔local and ancestor-standard exceptions, the `kind` field, and the natural-language summary form — and re-validates them on every write."
 description = """
 ## WHAT
 A set of structural rules tend uses to organize goals
@@ -45,12 +46,24 @@ Two TOML link primitives are kept distinct:
   interaction with the named neighbor — never a relationship between
   that neighbor and a third goal.
 
-Every goal also carries a **`summary`** field: a terse,
-grammar-stripped, keyword-dense index entry in the form `governs:
-[domain]; triggers: [situations]`, written for an agent scanning the
-tree rather than for human reading. It is the navigation index for
-the goal as a whole — the way a link reason is the navigation index
-for an edge — so it tracks the goal's current scope.
+Every goal declares a **`kind`**: either `feature` — a standing,
+untriggered claim, usually a region of the artifact (code) it owns but
+equally a foundational rationale that simply holds, described by
+`feature-craft`'s WHAT/WHY — or `behavior` — it is triggered and runs
+at certain points, described by `behavior-craft`'s good prompt
+engineering. The dividing question is whether the goal runs at a
+trigger (behavior) or stands as an untriggered claim (feature). Tend
+classifies the kind during the interview; the user never hand-labels it.
+
+Every goal also carries a **`summary`** field: a single
+natural-language sentence that is the navigation index for the goal as
+a whole — the way a link reason is the navigation index for an edge —
+so it tracks the goal's current scope. Its phrasing follows the kind:
+a feature goal states what it owns (*"This goal owns…"*), a behavior
+goal states its trigger (*"This goal runs when… / checks that… /
+ensures…"*). For a behavior goal the trigger sentence does double
+duty — it is both the run-condition tend reads to fire the goal and
+the navigation hint an agent reads to find it.
 
 The **write protocol** re-validates both coherence rules on every
 edit: it rewrites the edited goal's own `summary`, re-checks the
@@ -73,9 +86,11 @@ linked by its many dependents but carries no back-links, to avoid
 fan-in. A "produces code → coding-standards" link belongs only on a
 goal that actually authors a source module.
 
-The section schema each goal is written in — WHAT/WHY, no DECISIONS
-or SCOPE section — and the content-quality tactics are governed by
-`goal-craft`, the content twin of these structural rules.
+Content quality is governed by the two standards split on `kind`:
+`feature-craft` for feature goals (the WHAT/WHY schema and its
+tactics) and `behavior-craft` for behavior goals (good prompt
+engineering). These structural rules apply to both kinds; the content
+twin is whichever the goal's kind selects.
 
 ## WHY
 Defaulting to new, flat files for every request creates "cognitive
@@ -95,8 +110,12 @@ pulling full text.
 parent_id = ""
 
 [[related]]
-id = "goal-craft"
-reason = "Content-quality counterpart to this goal's structural rules, and owner of the WHAT/WHY section schema. Structure ensures tree integrity (parent-summary coherence, symmetric related-links, merge/nest operations); content ensures each file is a clean prompt (anchored claims, positive framing, orthogonality, goals-as-prompts, synthesis over enumeration). Both apply on every edit."
+id = "feature-craft"
+reason = "Content-quality counterpart for `feature` goals, and owner of the WHAT/WHY section schema. Structure ensures tree integrity (parent-summary coherence, symmetric related-links, merge/nest operations); `feature-craft` ensures each feature file is a clean spec-prompt (anchored claims, positive framing, orthogonality, synthesis over enumeration). Both apply on every feature-goal edit."
+
+[[related]]
+id = "behavior-craft"
+reason = "Content-quality counterpart for `behavior` goals. These structural rules (placement, links, the `kind` field, the natural-language summary) apply to behavior goals too; `behavior-craft` governs the prompt quality of the behavior body. Both apply on every behavior-goal edit."
 
 [[related]]
 id = "goal-storage"
@@ -108,7 +127,7 @@ reason = "no-peek relies on the symmetry and reason-accuracy this goal enforces 
 
 [[related]]
 id = "tend"
-reason = "This goal owns the `summary` field format (terse, governs+triggers, rewritten on every edit) alongside the WHAT/WHY structure. Tend's write procedure authors the summary by deferring here, holding no copy of the rule. Both goals apply on every edit: this goal defines the form, tend executes it."
+reason = "This goal owns the `summary` field form (one natural-language sentence, kind-flavored, rewritten on every edit), the `kind` field, and the structural rules. Tend's write procedure authors the summary and classifies the kind by deferring here, holding no copy of the rule. This goal defines the form; tend executes it."
 
 [[related]]
 id = "goal-complementarity"

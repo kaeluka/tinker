@@ -1,5 +1,6 @@
 id = "the-false-promise"
-summary = "governs: foundational diagnosis; cognitive debt from AI laundering implementation as quasi-spec; necessity of durable intent layer (goals) separate from code | triggers: architecture questions; why goals exist; why tinker separates intent from implementation"
+kind = "feature"
+summary = "This goal owns tinker's foundational diagnosis — the rationale that coding assistants launder AI implementation guesses into a quasi-specification and force a vet-or-trust choice, which justifies extracting intent into a durable Goals layer separate from code."
 description = """
 ## WHAT
 The foundational diagnosis that justifies tinker's architecture.
@@ -25,5 +26,5 @@ id = "user-system-interaction"
 reason = "architectural boundary: user holds the should (intent), tinker holds the is (state) — governs what surfaces to the user"
 
 [[related]]
-id = "goal-craft"
-reason = "`goal-craft`'s sparseness tactic and anchor test apply this goal's antidote recursively at the goal layer — keeping goal files themselves free of laundered AI content, the same way this diagnosis rejects laundered AI code. Asymmetric: `goal-craft` is a global goal and cannot carry a back-link to this project-local goal."
+id = "feature-craft"
+reason = "`feature-craft`'s sparseness tactic and anchor test apply this goal's antidote recursively at the goal layer — keeping goal files themselves free of laundered AI content, the same way this diagnosis rejects laundered AI code. Asymmetric: `feature-craft` is a global goal and cannot carry a back-link to this project-local goal."

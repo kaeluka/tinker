@@ -1,5 +1,6 @@
 id = "model-config"
-summary = "governs: .tinker/config.toml model overrides; six slots (high/mid/low × claude/opencode); optional slots fall back to built-in defaults; self-documenting starter template written only when file absent (never overwrites) | triggers: model tier override behavior; config file parsing; starter template generation"
+kind = "feature"
+summary = "This goal owns the .tinker/config.toml model-override file: six optional per-backend tier slots (high/mid/low for claude and opencode) that fall back to built-in defaults, plus the self-documenting starter template written only when no config file exists."
 description = """
 ## WHAT
 A `.tinker/config.toml` file that overrides which model each tier

@@ -1384,6 +1384,7 @@ mod tests {
             children: vec![],
             related: vec![],
             tier: None,
+            kind: None,
             source_path: None,
         }];
         app.focus = Focus::Tree;
@@ -1848,6 +1849,7 @@ mod tests {
             children: vec![],
             related: vec![],
             tier: None,
+            kind: None,
             source_path: None,
         });
 
@@ -1875,9 +1877,9 @@ mod tests {
         let (senders, _, _) = make_test_session_senders(&msg_tx);
         let goals = vec![
             goal::Goal { id: "tui".into(), summary: String::new(), description: String::new(),
-                parent_id: String::new(), children: vec![], related: vec![], tier: None, source_path: None },
+                parent_id: String::new(), children: vec![], related: vec![], kind: None, tier: None, source_path: None },
             goal::Goal { id: "rummage".into(), summary: String::new(), description: String::new(),
-                parent_id: String::new(), children: vec![], related: vec![], tier: None, source_path: None },
+                parent_id: String::new(), children: vec![], related: vec![], kind: None, tier: None, source_path: None },
         ];
         let ids = known_agent_ids(&senders, &goals);
         assert!(ids.contains(&"tend"), "registry agent must be included");
@@ -2485,7 +2487,7 @@ mod tests {
         for id in ["goal-a", "goal-b"] {
             app.goals.push(goal::Goal {
                 id: id.into(), summary: String::new(), description: String::new(),
-                parent_id: String::new(), children: vec![], related: vec![], tier: None, source_path: None,
+                parent_id: String::new(), children: vec![], related: vec![], kind: None, tier: None, source_path: None,
             });
         }
         // Mark goal-a as already running.
@@ -2522,6 +2524,7 @@ mod tests {
             children: vec![],
             related: vec![],
             tier: None,
+            kind: None,
             source_path: None,
         });
 
@@ -2562,6 +2565,7 @@ mod tests {
             children: vec![],
             related: vec![],
             tier: None,
+            kind: None,
             source_path: None,
         });
 
@@ -2607,6 +2611,7 @@ mod tests {
                 children: vec![],
                 related: vec![],
                 tier: None,
+                kind: None,
                 source_path: None,
             });
         }

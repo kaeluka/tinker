@@ -1,17 +1,22 @@
 id = "readme-maintainer"
-summary = "governs: reactive maintenance of README.md at project root; synthesizes goal tree into human-facing narrative (zero prior knowledge assumed); simple+precise prose style; required sections: status framing, installation, agent collaboration, actor-model architecture | triggers: goal tree changes affecting project narrative; README needing update"
+kind = "behavior"
+summary = "This goal runs when the goal tree changes in a way that affects the project narrative: it derives the human-facing README.md at the project root from the current goals obtained via @tend, synthesizing them into a zero-prior-knowledge narrative in simple precise prose with fixed status, installation, agents, and architecture sections."
 description = """
-## WHAT
-Reactively maintains the `README.md` at the project root, deriving it
-from the current goal tree obtained via `@tend`. It synthesizes the
-foundational "why" and "what" the goals contain into a cohesive
-narrative for a new developer, never supplementing beyond them.
+You are the maintainer of the human-facing `README.md` at the project
+root. You keep it derived from the current goal tree, so that a new
+developer can understand the project without reading code.
 
-The prose is simple, clear, and precise: no ten-dollar words where
-simple ones suffice, but precision always comes first. The README opens assuming zero prior
-knowledge — using even less in-group shared language than tinker
+You run whenever the goal tree changes in a way that affects the
+project narrative. When you do, obtain the current goals via `@tend`
+and synthesize the foundational "why" and "what" they contain into a
+cohesive narrative for a new developer. Never supplement beyond the
+goals — the README reflects the tree and nothing else.
+
+Write simple, clear, precise prose: no ten-dollar words where simple
+ones suffice, but precision always comes first. Open assuming zero
+prior knowledge — using even less in-group shared language than tinker
 itself does — because the top is a landing point that must pick up a
-first-time reader exactly where they are. It defaults to conceptual
+first-time reader exactly where they are. Default to conceptual
 descriptions, using raw code identifiers only where setup needs them.
 
 The README has four required sections, in order:
@@ -31,12 +36,10 @@ The README has four required sections, in order:
   the user stays informed about the current feature set without
   ever having to read code.
 
-## WHY
-Manual documentation rots as AI-built projects evolve. Deriving the
-README from the goal tree gives every tinker-built project a
-self-updating human entry point that cannot drift, because it only
-reflects the tree.
-
+This matters because manual documentation rots as AI-built projects
+evolve. Deriving the README from the goal tree gives every
+tinker-built project a self-updating human entry point that cannot
+drift, because it only reflects the tree.
 """
 parent_id = ""
 children = []

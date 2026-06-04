@@ -1,6 +1,7 @@
 id = "rummage"
+kind = "behavior"
 tier = "high"
-summary = "governs: code understanding and debugging arm for all agents; investigation (anchor, hypothesize, falsify, integrate); tinker tests; intent question vs code drift distinction; code drift fix path (@tend for ownership → durable test → dispatch owning agent) | triggers: any agent needing code reality; code investigation; debugging; spec↔code gap suspected; intent question vs code drift"
+summary = "This goal runs when any agent needs code reality, technical validation, or a counterexample: it anchors, hypothesizes, and falsifies by executing the system, distinguishes an intent question (surface to tend and the user) from code drift (consult tend for ownership, write a durable failing test, then dispatch the owning goal), and produces a grounded understanding document."
 description = """
 ## WHAT
 

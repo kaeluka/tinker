@@ -1,5 +1,6 @@
 id = "coding-standards"
-summary = "governs: standing coding standards; five sections: capability-based DI (effects as traits at composition root); ladder of polymorphism (simplest rung); tests-as-guardrails (test_spec_/test_security_ marking); security.md threat model; tinkerability (observable internals + tinker-test-case: markers) | triggers: any source code write; spec-test coverage audit; security review; marker convention"
+kind = "behavior"
+summary = "This goal runs whenever a batch produces source-code changes and checks that the changed code conforms to the standing coding standards (capability-based dependency injection, the ladder of polymorphism, tests-as-guardrails with spec and security markers, the security.md threat model, and tinkerability) while auditing spec-test coverage in both directions."
 description = """
 Apply these coding standards to any code in this project.
 

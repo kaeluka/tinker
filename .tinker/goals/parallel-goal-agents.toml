@@ -1,5 +1,6 @@
 id = "parallel-goal-agents"
-summary = "governs: concurrent goal agent execution in shared main working directory; conflict avoidance via agent-collaboration consultation mandate; cleanup-hook runs in main tree before each agent's first turn | triggers: parallel agent execution; conflict avoidance between concurrent agents; dispatch throughput"
+kind = "feature"
+summary = "This goal owns the execution model for goal agents: they run directly in the shared main working directory and may be active concurrently, relying on agent-collaboration's consultation mandate to avoid write conflicts rather than on merge infrastructure."
 description = """
 ## WHAT
 

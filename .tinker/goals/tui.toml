@@ -1,5 +1,6 @@
 id = "tui"
-summary = "governs: three-pane TUI (conversation left; goal-list/text/session-log right at 25/50/25%); per-session conversation view; queue visibility (dim ▶ running; dim [N] queued; coloured goal ID for running goal; no exemptions — tend/rummage/jog ▶ starts at message submission; goal agents ▶ starts at dispatch; both clear on Done; full listing in goal-text region); auto-follow scroll; active-agent tag (goal-id>); /<goal-id> switches active session; each agent's messages labeled with goal-id; modal trigger-reason dialog | triggers: TUI layout/rendering changes; queue display; scroll behavior; agent-switch UX; message label rendering; per-session filtering; ▶ timing trigger; goal ID colour"
+kind = "feature"
+summary = "This goal owns the terminal interface rendering: the two-column layout with the live conversation pane on the left and the stacked goal-list, goal-text, and session-log bands on the right, plus per-session conversation views, active-session switching, queue and trigger-reason display, and scroll behavior."
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left

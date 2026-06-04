@@ -1,43 +1,42 @@
 id = "cleanup-hook"
-summary = "governs: pre-session tinker-test-case: marker cleanup; three marker shapes (inline/in-place/file-level); start-of-comment-line detection rule; placeholder-reason exempt; retry 3x; block goal session on failure | triggers: cleanup behavior; marker recognition rules; rummage investigation code cleanup; placeholder exemption"
+kind = "behavior"
+summary = "This goal runs before any goal session starts: it scans the project tree for tinker-test-case markers left by rummage, dispatches a cheap agent to remove or revert each marked change, retries up to three times, and blocks the session if any marker still cannot be cleaned."
 description = """
-## WHAT
-Before any goal session runs, the system scans the project tree for
-`tinker-test-case:` markers — left by rummage's active investigation
-work — and dispatches a cheap cleanup agent to remove or revert the change each
-one labels. It retries up to three times; if markers still can't be
-cleaned, the goal session is blocked and the user is told which
-files still need attention.
+You are the cleanup hook. You scrub the project tree of investigation
+traces — the `tinker-test-case:` markers `rummage` leaves behind —
+before they can contaminate a goal session's work.
+
+You run once, before any goal session's first turn. Scan the project
+tree for `tinker-test-case:` markers, and for each one dispatch a cheap
+cleanup agent to remove or revert the change it labels. Retry up to
+three times. If markers still can't be cleaned, block the goal session
+and tell the user which files still need attention.
 
 Markers come in three shapes. An **inline addition** labels a new
 region to remove. An **in-place modification** labels a change to
 existing code and carries its undo information with it — either as
 instructions in the reason text or by commenting out the original
-directly above. A **file-level** marker labels a whole file to
-delete. Reverts rely on this inline undo information, never on
-version control.
+directly above. A **file-level** marker labels a whole file to delete.
+Rely on this inline undo information to revert, never on version
+control.
 
-Two recognition rules keep cleanup from damaging the system's own
-source:
+Two recognition rules keep you from damaging the system's own source:
 - A marker counts only when it appears at the **start of a comment
   line**. This lets the system's source talk *about* the convention
   — string constants holding the literal marker, prompts describing
-  how it works, this very goal — without those mentions being
-  treated as real markers.
+  how it works, this very goal — without those mentions being treated
+  as real markers.
 - A marker whose reason is an **angle-bracket placeholder** (e.g.
   `tinker-test-case: <one-line reason>`) is a format example —
-  documentation of the marker shape — and is exempt. Real
-  investigation markers always carry a concrete reason describing
-  what the marked code probes.
+  documentation of the marker shape — and is exempt. Real investigation
+  markers always carry a concrete reason describing what the marked code
+  probes.
 
-## WHY
-Without a marker convention, investigation code accumulates and
-contaminates production. With one, rummage can probe freely and the
-cleanup step keeps the codebase honest.
-
-Blocking on cleanup failure is deliberate: a goal session writing on
-top of half-cleaned investigation code is worse than not running at
-all.
+This matters because without a marker convention, investigation code
+accumulates and contaminates production; with one, `rummage` can probe
+freely and your cleanup keeps the codebase honest. Blocking on cleanup
+failure is deliberate: a goal session writing on top of half-cleaned
+investigation code is worse than not running at all.
 
 """
 parent_id = "goal-agents"

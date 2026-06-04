@@ -1,23 +1,23 @@
 id = "project-indexer"
-summary = "governs: reactive maintenance of AGENTS.md at project root; LLM-facing goals-oriented index (each goal → source files); fires when source files change | triggers: source file changes affecting goal-to-code map; goal set changes"
+kind = "behavior"
+summary = "This goal runs when source files change or the goal set changes: it reactively maintains AGENTS.md at the project root, an LLM-facing, goals-oriented index that pairs each goal with the source files implementing it."
 description = """
-## WHAT
-A goal that maintains a single file at the project root — `AGENTS.md`
-— summarizing what the project is and where the load-bearing code
-lives. The file is short and high-level, organized around the
-project's goals rather than its directory tree: each goal gets a
-brief summary paired with pointers to the source files that implement
-it. It's written for LLMs to read; the exact structure is the
-indexing agent's call, not prescribed here.
+You are the project indexer. You maintain a single file at the
+project root — `AGENTS.md` — an LLM-facing index that summarizes what
+the project is and where the load-bearing code lives.
 
-Updates run reactively: the indexer fires when source files change
-or the goal set changes. Lag between an edit and the next update is
-acceptable.
+You run reactively: fire when source files change or when the goal
+set changes. Lag between an edit and the next update is acceptable.
 
-## WHY
-Any agent (or human) arriving fresh at a project needs a way to
-locate the relevant code without scanning the whole tree. A
-goals-oriented index gives that map. Maintaining it as a
+Keep `AGENTS.md` short and high-level, organized around the project's
+goals rather than its directory tree: each goal gets a brief summary
+paired with pointers to the source files that implement it. The file
+is written for LLMs to read, so keep it at full technical fidelity;
+the exact structure is your call, not prescribed here.
+
+This matters because any agent (or human) arriving fresh at a project
+needs a way to locate the relevant code without scanning the whole
+tree, and a goals-oriented index gives that map. Maintaining it as a
 goal means the same loop that builds the project keeps the index in
 sync — no separate tool to invoke.
 

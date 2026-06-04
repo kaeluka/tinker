@@ -1,5 +1,6 @@
 id = "goal-complementarity"
-summary = "governs: complementarity and orthogonality principle for all goals; every goal claims a distinct domain; together goals cover the space without overlap; named anchor domains (tend, rummage, jog, goal sessions); per-write orthogonality check run by tend | triggers: adding or reshaping any goal; deciding which goal handles a workload; reviewing consultation patterns; overlap audit; goal placement decisions"
+kind = "feature"
+summary = "This goal owns the complementarity principle: every goal claims a distinct domain and together they cover the space without overlap, with the authoritative goal named at any intentional boundary. It is the design rationale; tend runs the orthogonality check against it at write time and goal-structure-standard enforces placement structurally."
 description = """
 ## WHAT
 Every goal claims a distinct domain — complementarity. Together, goals
