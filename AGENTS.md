@@ -26,8 +26,14 @@ Terminal interface: two-column layout (conversation pane left; goal-list / goal-
 ### goal-agents
 Agent-architecture runtime: uniform per-goal session registry, `@goal-id` universal dispatch, framework preamble (VCS rules, `.tinker/` prohibition, implementation-ownership mandate, message-passing and neighbor-consultation sections), session init messages, startup-silence for `tend`, parse-correction loop.
 
-- `src/goal_session.rs` — framework preamble constants (`VCS_RULES`, `TINKER_DIR_WRITE_RULES`, `IMPLEMENTATION_OWNERSHIP_MANDATE`, `MESSAGE_PASSING_AND_PROGRESS_SECTIONS`, `NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE`), `TRIGGER_REASON_MARKER` (sentinel `\x01` char prefixed to trigger-reason messages for TUI identification), `goal_agent_framework_preamble()`, `session_init_message()`, `goal_agent_lean_init_message()`, `build_neighborhood_table()`, `run_goal()`, `run_silent()`, `SessionEvent`
-- `src/main.rs` — session registry (`running_sessions`, `SpawnGoalRequest`), `dispatch_peer_consultations()`, `handle_session_event()`, `tend_*` prompt builders, `goal_agent_system_prompt()`, main event loop
+- `src/goal_session.rs` — framework preamble constants (`VCS_RULES`, `TINKER_DIR_WRITE_RULES`, `IMPLEMENTATION_OWNERSHIP_MANDATE`, `MESSAGE_PASSING_AND_PROGRESS_SECTIONS`, `NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE`, `FRESH_DISPATCH_INSTRUCTIONS`), `TRIGGER_REASON_MARKER` (sentinel `\x01` char prefixed to trigger-reason messages for TUI identification), `goal_agent_framework_preamble()`, `session_init_message()`, `goal_agent_lean_init_message()`, `build_neighborhood_table()`, `run_goal()`, `run_silent()`, `SessionEvent`; also `fresh_subsession_init_message()` and `fresh_subsession_lean_init_message()` (init builders for ephemeral sub-sessions)
+- `src/main.rs` — session registry (`running_sessions`, `SpawnGoalRequest`), `FreshSessionConfig` (ephemeral sub-session spawn config), `parse_fresh_dispatches()` (extracts `<@goal-id|label>…` envelopes), ephemeral-session spawn/retire logic in the main event loop (`ephemeral_sessions` tracking, `fresh_session_counter`), `dispatch_peer_consultations()`, `handle_session_event()`, `tend_*` prompt builders, `goal_agent_system_prompt()`, main event loop
+
+### fresh-agents
+Fresh-dispatch mechanism: goal agents send `<@their-own-goal-id|label>…</@their-own-goal-id|label>` envelopes to fan out sub-tasks to ephemeral sub-sessions of themselves; each sub-session is bounded and focused, retires when the next batch begins, and cannot spawn further sub-sessions (one level deep only).
+
+- `src/goal_session.rs` — `FRESH_DISPATCH_INSTRUCTIONS` (protocol section injected into every regular and lean init message but excluded from the framework preamble, so sub-sessions don't receive it); `fresh_subsession_init_message()` and `fresh_subsession_lean_init_message()` (build the init for an ephemeral sub-session: ephemeral identity, parent-goal id, optional correlation label, task body, and the no-further-spawning constraint)
+- `src/main.rs` — `FreshSessionConfig` (carries `session_id`, `dispatcher_id`, `label`, neighbor list); `parse_fresh_dispatches()` (regex-based extraction of fresh-dispatch envelopes, ignores envelopes from already-ephemeral sessions); ephemeral spawn path in the main loop (unique `~counter` id, inserts into `session_senders` and `app.ephemeral_sessions`, feeds task via `try_send`); retire step that removes completed ephemeral entries from `session_senders` and `app.ephemeral_sessions`
 
 ### backends
 Pluggable LLM backend abstraction: `OpenCodeRunner` trait wired at the composition root, two implementations (opencode default with path-scoped agent files; claude via `--claude` flag with streaming JSON), per-backend model-tier defaults, persona delivery, CLI-error re-injection.
@@ -75,6 +81,6 @@ CLI argument handling: validates incoming flags against the recognised set, unkn
 
 ## Shared infrastructure (no dedicated goal)
 
-- `src/app.rs` — `App` (central mutable state shared by TUI and event loop), `Message`, `Role`, `Focus`, `Phase`, `ModalState`, `ScrollState`
+- `src/app.rs` — `App` (central mutable state shared by TUI and event loop; includes `ephemeral_sessions: HashSet<String>` and `fresh_session_counter: u64` for fresh-dispatch tracking), `Message`, `Role`, `Focus`, `Phase`, `ModalState`, `ScrollState`
 - `src/realfs.rs` — `RealFilesystem` (implements `Filesystem` for the real OS; the test double lives in `src/test_utils.rs`)
 - `src/test_utils.rs` — `MockFilesystem` and helpers used by unit tests

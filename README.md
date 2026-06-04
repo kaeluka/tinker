@@ -180,11 +180,18 @@ get pulled in as the work calls for them.
 
 ## Architecture
 
-Every goal is an agent — a persistent, addressable session. Any agent can
-send a message to any other by name. There is no central dispatcher. When a
-goal session finds a gap it cannot resolve, it messages rummage. When rummage
-needs intent context, it messages tend. When jog wants to read the spec, it
-messages tend. The exchange resolves without you brokering it.
+Every goal is an agent — an addressable session that persists for the
+project's lifetime. When a goal needs to distribute parallel work, it can
+dispatch ephemeral sub-sessions of itself: bounded contexts that run
+concurrently, then retire when their batch completes. These sub-sessions appear
+in the session view while active and participate in the same message-passing
+protocol as any other agent; they simply do not outlive their task.
+
+Any agent — persistent or ephemeral — can send a message to any other by name.
+There is no central dispatcher. When a goal session finds a gap it cannot
+resolve, it messages rummage. When rummage needs intent context, it messages
+tend. When jog wants to read the spec, it messages tend. The exchange resolves
+without you brokering it.
 
 This is an actor model applied to specification documents. The goals are not
 passive files waiting for a human to notice conflicts. They are live sessions

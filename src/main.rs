@@ -13,7 +13,7 @@ mod tui;
 mod test_utils;
 
 use anyhow::Result;
-use app::{App, Focus, ModalField, Phase};
+use app::{App, Focus, Phase};
 use cap::{Chunk, Filesystem, OpenCodeRunner};
 use realfs::RealFilesystem;
 use crossterm::{
@@ -32,6 +32,8 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{io, path::PathBuf, sync::{Arc, Mutex}, time::Duration};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
+
+type RunnerQuad = (Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>);
 
 fn packaged_tend_goal() -> Goal {
     const TOML: &str = include_str!("../packaged-goals/tend.toml");
@@ -80,19 +82,40 @@ fn tend_init_prompt_full_context(goals_summary: &str, neighbor_section: &str) ->
     )
 }
 
+/// Configuration for spawning an ephemeral fresh sub-session. Produced when
+/// a `<@{parent_id}|label>` envelope is detected in a goal agent's output.
+struct FreshSessionConfig {
+    /// Unique ID for the ephemeral session in the registry (e.g. "fresh-agents~1").
+    session_id: String,
+    /// Optional correlation label provided by the dispatcher (the part after `|`).
+    label: Option<String>,
+    /// Goal ID of the dispatching agent — also the goal whose description and
+    /// neighbors the fresh sub-session inherits.
+    dispatcher_id: String,
+}
+
 /// Lazy-spawn request: sent when `@goal-id` arrives and that agent isn't in
 /// the session registry yet, or when the user triggers a goal via the tree UI.
+/// When `fresh_session` is `Some`, the request spawns an ephemeral sub-session
+/// rather than a persistent goal session.
 struct SpawnGoalRequest {
     goal_id: String,
     /// The dispatch message — trigger reason for first turn, peer message for
     /// subsequent turns routed before the session was alive.
     message: String,
+    /// When set, spawn as an ephemeral fresh sub-session using this config.
+    fresh_session: Option<FreshSessionConfig>,
 }
 
 /// Persistent goal agent loop. One task per spawned goal agent.
 /// Receives messages via `msg_rx`, runs the LLM with session resumption, and
 /// emits SessionEvents back on `session_tx`. Cleanup hook fires only before
-/// the first LLM turn of a new session (llm_session_id is None).
+/// the first LLM turn of a new session (llm_session_id is None) and is
+/// skipped when `skip_cleanup` is true (used by ephemeral fresh sub-sessions).
+///
+/// When `init_message_override` is `Some`, that string is used verbatim as
+/// the first-turn init message instead of building from `session_init_message`.
+/// Used by fresh sub-sessions to inject their focused task context.
 // Each parameter is a distinct capability or config value; grouping into a
 // struct would obscure the injected-capability boundary without reducing complexity.
 #[allow(clippy::too_many_arguments)]
@@ -108,13 +131,16 @@ async fn goal_agent_loop(
     log: logger::LogSender,
     backend_name: String,
     lean_init: bool,
+    init_message_override: Option<String>,
+    skip_cleanup: bool,
 ) {
     let goal_id = goal.id.clone();
     let mut llm_session_id: Option<String> = None;
 
     while let Some(dispatch_msg) = msg_rx.recv().await {
         // Cleanup hook: fires only before the first turn of a new session.
-        if llm_session_id.is_none() {
+        // Skipped for ephemeral fresh sub-sessions (skip_cleanup = true).
+        if !skip_cleanup && llm_session_id.is_none() {
             let cleanup_t0 = std::time::Instant::now();
             let cleanup_result = cleanup::run_cleanup(oc_cleanup.as_ref(), fs.as_ref(), &work_dir).await;
             let cleanup_ms = cleanup_t0.elapsed().as_millis() as u64;
@@ -155,7 +181,8 @@ async fn goal_agent_loop(
             }
         }
 
-        // Build the LLM message. First turn: full framework preamble + reason.
+        // Build the LLM message. First turn: full framework preamble + reason
+        // (or init_message_override for fresh sub-sessions).
         // Subsequent turns: forward the dispatch message directly.
         let llm_message = if llm_session_id.is_none() {
             let compact_index = {
@@ -176,7 +203,9 @@ async fn goal_agent_loop(
             log.emit("goal_session", logger::LogEvent::GoalSessionStarted {
                 goal_id: goal_id.clone(),
             });
-            if lean_init {
+            if let Some(ref override_init) = init_message_override {
+                override_init.clone()
+            } else if lean_init {
                 goal_session::goal_agent_lean_init_message(&goal, Some(&dispatch_msg), &compact_index)
             } else {
                 goal_session::session_init_message(&goal, Some(&dispatch_msg), &compact_index)
@@ -313,8 +342,7 @@ async fn main() -> Result<()> {
 
     // Four runner instances: high-tier (tend/rummage/jog + other high goals),
     // mid-tier (default goal sessions), low-tier (low goal sessions), cleanup (cheapest).
-    let (oc_goal_high, oc_goal, oc_goal_low, oc_cleanup_runner):
-        (Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>) = if use_claude {
+    let (oc_goal_high, oc_goal, oc_goal_low, oc_cleanup_runner): RunnerQuad = if use_claude {
         let tinker_m = model_config.claude_high(CLAUDE_TINKER_MODEL);
         let goal_m = model_config.claude_mid(CLAUDE_GOAL_MODEL);
         let cleanup_m = model_config.claude_low(CLAUDE_SCHEDULER_MODEL);
@@ -507,7 +535,7 @@ async fn run_loop(
         let log_t = log.clone();
         let backend_t = backend_name.to_string();
         tokio::spawn(async move {
-            goal_agent_loop(tend_goal, tend_rx, session_tx_t, oc_t, oc_cleanup_t, fs_t, work_dir_t, app_ref, log_t, backend_t, false).await;
+            goal_agent_loop(tend_goal, tend_rx, session_tx_t, oc_t, oc_cleanup_t, fs_t, work_dir_t, app_ref, log_t, backend_t, false, None, false).await;
         });
         let _ = tend_tx.try_send(trigger);
     }
@@ -516,11 +544,79 @@ async fn run_loop(
         // Draw
         terminal.draw(|f| tui::draw(f, &mut app.lock().unwrap()))?;
 
+        // Batch-start retirement: retire completed ephemeral sessions only after
+        // the whole batch has gone idle (running_sessions is empty). This prevents
+        // retiring sub-session A while concurrent siblings B and C from the same
+        // batch are still active — matching the spec's "retire at the start of the
+        // next batch" semantics.
+        if app.lock().unwrap().running_sessions.is_empty() {
+            let completed = app.lock().unwrap().retire_completed_ephemeral_sessions();
+            for id in completed {
+                session_senders.remove(&id);
+            }
+        }
+
         // Drain lazy goal-agent spawn requests. For each request:
-        // - If the goal is already in the registry: route the message.
-        // - If not: create a channel, register it, spawn a persistent task.
+        // - Fresh sub-session (fresh_session is Some): always create a new ephemeral
+        //   entry with the sub-session's unique ID and a custom init message.
+        // - Persistent goal agent (fresh_session is None): if already in the registry,
+        //   route the message; otherwise create a channel, register it, spawn a task.
         while let Ok(req) = goal_spawn_rx.try_recv() {
-            if let Some(tx) = session_senders.get(&req.goal_id) {
+            if let Some(fresh) = req.fresh_session {
+                // Fresh sub-session: unique ID, ephemeral, custom init.
+                let goal = app.lock().unwrap().goals.iter().find(|g| g.id == fresh.dispatcher_id).cloned();
+                if let Some(dispatcher_goal) = goal {
+                    let (msg_tx_fresh, msg_rx_fresh) = mpsc::channel::<String>(16);
+                    session_senders.insert(fresh.session_id.clone(), msg_tx_fresh.clone());
+                    let lean_init_fresh = backend_name == "claude";
+                    let compact_index = {
+                        let a = app.lock().unwrap();
+                        if a.goals.is_empty() { "[]".to_string() }
+                        else { goal::build_compact_index(&a.goals) }
+                    };
+                    let init_msg = if lean_init_fresh {
+                        goal_session::fresh_subsession_lean_init_message(
+                            &dispatcher_goal,
+                            fresh.label.as_deref(),
+                            &req.message,
+                            &compact_index,
+                        )
+                    } else {
+                        goal_session::fresh_subsession_init_message(
+                            &dispatcher_goal,
+                            fresh.label.as_deref(),
+                            &req.message,
+                            &compact_index,
+                        )
+                    };
+                    // Clone dispatcher goal with the ephemeral session ID for event tracking.
+                    let mut fresh_goal = dispatcher_goal.clone();
+                    fresh_goal.id = fresh.session_id.clone();
+                    // Inherit the dispatcher's tier so high/low-tier goals get the
+                    // correct runner for their fresh sub-sessions.
+                    let oc_for_fresh = match dispatcher_goal.tier.as_deref() {
+                        Some("high") => oc_goal_high.clone(),
+                        Some("low") => oc_goal_low.clone(),
+                        _ => oc_goal.clone(),
+                    };
+                    let session_tx_fresh = session_tx.clone();
+                    let oc_cleanup_fresh = oc_cleanup_runner.clone();
+                    let fs_fresh = fs.clone();
+                    let app_ref_fresh = app.clone();
+                    let log_fresh = log.clone();
+                    let backend_fresh = backend_name.to_string();
+                    let work_dir_fresh = work_dir.clone();
+                    let _ = msg_tx_fresh.try_send(req.message);
+                    tokio::spawn(async move {
+                        goal_agent_loop(
+                            fresh_goal, msg_rx_fresh, session_tx_fresh,
+                            oc_for_fresh, oc_cleanup_fresh, fs_fresh,
+                            work_dir_fresh, app_ref_fresh, log_fresh, backend_fresh,
+                            lean_init_fresh, Some(init_msg), true,
+                        ).await;
+                    });
+                }
+            } else if let Some(tx) = session_senders.get(&req.goal_id) {
                 let _ = tx.try_send(req.message);
             } else {
                 let goal = app.lock().unwrap().goals.iter().find(|g| g.id == req.goal_id).cloned();
@@ -546,6 +642,7 @@ async fn run_loop(
                             goal, msg_rx_goal, session_tx_goal,
                             oc_for_goal, oc_cleanup_goal, fs_goal,
                             work_dir_goal, app_ref_goal, log_goal, backend_goal, lean_init_goal,
+                            None, false,
                         ).await;
                     });
                 }
@@ -677,6 +774,7 @@ async fn run_loop(
                         let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
                             goal_id: session_id,
                             message: msg,
+                            fresh_session: None,
                         });
                     }
                 }
@@ -730,6 +828,7 @@ async fn run_loop(
                         let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
                             goal_id: goal_id.clone(),
                             message: reason_str,
+                            fresh_session: None,
                         });
                     }
                 }
@@ -828,6 +927,73 @@ fn parse_at_commands(text: &str, known_ids: &[&str]) -> Vec<(String, String)> {
     out
 }
 
+/// Extracts `<@{sender_id}|{label}>…</@{sender_id}|{label}>` fresh-dispatch
+/// envelopes from a finalised agent reply.
+///
+/// A fresh-dispatch envelope is addressed to the sender's own goal ID with a
+/// `|label` suffix — this distinguishes it from a normal peer-consult message.
+/// The label may be empty (`<@my-goal|>`) when correlation is not needed.
+///
+/// Returns `(label, message)` pairs where `label` is `None` for an empty label
+/// and `Some("tag")` otherwise. Multi-line bodies are collected just like the
+/// normal @-command parser.
+fn parse_fresh_dispatches(text: &str, sender_id: &str) -> Vec<(Option<String>, String)> {
+    let open_prefix = format!("<@{}|", sender_id);
+    let mut out: Vec<(Option<String>, String)> = Vec::new();
+    let lines: Vec<&str> = text.lines().collect();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        if let Some(rest) = trimmed.strip_prefix(open_prefix.as_str()) {
+            // Extract the label from rest up to the first '>'.
+            if let Some(label_end) = rest.find('>') {
+                let label_str = &rest[..label_end];
+                let label = if label_str.is_empty() { None } else { Some(label_str.to_string()) };
+                let close_tag = format!("</@{}|{}>", sender_id, label_str);
+                let after_open = &rest[label_end + 1..];
+
+                if let Some(close_pos) = after_open.find(close_tag.as_str()) {
+                    let content = after_open[..close_pos].trim().to_string();
+                    if !content.is_empty() {
+                        out.push((label, content));
+                    }
+                    i += 1;
+                } else {
+                    // Multi-line: collect body lines until close tag.
+                    let mut body_lines: Vec<String> = Vec::new();
+                    let inline = after_open.trim().to_string();
+                    if !inline.is_empty() {
+                        body_lines.push(inline);
+                    }
+                    i += 1;
+                    while i < lines.len() {
+                        let inner = lines[i].trim();
+                        if let Some(close_pos) = inner.find(close_tag.as_str()) {
+                            let before = inner[..close_pos].trim();
+                            if !before.is_empty() {
+                                body_lines.push(before.to_string());
+                            }
+                            i += 1;
+                            break;
+                        } else {
+                            body_lines.push(lines[i].to_string());
+                            i += 1;
+                        }
+                    }
+                    let msg = body_lines.join("\n").trim().to_string();
+                    if !msg.is_empty() {
+                        out.push((label, msg));
+                    }
+                }
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 /// Deliver peer consultations collected from a completed agent reply.
 /// Routes to the session registry for known agents; triggers lazy spawn via
 /// `goal_spawn_tx` for goal IDs not yet in the registry.
@@ -859,6 +1025,7 @@ fn dispatch_peer_consultations(
             let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
                 goal_id: recipient.clone(),
                 message: formatted,
+                fresh_session: None,
             });
         }
         if is_goal_agent {
@@ -977,6 +1144,46 @@ fn handle_session_event(
             let known_ids = known_agent_ids(session_senders, &app.goals);
             let consultations = parse_at_commands(&session_text, &known_ids);
             dispatch_peer_consultations(app, &goal_id, &consultations, session_senders, goal_spawn_tx, log);
+
+            // Fresh-dispatch: scan for <@{goal_id}|label> envelopes and spawn
+            // ephemeral sub-sessions for each one found. Uses the base goal_id
+            // (stripping any ~counter suffix for ephemeral sessions) so that a
+            // fresh sub-session's own output is never treated as spawning more
+            // sub-sessions — decomposition is one level deep.
+            let base_id = if let Some(tilde_pos) = goal_id.find('~') {
+                &goal_id[..tilde_pos]
+            } else {
+                goal_id.as_str()
+            };
+            // Only goal agents can spawn fresh sub-sessions; skip for interactive
+            // built-ins (tend / rummage / jog) and for ephemeral sessions themselves.
+            let is_ephemeral = goal_id.contains('~');
+            let is_interactive = matches!(goal_id.as_str(), "tend" | "rummage" | "jog");
+            if !is_ephemeral && !is_interactive {
+                let fresh_dispatches = parse_fresh_dispatches(&session_text, base_id);
+                for (label, task) in fresh_dispatches {
+                    app.fresh_session_counter += 1;
+                    let counter = app.fresh_session_counter;
+                    let session_id = format!("{}~{}", base_id, counter);
+                    // Mark the ephemeral session as running so the TUI shows it.
+                    let first_line = task.lines().next().unwrap_or("").to_string();
+                    app.running_sessions.insert(session_id.clone(), Some(first_line.clone()));
+                    app.ephemeral_sessions.insert(session_id.clone());
+                    let sys = format!("<@{}> → fresh sub-session `{}`: {}", goal_id, session_id, first_line);
+                    app.push_system_message(&sys);
+                    log.emit(&goal_id, logger::LogEvent::TinkerSystemMessageReceived { content: sys });
+                    let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
+                        goal_id: base_id.to_string(),
+                        message: task,
+                        fresh_session: Some(FreshSessionConfig {
+                            session_id,
+                            label,
+                            dispatcher_id: base_id.to_string(),
+                        }),
+                    });
+                }
+            }
+
             // Silence detection: if the session produced no output at all, prompt
             // the agent to surface what happened. Applies uniformly to all sessions.
             if session_text.trim().is_empty()
@@ -1107,20 +1314,20 @@ fn handle_modal_key(app: &mut App, key: crossterm::event::KeyEvent) -> KeyAction
         }
         // Left/Right cycle the tier when the Tier field is focused.
         (_, KeyCode::Left) => {
-            if let Some(m) = app.modal.as_mut() {
-                if m.focused_field == ModalField::Tier {
-                    let next = cycle_tier_display_prev(&m.tier);
-                    m.tier = next.to_string();
-                }
+            if let Some(m) = app.modal.as_mut()
+                && m.focused_field == ModalField::Tier
+            {
+                let next = cycle_tier_display_prev(&m.tier);
+                m.tier = next.to_string();
             }
             KeyAction::None
         }
         (_, KeyCode::Right) => {
-            if let Some(m) = app.modal.as_mut() {
-                if m.focused_field == ModalField::Tier {
-                    let next = cycle_tier_display_next(&m.tier);
-                    m.tier = next.to_string();
-                }
+            if let Some(m) = app.modal.as_mut()
+                && m.focused_field == ModalField::Tier
+            {
+                let next = cycle_tier_display_next(&m.tier);
+                m.tier = next.to_string();
             }
             KeyAction::None
         }
@@ -1142,18 +1349,18 @@ fn handle_modal_key(app: &mut App, key: crossterm::event::KeyEvent) -> KeyAction
             KeyAction::ConfirmOptions { goal_id: m.goal_id, reason, new_tier }
         }
         (_, KeyCode::Backspace) => {
-            if let Some(m) = app.modal.as_mut() {
-                if m.focused_field == ModalField::Reason {
-                    m.input.pop();
-                }
+            if let Some(m) = app.modal.as_mut()
+                && m.focused_field == ModalField::Reason
+            {
+                m.input.pop();
             }
             KeyAction::None
         }
         (_, KeyCode::Char(c)) => {
-            if let Some(m) = app.modal.as_mut() {
-                if m.focused_field == ModalField::Reason {
-                    m.input.push(c);
-                }
+            if let Some(m) = app.modal.as_mut()
+                && m.focused_field == ModalField::Reason
+            {
+                m.input.push(c);
             }
             KeyAction::None
         }
@@ -1274,6 +1481,7 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::ModalField;
 
     fn make_test_session_senders(
         msg_tx: &mpsc::Sender<String>,
@@ -2798,6 +3006,345 @@ mod tests {
         // Left → high → mid.
         handle_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
         assert_eq!(app.modal.as_ref().unwrap().tier, "mid", "Left on Tier must retreat to mid");
+    }
+
+    // spec (fresh-agents): parse_fresh_dispatches extracts <@sender|label>…</@sender|label>
+    // inline envelopes from a completed agent reply.
+    #[test]
+    fn test_spec_fresh_agents_parse_fresh_dispatch_with_label() {
+        let text = "<@my-goal|analyze>do the analysis</@my-goal|analyze>";
+        let results = parse_fresh_dispatches(text, "my-goal");
+        assert_eq!(results.len(), 1, "one fresh dispatch must be extracted");
+        assert_eq!(results[0].0, Some("analyze".to_string()), "label must be extracted");
+        assert_eq!(results[0].1, "do the analysis", "task must be extracted");
+    }
+
+    // spec (fresh-agents): parse_fresh_dispatches handles an empty label (the |
+    // separator is present but the label part is empty) — label returns None.
+    #[test]
+    fn test_spec_fresh_agents_parse_fresh_dispatch_empty_label() {
+        let text = "<@my-goal|>do the thing</@my-goal|>";
+        let results = parse_fresh_dispatches(text, "my-goal");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, None, "empty label must map to None");
+        assert_eq!(results[0].1, "do the thing");
+    }
+
+    // spec (fresh-agents): parse_fresh_dispatches collects multi-line bodies.
+    #[test]
+    fn test_spec_fresh_agents_parse_fresh_dispatch_multiline() {
+        let text = "<@my-goal|sub1>\nfirst line\nsecond line\n</@my-goal|sub1>";
+        let results = parse_fresh_dispatches(text, "my-goal");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].1.contains("first line"), "multi-line body must include first line");
+        assert!(results[0].1.contains("second line"), "multi-line body must include second line");
+    }
+
+    // spec (fresh-agents): parse_fresh_dispatches only matches the sender's own
+    // goal ID — normal <@other-id> envelopes are ignored.
+    #[test]
+    fn test_spec_fresh_agents_parse_does_not_match_normal_at_commands() {
+        let text = "<@other-goal>some message</@other-goal>";
+        let results = parse_fresh_dispatches(text, "my-goal");
+        assert_eq!(results.len(), 0, "normal @-commands must not match fresh-dispatch parser");
+    }
+
+    // spec (fresh-agents): parse_fresh_dispatches ignores empty envelopes.
+    #[test]
+    fn test_spec_fresh_agents_parse_empty_envelope_ignored() {
+        let text = "<@my-goal|sub1></@my-goal|sub1>";
+        let results = parse_fresh_dispatches(text, "my-goal");
+        assert_eq!(results.len(), 0, "empty fresh dispatch envelope must be ignored");
+    }
+
+    // spec (fresh-agents): multiple fresh dispatches in one reply are all extracted.
+    #[test]
+    fn test_spec_fresh_agents_parse_multiple_dispatches() {
+        let text = "<@g|a>task a</@g|a>\n<@g|b>task b</@g|b>";
+        let results = parse_fresh_dispatches(text, "g");
+        assert_eq!(results.len(), 2, "both fresh dispatches must be extracted");
+        assert_eq!(results[0].0, Some("a".to_string()));
+        assert_eq!(results[1].0, Some("b".to_string()));
+    }
+
+    // spec (fresh-agents): when a goal session done event contains a fresh dispatch,
+    // handle_session_event enqueues a SpawnGoalRequest with fresh_session set,
+    // adds the ephemeral session ID to app.ephemeral_sessions, and inserts it in
+    // running_sessions so it is visible in the TUI.
+    #[test]
+    fn test_spec_fresh_agents_done_event_spawns_ephemeral_session() {
+        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
+        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+
+        let mut app = App::new();
+        app.goals.push(goal::Goal {
+            id: "my-goal".into(),
+            summary: String::new(),
+            description: "the goal".into(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        });
+
+        // Simulate a session text containing a fresh dispatch envelope.
+        app.current_session_text.insert(
+            "my-goal".into(),
+            "<@my-goal|work>analyse the module</@my-goal|work>".into(),
+        );
+
+        handle_session_event(
+            &mut app,
+            SessionEvent::Done { goal_id: "my-goal".into() },
+            &spawn_tx,
+            &senders,
+            &crate::realfs::RealFilesystem,
+            &logger::noop_sender(),
+        );
+
+        // A SpawnGoalRequest with fresh_session set must have been enqueued.
+        let req = spawn_rx.try_recv().expect("fresh dispatch must enqueue a spawn request");
+        let fresh = req.fresh_session.expect("spawn request must carry fresh_session config");
+        assert!(fresh.session_id.starts_with("my-goal~"), "ephemeral ID must start with dispatcher id + ~");
+        assert_eq!(fresh.label, Some("work".to_string()), "label must be preserved");
+        assert_eq!(fresh.dispatcher_id, "my-goal");
+
+        // The ephemeral session must be in both ephemeral_sessions and running_sessions.
+        assert!(
+            app.ephemeral_sessions.contains(&fresh.session_id),
+            "ephemeral session must be tracked in app.ephemeral_sessions",
+        );
+        assert!(
+            app.running_sessions.contains_key(&fresh.session_id),
+            "ephemeral session must appear in running_sessions for TUI visibility",
+        );
+    }
+
+    // spec (fresh-agents): fresh dispatch is NOT triggered for ephemeral sessions
+    // (IDs containing '~') — decomposition is one level deep.
+    #[test]
+    fn test_spec_fresh_agents_ephemeral_cannot_spawn_more_fresh_sessions() {
+        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
+        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+
+        let mut app = App::new();
+        app.goals.push(goal::Goal {
+            id: "my-goal".into(),
+            summary: String::new(),
+            description: "the goal".into(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        });
+
+        // An ephemeral session ID contains '~'.
+        app.current_session_text.insert(
+            "my-goal~1".into(),
+            "<@my-goal|sub>nested dispatch</@my-goal|sub>".into(),
+        );
+
+        handle_session_event(
+            &mut app,
+            SessionEvent::Done { goal_id: "my-goal~1".into() },
+            &spawn_tx,
+            &senders,
+            &crate::realfs::RealFilesystem,
+            &logger::noop_sender(),
+        );
+
+        // No fresh spawn must be enqueued (the normal @-command routing may fire,
+        // but no fresh_session spawn).
+        let maybe_fresh = spawn_rx.try_recv().ok()
+            .filter(|r| r.fresh_session.is_some());
+        assert!(maybe_fresh.is_none(), "ephemeral session must not spawn further fresh sub-sessions");
+    }
+
+    // spec (fresh-agents): fresh dispatch is NOT triggered for interactive
+    // sessions (tend / rummage / jog).
+    #[test]
+    fn test_spec_fresh_agents_interactive_agents_cannot_fresh_dispatch() {
+        for agent_id in &["tend", "rummage", "jog"] {
+            let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
+            let (msg_tx, _) = mpsc::channel::<String>(1);
+            let (senders, _, _) = make_test_session_senders(&msg_tx);
+
+            let mut app = App::new();
+            // An interactive agent emits a fresh-dispatch envelope in its output.
+            app.current_session_text.insert(
+                agent_id.to_string(),
+                format!("<@{}|sub>some task</@{}|sub>", agent_id, agent_id),
+            );
+
+            handle_session_event(
+                &mut app,
+                SessionEvent::Done { goal_id: agent_id.to_string() },
+                &spawn_tx,
+                &senders,
+                &crate::realfs::RealFilesystem,
+                &logger::noop_sender(),
+            );
+
+            let maybe_fresh = spawn_rx.try_recv().ok()
+                .filter(|r| r.fresh_session.is_some());
+            assert!(
+                maybe_fresh.is_none(),
+                "{agent_id} must not trigger fresh dispatch (interactive session)",
+            );
+        }
+    }
+
+    // spec (fresh-agents): the ephemeral session ID counter increments with each
+    // fresh dispatch, producing unique IDs for concurrent sub-sessions.
+    #[test]
+    fn test_spec_fresh_agents_counter_increments_per_dispatch() {
+        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
+        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+
+        let mut app = App::new();
+        app.goals.push(goal::Goal {
+            id: "g".into(),
+            summary: String::new(),
+            description: "the goal".into(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        });
+
+        app.current_session_text.insert(
+            "g".into(),
+            "<@g|a>task a</@g|a>\n<@g|b>task b</@g|b>".into(),
+        );
+
+        handle_session_event(
+            &mut app,
+            SessionEvent::Done { goal_id: "g".into() },
+            &spawn_tx,
+            &senders,
+            &crate::realfs::RealFilesystem,
+            &logger::noop_sender(),
+        );
+
+        let req1 = spawn_rx.try_recv().expect("first spawn request");
+        let req2 = spawn_rx.try_recv().expect("second spawn request");
+        let id1 = req1.fresh_session.unwrap().session_id;
+        let id2 = req2.fresh_session.unwrap().session_id;
+        assert_ne!(id1, id2, "each fresh sub-session must have a unique ID");
+        assert!(id1.starts_with("g~"), "id1 must use parent~ prefix");
+        assert!(id2.starts_with("g~"), "id2 must use parent~ prefix");
+    }
+
+    // spec (fresh-agents): the fresh session spawn request carries the task
+    // message from the dispatcher's fresh-dispatch envelope.
+    #[test]
+    fn test_spec_fresh_agents_spawn_request_carries_task() {
+        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
+        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+
+        let mut app = App::new();
+        app.goals.push(goal::Goal {
+            id: "g".into(),
+            summary: String::new(),
+            description: "the goal".into(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        });
+        app.current_session_text.insert(
+            "g".into(),
+            "<@g|check>review auth module</@g|check>".into(),
+        );
+
+        handle_session_event(
+            &mut app,
+            SessionEvent::Done { goal_id: "g".into() },
+            &spawn_tx,
+            &senders,
+            &crate::realfs::RealFilesystem,
+            &logger::noop_sender(),
+        );
+
+        let req = spawn_rx.try_recv().expect("spawn request must be enqueued");
+        assert_eq!(req.message, "review auth module", "spawn request must carry the task verbatim");
+    }
+
+    // spec (fresh-agents): completed ephemeral sessions are removed from
+    // ephemeral_sessions and their IDs returned for channel cleanup.
+    #[test]
+    fn test_spec_fresh_agents_completed_ephemeral_sessions_are_retired() {
+        let mut app = App::new();
+        // Register two ephemeral sessions.
+        app.ephemeral_sessions.insert("g~1".into());
+        app.ephemeral_sessions.insert("g~2".into());
+        // g~1 is still running; g~2 has finished.
+        app.running_sessions.insert("g~1".into(), Some("task".into()));
+
+        let retired = app.retire_completed_ephemeral_sessions();
+
+        assert_eq!(retired, vec!["g~2".to_string()],
+            "only the completed session must be returned for cleanup");
+        assert!(
+            !app.ephemeral_sessions.contains("g~2"),
+            "completed session must be removed from ephemeral_sessions",
+        );
+        assert!(
+            app.ephemeral_sessions.contains("g~1"),
+            "running ephemeral session must remain in ephemeral_sessions",
+        );
+    }
+
+    // spec (fresh-agents): retirement is gated on running_sessions being empty —
+    // a completed ephemeral session is NOT retired while concurrent siblings from
+    // the same batch are still active. Retirement happens at batch-end (idle), not
+    // immediately on Done.
+    #[test]
+    fn test_spec_fresh_agents_retirement_waits_for_batch_end() {
+        let main_rs = include_str!("main.rs");
+        // The batch-end guard must be present in the production code.
+        assert!(
+            main_rs.contains("running_sessions.is_empty()"),
+            "retirement must be gated on running_sessions.is_empty() (batch-end check)",
+        );
+        // The guarded retirement call must come BEFORE the spawn drain loop
+        // (retire before new batch starts), not after the event drain (which
+        // would retire immediately on Done while siblings may still be running).
+        let guard_pos = main_rs.find("running_sessions.is_empty()").unwrap();
+        let spawn_drain_pos = main_rs.find("while let Ok(req) = goal_spawn_rx.try_recv()").unwrap();
+        assert!(
+            guard_pos < spawn_drain_pos,
+            "batch-end retirement guard must appear before the spawn drain loop, \
+             not after the event drain (guard pos {guard_pos} must be < spawn drain pos {spawn_drain_pos})",
+        );
+    }
+
+    // spec (fresh-agents): fresh sub-sessions inherit the dispatcher's tier —
+    // the spawn path uses `match dispatcher_goal.tier` rather than a hardcoded
+    // oc_goal fallback, so high- and low-tier dispatchers get the correct runner.
+    #[test]
+    fn test_spec_fresh_agents_inherits_dispatcher_tier() {
+        let main_rs = include_str!("main.rs");
+        // The fresh sub-session spawn path must use a tier match identical in
+        // structure to the persistent-session path, not a fixed oc_goal.clone().
+        assert!(
+            main_rs.contains("match dispatcher_goal.tier.as_deref()"),
+            "fresh sub-session spawn must dispatch via tier match on dispatcher_goal.tier",
+        );
+        // Both high and low arms must reference the correct runners.
+        let pos = main_rs.find("match dispatcher_goal.tier.as_deref()").unwrap();
+        let snippet = &main_rs[pos..pos + 300];
+        assert!(snippet.contains("oc_goal_high"), "fresh tier match must wire Some(\"high\") to oc_goal_high");
+        assert!(snippet.contains("oc_goal_low"),  "fresh tier match must wire Some(\"low\") to oc_goal_low");
+        assert!(snippet.contains("oc_goal.clone()"), "fresh tier match must fall back to oc_goal for mid/absent");
     }
 
     // spec (tier-edit): when the tier is changed and the goal has a running session,

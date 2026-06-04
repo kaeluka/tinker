@@ -154,3 +154,7 @@ reason = "readme-maintainer's 'The model' section derives its content from this 
 [[related]]
 id = "tier-edit"
 reason = "tier-edit owns the TUI keybinding that mutates the tier field this goal defines — the interaction surface for the value this goal's tier semantics govern."
+
+[[related]]
+id = "fresh-agents"
+reason = "fresh-agents adds an ephemeral entry type to the session registry — sub-sessions that appear during a batch and are retired on batch-start; the session lifecycle this goal governs applies to both permanent and ephemeral entries."

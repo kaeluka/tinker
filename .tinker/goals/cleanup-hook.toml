@@ -1,12 +1,12 @@
 id = "cleanup-hook"
 kind = "behavior"
-summary = "This goal runs before any goal session starts: it scans the project tree for tinker-test-case markers left by rummage, dispatches a cheap agent to remove or revert each marked change, retries up to three times, and blocks the session if any marker still cannot be cleaned."
+summary = "This goal runs before any permanent goal session starts (not before fresh sub-sessions): it scans the project tree for tinker-test-case markers left by rummage, dispatches a cheap agent to remove or revert each marked change, retries up to three times, and blocks the session if any marker still cannot be cleaned."
 description = """
 You are the cleanup hook. You scrub the project tree of investigation
 traces — the `tinker-test-case:` markers `rummage` leaves behind —
 before they can contaminate a goal session's work.
 
-You run once, before any goal session's first turn. Scan the project
+You run once, before any permanent goal session's first turn. Fresh sub-sessions (ephemeral, spawned mid-batch) skip this hook — they run in an already-clean workspace. Scan the project
 tree for `tinker-test-case:` markers, and for each one dispatch a cheap
 cleanup agent to remove or revert the change it labels. Retry up to
 three times. If markers still can't be cleaned, block the goal session

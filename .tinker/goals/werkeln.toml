@@ -1,0 +1,20 @@
+id = "werkeln"
+kind = "feature"
+summary = "This goal owns the goals-pane label animation: when any goal session is active, the static 'Goals' text cycles through German dialect verbs for working, doing, building, and tinkering — drawn from Bavarian, Swabian, Alemannic, Kölsch, Plattdeutsch, Viennese, and Ruhrpott — and reverts to 'Goals' when no session is running."
+description = """
+## WHAT
+
+When one or more goal sessions are active, the goal-list pane label animates. The static word "Goals" is replaced by a cycling sequence of German dialect verbs meaning working, doing, building, or tinkering. The rest of the label is unchanged: `$verb > id1, id2, …`. The label reverts to "Goals" when no session is running.
+
+The verb list, drawn from dialect families across the German-speaking world:
+`hackeln` (Austro-Bavarian), `schaffe` (Swabian/Alemannic), `werchle` (Swiss German), `chrampfe` (Swiss German — work hard), `malochen` (Ruhrpott, from Yiddish מְלָאכָה), `schaffn` (Bavarian), `wörken` (Plattdeutsch), `maken` (Plattdeutsch), `tüfteln` (dialect — to tinker), `frickeln` (dialect — to fiddle), `rackern` (dialect — to toil), `wurschteln` (Austro-Bavarian — to muddle through), `doktern` (dialect — to fiddle/fix), `dun` (Kölsch — to do), `buckeln` (dialect — bent over work), `schuften` (dialect — to graft), `basteln` (widespread — to build/tinker).
+
+## WHY
+
+Tinker should carry the user's personality. The user speaks German dialects and loves them. Cycling dialect verbs for "working" is fun and gives the tool a voice that is distinctly theirs.
+"""
+parent_id = "tui"
+
+[[related]]
+id = "shared-language"
+reason = "The verb list is a user-facing vocabulary surface; shared-language governs every user-facing text surface tui renders. Asymmetric: shared-language is a packaged goal and carries no back-link."

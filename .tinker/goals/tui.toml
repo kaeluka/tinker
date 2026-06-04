@@ -138,6 +138,10 @@ parent_id = ""
 id = "tier-edit"
 reason = "owns the options dialog — trigger reason, goal tier, session-reset warning, and immediate write-back to the goal's source file"
 
+[[children]]
+id = "werkeln"
+reason = "owns the goals-pane label animation — cycling German dialect verbs when any goal session is running"
+
 [[related]]
 id = "goal-agents"
 reason = "goal-agents defines the session registry (making /<goal-id> switching universal), the tier field and its session-start resolution, and the startup-silence exception for tend. TUI suppression of tend's startup output and the detail-pane tier/kind tag display are governed here."
@@ -157,3 +161,7 @@ reason = "The `@` message stream between agents appears in the conversation pane
 [[related]]
 id = "tend-introspection"
 reason = "tend-introspection's introspection substrate captures this goal's structural state (selection, focus, scroll, queue snapshot) in its state file and event log; when tui's structural state model changes, the substrate's captured fields must change."
+
+[[related]]
+id = "fresh-agents"
+reason = "fresh sub-sessions are visible in the session view while active; tui governs how they are rendered and distinguished from permanent sessions."

@@ -90,6 +90,37 @@ pub const MESSAGE_PASSING_AND_PROGRESS_SECTIONS: &str =
      - **Any other error**: reason about it — route to a peer, ask `@tend` for \
      clarification, or report the obstacle to your dispatcher.";
 
+/// Fresh-dispatch protocol instructions. Injected into regular goal-session
+/// init messages so agents know how to distribute parallel sub-tasks. Not
+/// included in the framework preamble (system prompt) or in fresh sub-session
+/// init messages — ensuring decomposition is one level deep.
+pub const FRESH_DISPATCH_INSTRUCTIONS: &str =
+    "## Fresh dispatch\n\
+     \n\
+     When a task has independent sub-tasks that don't need to share context, \
+     default to distributing them to fresh sub-sessions of your own goal rather \
+     than accumulating everything in one context. Each sub-session stays focused \
+     on its task, which preserves quality and keeps your own context tight.\n\
+     \n\
+     ```\n\
+     <@{your-goal-id}|label>\n\
+     sub-task description\n\
+     </@{your-goal-id}|label>\n\
+     ```\n\
+     \n\
+     Replace `{your-goal-id}` with your actual goal ID (e.g., `fresh-agents`) and \
+     `label` with a short correlation tag (e.g., `analyze-auth`). The label is \
+     optional — use an empty label `<@fresh-agents|>` if you don't need correlation. \
+     Each fresh sub-session receives the same startup context as you and replies via \
+     `<@{your-goal-id}>your reply</@{your-goal-id}>`. Decomposition is one level \
+     deep — fresh sub-sessions cannot spawn further fresh sub-sessions.\n\
+     \n\
+     **Each envelope must be self-contained.** The sub-session only sees the text \
+     inside the tags — not your surrounding reply, not earlier turns. Write every \
+     fresh dispatch as if the sub-session starts cold: include all the context it \
+     needs to complete the task without referring to \"above\" or \"earlier.\"";
+
+
 /// Generic neighbor-consultation mandate preamble — the invariant text that
 /// precedes the goal-specific neighbor table. Shared between the full init
 /// message, the tend init prompt, and the framework preamble system prompt.
@@ -235,6 +266,8 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
          \n\
          {message_passing_and_progress}\n\
          \n\
+         {fresh_dispatch}\n\
+         \n\
          ## Your goal\n\
          \n\
          Goal ID: {id}\n\
@@ -264,6 +297,7 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
         dir_rules_line = dir_rules_line,
         ownership_line = ownership_line,
         message_passing_and_progress = MESSAGE_PASSING_AND_PROGRESS_SECTIONS,
+        fresh_dispatch = FRESH_DISPATCH_INSTRUCTIONS,
     );
     if let Some(r) = reason {
         prompt.push_str(&format!("\n\n## Reason for triggering\n{}", r));
@@ -318,6 +352,8 @@ pub fn goal_agent_lean_init_message(goal: &Goal, reason: Option<&str>, compact_i
          If the compact index isn't sufficient, consult `@tend` — tend holds the full \
          goal tree and can answer questions about any goal's scope or intent.\n\
          \n\
+         {fresh_dispatch}\n\
+         \n\
          ## Your goal\n\
          \n\
          Goal ID: {id}\n\
@@ -337,11 +373,171 @@ pub fn goal_agent_lean_init_message(goal: &Goal, reason: Option<&str>, compact_i
         compact_index = compact_index,
         description = goal.description,
         neighbors_section = neighbors_section,
+        fresh_dispatch = FRESH_DISPATCH_INSTRUCTIONS,
     );
     if let Some(r) = reason {
         prompt.push_str(&format!("\n\n## Reason for triggering\n{}", r));
     }
     prompt
+}
+
+/// Builds the init message for an ephemeral fresh sub-session. Used by the
+/// run loop when spawning a sub-session in response to a `<@goal-id|label>`
+/// fresh-dispatch envelope.
+///
+/// The message includes:
+/// 1. Ephemeral identity — "You are a fresh sub-session dispatched by goal `{id}`."
+/// 2. Label (if provided) — correlation tag the dispatcher used when dispatching.
+/// 3. Task — the message the dispatcher enclosed in the fresh-dispatch envelope.
+/// 4. Navigation — compact goal index.
+/// 5. Goal context — the dispatcher goal's description (same context as the dispatcher).
+/// 6. Rules — VCS, directory writes, ownership mandate.
+/// 7. Neighbor table — same adjacency as the dispatcher.
+/// 8. Reply instruction — always reply via `<@{dispatcher_id}>`.
+///
+/// Deliberately omits the FRESH_DISPATCH_INSTRUCTIONS section so that
+/// decomposition stays one level deep.
+pub fn fresh_subsession_init_message(
+    dispatcher_goal: &Goal,
+    label: Option<&str>,
+    task: &str,
+    compact_index: &str,
+) -> String {
+    let label_clause = match label {
+        Some(l) if !l.is_empty() => format!(" Your correlation label is `{l}`."),
+        _ => String::new(),
+    };
+
+    let table = build_neighborhood_table(dispatcher_goal);
+    let neighbors_section = if table.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n## Neighbor goals\n\n\
+             {mandate_preamble}\n\
+             \n\
+             {table}\n",
+            mandate_preamble = NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE,
+            table = table,
+        )
+    };
+
+    format!(
+        "You are a fresh sub-session dispatched by goal `{id}`.{label_clause}\n\
+         \n\
+         Your dispatcher has delegated a focused sub-task to you. When your \
+         task is complete, report back via:\n\
+         \n\
+         ```\n\
+         <@{id}>\n\
+         your reply\n\
+         </@{id}>\n\
+         ```\n\
+         \n\
+         You are ephemeral — decomposition is one level deep. You cannot spawn \
+         further fresh sub-sessions.\n\
+         \n\
+         ## Task\n\
+         \n\
+         {task}\n\
+         \n\
+         ## Goal index\n\
+         \n\
+         {compact_index}\n\
+         \n\
+         If the compact index isn't sufficient, consult `@tend` — tend holds the \
+         full goal tree and can answer questions about any goal's scope or intent.\n\
+         \n\
+         {message_passing_and_progress}\n\
+         \n\
+         ## Your goal context\n\
+         \n\
+         Goal ID: {id}\n\
+         Goal:\n\
+         {description}\n\
+         \n\
+         ## Rules\n\
+         \n\
+         - {vcs_rules}\n\
+         - {tinker_write_rules}\n\
+         - {ownership_mandate}\n\
+         {neighbors_section}\
+         When your task is complete, report back to your dispatcher via `<@{id}>` and stop.",
+        id = dispatcher_goal.id,
+        label_clause = label_clause,
+        task = task,
+        compact_index = compact_index,
+        description = dispatcher_goal.description,
+        message_passing_and_progress = MESSAGE_PASSING_AND_PROGRESS_SECTIONS,
+        vcs_rules = VCS_RULES,
+        tinker_write_rules = TINKER_DIR_WRITE_RULES,
+        ownership_mandate = IMPLEMENTATION_OWNERSHIP_MANDATE,
+        neighbors_section = neighbors_section,
+    )
+}
+
+/// Lean variant of `fresh_subsession_init_message` for the Claude backend.
+/// The framework preamble (message passing, progress guarantee, rules) is
+/// already in the system prompt; this message contains only goal-specific
+/// content: identity, label, task, compact index, goal context, neighbor table.
+pub fn fresh_subsession_lean_init_message(
+    dispatcher_goal: &Goal,
+    label: Option<&str>,
+    task: &str,
+    compact_index: &str,
+) -> String {
+    let label_clause = match label {
+        Some(l) if !l.is_empty() => format!(" Your correlation label is `{l}`."),
+        _ => String::new(),
+    };
+
+    let table = build_neighborhood_table(dispatcher_goal);
+    let neighbors_section = if table.is_empty() {
+        String::new()
+    } else {
+        format!("\n## Neighbor goals\n\n{}\n", table)
+    };
+
+    format!(
+        "You are a fresh sub-session dispatched by goal `{id}`.{label_clause}\n\
+         \n\
+         Your dispatcher has delegated a focused sub-task to you. When your \
+         task is complete, report back via:\n\
+         \n\
+         ```\n\
+         <@{id}>\n\
+         your reply\n\
+         </@{id}>\n\
+         ```\n\
+         \n\
+         You are ephemeral — decomposition is one level deep. You cannot spawn \
+         further fresh sub-sessions.\n\
+         \n\
+         ## Task\n\
+         \n\
+         {task}\n\
+         \n\
+         ## Goal index\n\
+         \n\
+         {compact_index}\n\
+         \n\
+         If the compact index isn't sufficient, consult `@tend` — tend holds the \
+         full goal tree and can answer questions about any goal's scope or intent.\n\
+         \n\
+         ## Your goal context\n\
+         \n\
+         Goal ID: {id}\n\
+         Goal:\n\
+         {description}\n\
+         {neighbors_section}\
+         When your task is complete, report back to your dispatcher via `<@{id}>` and stop.",
+        id = dispatcher_goal.id,
+        label_clause = label_clause,
+        task = task,
+        compact_index = compact_index,
+        description = dispatcher_goal.description,
+        neighbors_section = neighbors_section,
+    )
 }
 
 /// Backward-compat alias used by goal-session logging before compact_index was added.
@@ -954,5 +1150,145 @@ mod tests {
             !msg.contains("## Neighbor goals"),
             "isolated goal must produce no neighbor section header"
         );
+    }
+
+    // spec (fresh-agents): regular session_init_message includes the fresh-dispatch
+    // instructions section so agents know how to distribute parallel sub-tasks.
+    #[test]
+    fn test_spec_fresh_agents_regular_init_includes_fresh_dispatch_instructions() {
+        let goal = make_goal("my-goal", "do stuff");
+        let msg = session_init_message(&goal, None, "[]");
+        assert!(
+            msg.contains("Fresh dispatch"),
+            "regular init message must include the Fresh dispatch section"
+        );
+        assert!(
+            msg.contains("<@{your-goal-id}|label>"),
+            "Fresh dispatch section must show the envelope syntax"
+        );
+    }
+
+    // spec (fresh-agents): the lean init message (for claude backend) also includes
+    // fresh-dispatch instructions.
+    #[test]
+    fn test_spec_fresh_agents_lean_init_includes_fresh_dispatch_instructions() {
+        let goal = make_goal("my-goal", "do stuff");
+        let msg = goal_agent_lean_init_message(&goal, None, "[]");
+        assert!(
+            msg.contains("Fresh dispatch"),
+            "lean init message must include the Fresh dispatch section"
+        );
+    }
+
+    // spec (fresh-agents): the framework preamble (system prompt for claude) does
+    // NOT include fresh-dispatch instructions — keeping them out of sub-session
+    // context and enforcing one-level-deep decomposition.
+    #[test]
+    fn test_spec_fresh_agents_preamble_does_not_include_fresh_dispatch() {
+        let preamble = goal_agent_framework_preamble();
+        assert!(
+            !preamble.contains("Fresh dispatch"),
+            "framework preamble must not contain Fresh dispatch instructions (kept out of sub-session context)"
+        );
+    }
+
+    // spec (fresh-agents): FRESH_DISPATCH_INSTRUCTIONS includes the self-containment
+    // requirement so agents know each envelope body is the sub-session's entire
+    // context — no visibility into surrounding reply prose or earlier turns.
+    #[test]
+    fn test_spec_fresh_agents_instructions_require_self_contained_envelopes() {
+        assert!(
+            FRESH_DISPATCH_INSTRUCTIONS.contains("self-contained"),
+            "Fresh dispatch instructions must state that each envelope must be self-contained"
+        );
+        assert!(
+            FRESH_DISPATCH_INSTRUCTIONS.contains("starts cold") || FRESH_DISPATCH_INSTRUCTIONS.contains("without referring"),
+            "Fresh dispatch instructions must warn against referencing context outside the envelope"
+        );
+    }
+
+    // spec (fresh-agents): fresh_subsession_init_message identifies the session
+    // as ephemeral and names the dispatcher goal ID.
+    #[test]
+    fn test_spec_fresh_agents_subsession_init_identifies_dispatcher() {
+        let dispatcher_goal = make_goal("my-goal", "the goal description");
+        let msg = fresh_subsession_init_message(&dispatcher_goal, Some("analyze"), "do the work", "[]");
+        assert!(
+            msg.contains("dispatched by goal `my-goal`"),
+            "fresh sub-session init must identify the dispatcher goal"
+        );
+        assert!(
+            msg.contains("ephemeral"),
+            "fresh sub-session init must note it is ephemeral"
+        );
+    }
+
+    // spec (fresh-agents): fresh_subsession_init_message includes the task text.
+    #[test]
+    fn test_spec_fresh_agents_subsession_init_includes_task() {
+        let dispatcher_goal = make_goal("g", "goal desc");
+        let msg = fresh_subsession_init_message(&dispatcher_goal, None, "analyse the auth module", "[]");
+        assert!(
+            msg.contains("analyse the auth module"),
+            "fresh sub-session init must include the task verbatim"
+        );
+    }
+
+    // spec (fresh-agents): fresh_subsession_init_message includes the label when provided.
+    #[test]
+    fn test_spec_fresh_agents_subsession_init_includes_label() {
+        let dispatcher_goal = make_goal("g", "desc");
+        let msg = fresh_subsession_init_message(&dispatcher_goal, Some("my-label"), "task", "[]");
+        assert!(
+            msg.contains("my-label"),
+            "fresh sub-session init must include the correlation label"
+        );
+    }
+
+    // spec (fresh-agents): fresh_subsession_init_message does NOT include the
+    // fresh-dispatch instructions — decomposition is one level deep.
+    #[test]
+    fn test_spec_fresh_agents_subsession_init_no_fresh_dispatch_capability() {
+        let dispatcher_goal = make_goal("g", "desc");
+        let msg = fresh_subsession_init_message(&dispatcher_goal, None, "task", "[]");
+        assert!(
+            !msg.contains("Fresh dispatch"),
+            "fresh sub-session init must not include Fresh dispatch instructions (one level deep)"
+        );
+        assert!(
+            msg.contains("cannot spawn further fresh sub-sessions"),
+            "fresh sub-session init must explicitly state one-level-deep limit"
+        );
+    }
+
+    // spec (fresh-agents): fresh_subsession_init_message includes reply instructions
+    // pointing back to the dispatcher goal ID.
+    #[test]
+    fn test_spec_fresh_agents_subsession_init_includes_reply_instruction() {
+        let dispatcher_goal = make_goal("my-goal", "desc");
+        let msg = fresh_subsession_init_message(&dispatcher_goal, None, "task", "[]");
+        assert!(
+            msg.contains("<@my-goal>"),
+            "fresh sub-session init must include reply envelope pointing back to the dispatcher"
+        );
+        assert!(
+            msg.contains("dispatcher"),
+            "fresh sub-session init must use the term 'dispatcher' for the reply instruction"
+        );
+    }
+
+    // spec (fresh-agents): fresh_subsession_lean_init_message has the same
+    // dispatcher identification, task, and no-fresh-dispatch guarantee.
+    #[test]
+    fn test_spec_fresh_agents_lean_subsession_init_matches_full_properties() {
+        let dispatcher_goal = make_goal("g", "the desc");
+        let full = fresh_subsession_init_message(&dispatcher_goal, Some("lbl"), "work", "[]");
+        let lean = fresh_subsession_lean_init_message(&dispatcher_goal, Some("lbl"), "work", "[]");
+        assert!(lean.contains("dispatched by goal `g`"), "lean must identify the dispatcher");
+        assert!(lean.contains("lbl"), "lean must include label");
+        assert!(lean.contains("work"), "lean must include task");
+        assert!(!lean.contains("Fresh dispatch"), "lean must not include fresh dispatch capability");
+        // Lean version is shorter (omits the full MESSAGE_PASSING_AND_PROGRESS_SECTIONS).
+        assert!(lean.len() < full.len(), "lean init must be shorter than full init");
     }
 }

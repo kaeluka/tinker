@@ -1,6 +1,7 @@
 use crate::goal::Goal;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Role {
@@ -145,6 +146,17 @@ pub struct App {
     /// Tracks the index in `messages` of the current in-progress agent turn
     /// for each session, so incoming chunks can append to that slot in-place.
     pub agent_msg_idx: HashMap<String, usize>,
+    /// Session IDs that belong to ephemeral fresh sub-sessions. These are
+    /// removed from `session_senders` by the run loop once they complete.
+    pub ephemeral_sessions: HashSet<String>,
+    /// Monotone counter used to assign unique IDs to fresh sub-sessions.
+    pub fresh_session_counter: u64,
+    /// Index into the WERKELN_VERBS list; advanced every ~2 s while sessions run.
+    #[allow(dead_code)] // read side not yet wired in TUI renderer
+    pub werkeln_verb_idx: usize,
+    /// When the verb index was last advanced.
+    #[allow(dead_code)] // read side not yet wired in TUI renderer
+    pub werkeln_last_advance: Instant,
 }
 
 impl App {
@@ -179,6 +191,10 @@ impl App {
             modal: None,
             active_session: "tend".to_string(),
             agent_msg_idx: HashMap::new(),
+            ephemeral_sessions: HashSet::new(),
+            fresh_session_counter: 0,
+            werkeln_verb_idx: 0,
+            werkeln_last_advance: Instant::now(),
         }
     }
 
@@ -225,6 +241,21 @@ impl App {
     /// Call when a session turn ends so the next turn opens a fresh message.
     pub fn finalize_agent_message(&mut self, goal_id: &str) {
         self.agent_msg_idx.remove(goal_id);
+    }
+
+    /// Retire completed ephemeral sessions: returns the session IDs whose
+    /// channels should be dropped from `session_senders`. A session is
+    /// considered complete when it has been removed from `running_sessions`.
+    /// The returned IDs are also removed from `ephemeral_sessions`.
+    pub fn retire_completed_ephemeral_sessions(&mut self) -> Vec<String> {
+        let completed: Vec<String> = self.ephemeral_sessions.iter()
+            .filter(|id| !self.running_sessions.contains_key(*id))
+            .cloned()
+            .collect();
+        for id in &completed {
+            self.ephemeral_sessions.remove(id);
+        }
+        completed
     }
 
     pub fn selected_goal(&self) -> Option<Goal> {

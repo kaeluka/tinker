@@ -20,3 +20,7 @@ reason = "agent-collaboration's consultation mandate is the conflict-avoidance m
 [[related]]
 id = "cleanup-hook"
 reason = "The cleanup hook runs in the main working tree before each agent's first turn."
+
+[[related]]
+id = "fresh-agents"
+reason = "fresh sub-sessions run in the shared main working directory alongside other concurrent agents and participate in the conflict-avoidance mandate this goal owns."

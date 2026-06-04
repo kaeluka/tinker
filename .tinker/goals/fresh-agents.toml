@@ -1,0 +1,34 @@
+id = "fresh-agents"
+kind = "feature"
+summary = "This goal owns the fresh-dispatch mechanism: goal agents dispatch to ephemeral sub-sessions of themselves to distribute tasks with inherent parallelism across bounded, focused contexts, with sub-sessions retiring when the next batch begins."
+description = """
+## WHAT
+
+Goal agents can dispatch to ephemeral sub-sessions of themselves. A spawning agent addresses a fresh dispatch to its own goal id and an optional label (separated by `|`); the label lets the dispatcher correlate incoming replies. The fresh sub-session receives the same startup context as the dispatcher and replies via ordinary @-messages. Decomposition is one level deep — fresh sub-sessions carry standard startup context, not fresh-dispatch capability. Fresh sub-sessions are observable via the conversation pane (reachable by REPL switching). Completed sub-sessions remain in the registry until the next batch starts — so the user can inspect what ran and read their logs between batches. At batch-start they are silently removed (any period during which at least one session is active or a message is pending delivery constitutes a batch).
+
+## WHY
+
+When a task has inherent parallelism — independent sub-tasks that don't need to share context — the right default is to distribute the work. The existing dispatch model gives agents no way to do this: all work accumulates in one session, degrading quality as context grows and keeping the dispatching session burdened with content it doesn't need. Fresh dispatches make parallelism the default path: each sub-session starts clean and focused, the dispatching session stays tight, and results return via the normal reply channel.
+
+"""
+parent_id = ""
+
+[[related]]
+id = "peer-consult"
+reason = "peer-consult owns the @-block envelope detection and routing protocol; fresh-agents extends that protocol with a new address class that routes to an ephemeral sub-session of the sender rather than an existing registry entry. peer-consult is authoritative for detection and delivery; this goal owns the fresh routing variant."
+
+[[related]]
+id = "goal-agents"
+reason = "goal-agents owns the session registry and lifecycle; fresh sub-sessions appear in the registry during their run and are retired on batch-start, interacting with the session lifecycle goal-agents governs."
+
+[[related]]
+id = "parallel-goal-agents"
+reason = "fresh sub-sessions run in the shared main working directory alongside other concurrent agents and participate in the conflict-avoidance mandate that parallel-goal-agents owns."
+
+[[related]]
+id = "tui"
+reason = "fresh sub-sessions are visible in the session view while active; tui governs how they are rendered and distinguished from permanent sessions."
+
+[[related]]
+id = "coding-standards"
+reason = "This goal produces code, which follows coding-standards (capability-based DI, the polymorphism ladder, test_spec_/test_security_ marking, security.md, and the tinker-test-case: convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: coding-standards is a packaged ancestor-scope standard and carries no back-link."

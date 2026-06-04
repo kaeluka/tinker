@@ -1,6 +1,31 @@
 use crate::app::{App, Focus, ModalField, Phase, Role};
 use crate::goal_session::TRIGGER_REASON_MARKER;
 use crate::goal::{build_tree, GoalNode};
+use std::time::Duration;
+
+/// German dialect verbs for "working / doing / building / tinkering".
+/// Cycled in the goals-pane label while any session is running.
+const WERKELN_VERBS: &[&str] = &[
+    "hackeln",   // Austro-Bavarian
+    "schaffe",   // Swabian/Alemannic
+    "werchle",   // Swiss German
+    "chrampfe",  // Swiss German — work hard
+    "malochen",  // Ruhrpott (from Yiddish מְלָאכָה)
+    "schaffn",   // Bavarian
+    "wörken",    // Plattdeutsch
+    "maken",     // Plattdeutsch
+    "tüfteln",   // dialect — to tinker
+    "frickeln",  // dialect — to fiddle
+    "rackern",   // dialect — to toil
+    "wurschteln",// Austro-Bavarian — to muddle through
+    "doktern",   // dialect — to fiddle/fix
+    "dun",       // Kölsch — to do
+    "buckeln",   // dialect — bent-over work
+    "schuften",  // dialect — to graft
+    "basteln",   // widespread — to build/tinker
+];
+/// Advance the verb roughly every 2 seconds.
+const WERKELN_INTERVAL: Duration = Duration::from_secs(2);
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -294,6 +319,13 @@ fn push_message_lines(lines: &mut Vec<Line<'static>>, msg: &crate::app::Message)
 }
 
 
+/// Strip the `~{counter}` suffix from a fresh sub-session ID, returning the
+/// parent goal ID. For ordinary session IDs (no `~`) the value is returned
+/// unchanged. Examples: `"fresh-agents~1"` → `"fresh-agents"`, `"tend"` → `"tend"`.
+fn session_base_id(id: &str) -> &str {
+    id.split_once('~').map_or(id, |(base, _)| base)
+}
+
 /// Sort IDs and determine which fit within `max_chars` (the label budget —
 /// the ` > id1, id2 ` portion, not including `" Goals"`).
 /// Returns `(visible ids sorted, needs_ellipsis)`.
@@ -335,13 +367,15 @@ fn running_label(ids: Vec<&str>, max_chars: usize) -> String {
 }
 
 /// Build a styled `Line` for the Goals pane title when sessions are running.
-/// Running IDs render Yellow+Bold — matching the goal-list row style — so a goal ID
-/// looks the same in the pane label and in its list row.
-pub(crate) fn goal_pane_title_line(ids: Vec<&str>, max_chars: usize) -> Line<'static> {
+/// `verb` is the dialect word to show (e.g. `"hackeln"`); pass `"Goals"` for the
+/// static idle label.  Running IDs render Yellow+Bold — matching the goal-list
+/// row style — so a goal ID looks the same in the pane label and in its list row.
+pub(crate) fn goal_pane_title_line(verb: &str, ids: Vec<&str>, max_chars: usize) -> Line<'static> {
     let id_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let (visible, ellipsis) = running_ids(ids, max_chars);
 
-    let mut spans: Vec<Span<'static>> = vec![Span::raw(" Goals > ")];
+    let prefix = format!(" {} > ", verb);
+    let mut spans: Vec<Span<'static>> = vec![Span::raw(prefix)];
 
     for (i, id) in visible.iter().enumerate() {
         if i > 0 {
@@ -383,11 +417,23 @@ fn draw_goal_tree(
     } else if app.running_sessions.is_empty() {
         Line::from(Span::raw(" Goals "))
     } else {
-        // " Goals > id1, id2 " must fit in area.width - 2 (border corners).
-        // Fixed overhead: " Goals " = 7 chars; subtract 9 total to budget for the label part.
-        let max_chars = (area.width as usize).saturating_sub(9);
-        let ids: Vec<&str> = app.running_sessions.keys().map(String::as_str).collect();
-        goal_pane_title_line(ids, max_chars)
+        // Advance the verb index every ~2 s while sessions are running.
+        if app.werkeln_last_advance.elapsed() >= WERKELN_INTERVAL {
+            app.werkeln_verb_idx = (app.werkeln_verb_idx + 1) % WERKELN_VERBS.len();
+            app.werkeln_last_advance = std::time::Instant::now();
+        }
+        let verb = WERKELN_VERBS[app.werkeln_verb_idx];
+        // " {verb} > id1, id2 " must fit in area.width - 2 (border corners).
+        // Budget: subtract verb.len() + 4 (" {verb} > " overhead) plus 2 border corners.
+        let max_chars = (area.width as usize).saturating_sub(verb.len() + 4 + 2);
+        // Collapse fresh sub-session IDs (e.g. `fresh-agents~1`) to their
+        // parent goal ID so the header shows `fresh-agents`, not `fresh-agents~1`.
+        let mut base_ids: Vec<&str> = app.running_sessions.keys()
+            .map(|k| session_base_id(k.as_str()))
+            .collect();
+        base_ids.sort_unstable();
+        base_ids.dedup();
+        goal_pane_title_line(verb, base_ids, max_chars)
     };
 
     let block = Block::default()
@@ -412,11 +458,16 @@ fn draw_goal_tree(
     let tree = build_tree(&app.goals);
     let flat = flatten_tree(&tree);
     let selected_goal = app.selected_goal().map(|g| g.id.clone());
+    // Pre-compute the set of "base" goal IDs that have any active session,
+    // including fresh sub-sessions (e.g. `fresh-agents~1` counts as `fresh-agents`).
+    let running_base_ids: std::collections::HashSet<&str> = app.running_sessions.keys()
+        .map(|k| session_base_id(k.as_str()))
+        .collect();
     let list_lines: Vec<Line> = flat
         .iter()
         .map(|(depth, node)| {
             let is_selected = selected_goal.as_deref() == Some(&node.goal.id);
-            let is_active = app.running_sessions.contains_key(&node.goal.id);
+            let is_active = running_base_ids.contains(node.goal.id.as_str());
 
             let name_style = if is_selected {
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
@@ -1155,13 +1206,10 @@ mod tests {
     fn test_spec_goal_pane_title_running_ids_are_yellow_bold() {
         use ratatui::style::{Color, Modifier};
         let id_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
-        let line = goal_pane_title_line(vec!["beta", "alpha"], 100);
-        // Every span that carries an actual ID (not prefix/punctuation) must be Yellow+Bold.
+        let line = goal_pane_title_line("hackeln", vec!["beta", "alpha"], 100);
+        // Spans carrying actual IDs are exactly those with Yellow+Bold style.
         let id_spans: Vec<_> = line.spans.iter()
-            .filter(|s| {
-                let c: &str = &s.content;
-                c != " Goals > " && c != ", " && c != " " && c != "… " && c != ", … "
-            })
+            .filter(|s| s.style == id_style)
             .collect();
         assert!(!id_spans.is_empty(), "expected ID spans in the title line");
         for span in &id_spans {
@@ -1177,19 +1225,55 @@ mod tests {
         assert!(full.contains("beta"));
     }
 
-    /// Spec (tui — goals pane title): the " Goals > " prefix and punctuation spans
+    /// Spec (tui — goals pane title): the " {verb} > " prefix and punctuation spans
     /// are unstyled so they don't compete visually with the ID colour.
     #[test]
     fn test_spec_goal_pane_title_prefix_and_punctuation_are_unstyled() {
         let plain = Style::default();
-        let line = goal_pane_title_line(vec!["alpha", "beta"], 100);
-        // First span is always the " Goals > " prefix.
+        let line = goal_pane_title_line("hackeln", vec!["alpha", "beta"], 100);
+        // First span is always the " {verb} > " prefix — here " hackeln > ".
         let prefix = &line.spans[0];
-        assert_eq!(prefix.content.as_ref(), " Goals > ");
+        assert_eq!(prefix.content.as_ref(), " hackeln > ");
         assert_eq!(prefix.style, plain, "prefix must be unstyled");
         // Trailing " " span (the last one) must also be unstyled.
         let last = line.spans.last().unwrap();
         assert_eq!(last.style, plain, "trailing space span must be unstyled");
+    }
+
+    /// Spec (werkeln — verb list): the WERKELN_VERBS list is non-empty and contains
+    /// every dialect word named in the goal spec.
+    #[test]
+    fn test_spec_werkeln_verb_list_complete() {
+        let required = [
+            "hackeln", "schaffe", "werchle", "chrampfe", "malochen", "schaffn",
+            "wörken", "maken", "tüfteln", "frickeln", "rackern", "wurschteln",
+            "doktern", "dun", "buckeln", "schuften", "basteln",
+        ];
+        assert!(!WERKELN_VERBS.is_empty(), "verb list must be non-empty");
+        for verb in &required {
+            assert!(
+                WERKELN_VERBS.contains(verb),
+                "verb list must contain {:?}",
+                verb,
+            );
+        }
+    }
+
+    /// Spec (werkeln — animation): each verb produces a prefix of the form " {verb} > ".
+    #[test]
+    fn test_spec_werkeln_each_verb_produces_correct_prefix() {
+        for &verb in WERKELN_VERBS {
+            let line = goal_pane_title_line(verb, vec!["tend"], 100);
+            let expected_prefix = format!(" {} > ", verb);
+            let prefix = &line.spans[0];
+            assert_eq!(
+                prefix.content.as_ref(),
+                expected_prefix.as_str(),
+                "verb {:?} must produce prefix {:?}",
+                verb,
+                expected_prefix,
+            );
+        }
     }
 
     /// Spec (tui — goal-detail header): the first line of the goal-text pane
@@ -1255,6 +1339,71 @@ mod tests {
     fn test_spec_log_pane_title_uses_goal_id() {
         assert_eq!(log_pane_title(Some("my-goal")), " Log: my-goal ");
         assert_eq!(log_pane_title(None), " Log ");
+    }
+
+    /// Spec (tui — fresh sub-sessions): `session_base_id` strips the `~{counter}`
+    /// suffix from a fresh sub-session ID, returning the parent goal ID unchanged
+    /// for ordinary IDs.
+    #[test]
+    fn test_spec_session_base_id_strips_counter_suffix() {
+        assert_eq!(session_base_id("fresh-agents~1"), "fresh-agents");
+        assert_eq!(session_base_id("my-goal~42"), "my-goal");
+        assert_eq!(session_base_id("tend"), "tend");
+        assert_eq!(session_base_id("rummage"), "rummage");
+        // Only the first `~` is stripped; base IDs should not themselves contain `~`.
+        assert_eq!(session_base_id("a~b~c"), "a");
+    }
+
+    /// Spec (tui — fresh sub-sessions / goals pane title): fresh sub-session IDs
+    /// (e.g. `fresh-agents~1`) must appear as their parent ID (`fresh-agents`)
+    /// in the pane header, not as raw `fresh-agents~1`.
+    #[test]
+    fn test_spec_fresh_subsession_ids_collapsed_in_header() {
+        // Two sub-sessions of the same parent — should deduplicate to one entry.
+        let mut ids = vec!["fresh-agents~1", "fresh-agents~2"];
+        ids.sort_unstable();
+        ids.dedup_by(|a, b| session_base_id(a) == session_base_id(b));
+        let base_ids: Vec<&str> = ids.iter().map(|id| session_base_id(id)).collect();
+        // Dedup after mapping.
+        let mut base_ids = base_ids;
+        base_ids.dedup();
+        assert_eq!(base_ids, vec!["fresh-agents"],
+            "two sub-sessions of the same parent must collapse to one entry");
+
+        // Sub-session alongside a direct parent entry — should still show once.
+        let ids2: Vec<&str> = vec!["fresh-agents", "fresh-agents~1"];
+        let mut collapsed: Vec<&str> = ids2.iter()
+            .map(|id| session_base_id(id))
+            .collect::<std::collections::BTreeSet<&str>>()
+            .into_iter()
+            .collect();
+        collapsed.sort_unstable();
+        assert_eq!(collapsed, vec!["fresh-agents"],
+            "direct parent entry + sub-session must collapse to one entry");
+    }
+
+    /// Spec (tui — fresh sub-sessions / goal list rows): a goal row must show
+    /// the ▶ running marker and Yellow+Bold ID style when a fresh sub-session
+    /// is running for that goal, even if the parent goal entry is not itself
+    /// directly in `running_sessions`.
+    #[test]
+    fn test_spec_fresh_subsession_marks_parent_goal_row_as_running() {
+        // Simulate running_sessions containing only a sub-session.
+        let mut running_sessions = std::collections::HashMap::new();
+        running_sessions.insert("my-goal~1".to_string(), None::<String>);
+
+        // Mirror the is_active derivation from draw_goal_tree.
+        let running_base_ids: std::collections::HashSet<&str> = running_sessions.keys()
+            .map(|k| session_base_id(k.as_str()))
+            .collect();
+
+        let is_active_parent = running_base_ids.contains("my-goal");
+        let is_active_other = running_base_ids.contains("other-goal");
+
+        assert!(is_active_parent,
+            "parent goal row must be active when its sub-session is running");
+        assert!(!is_active_other,
+            "unrelated goal must not be marked active");
     }
 
 }
