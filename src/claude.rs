@@ -119,17 +119,16 @@ impl OpenCodeRunner for ClaudeRunner {
             };
 
             // Emit session_id from the init event
-            if !sid_emitted && ev.event_type == "system" && ev.subtype.as_deref() == Some("init") {
-                if let Some(id) = &ev.session_id {
+            if !sid_emitted && ev.event_type == "system" && ev.subtype.as_deref() == Some("init")
+                && let Some(id) = &ev.session_id {
                     returned_session_id = id.clone();
                     on_session_id(id.clone());
                     sid_emitted = true;
                 }
-            }
 
             // Handle assistant message content
-            if ev.event_type == "assistant" {
-                if let Some(msg) = &ev.message {
+            if ev.event_type == "assistant"
+                && let Some(msg) = &ev.message {
                     for content in &msg.content {
                         match content.content_type.as_str() {
                             "text" => {
@@ -147,11 +146,10 @@ impl OpenCodeRunner for ClaudeRunner {
                         }
                     }
                 }
-            }
 
             // Surface tool_result errors (permission denials) from user messages.
-            if ev.event_type == "user" {
-                if let Some(msg) = &ev.message {
+            if ev.event_type == "user"
+                && let Some(msg) = &ev.message {
                     for content in &msg.content {
                         if content.content_type == "tool_result" {
                             let chunk = format_tool_result_error(content);
@@ -161,7 +159,6 @@ impl OpenCodeRunner for ClaudeRunner {
                         }
                     }
                 }
-            }
         }
 
         let status = child.wait().await?;
@@ -205,8 +202,8 @@ impl OpenCodeRunner for ClaudeRunner {
                             let Ok(ev) = serde_json::from_str::<ClaudeEvent>(&line) else {
                                 continue;
                             };
-                            if ev.event_type == "assistant" {
-                                if let Some(msg) = &ev.message {
+                            if ev.event_type == "assistant"
+                                && let Some(msg) = &ev.message {
                                     for content in &msg.content {
                                         match content.content_type.as_str() {
                                             "text" => {
@@ -224,7 +221,6 @@ impl OpenCodeRunner for ClaudeRunner {
                                         }
                                     }
                                 }
-                            }
                         }
                     }
                     let _ = follow_child.wait().await;

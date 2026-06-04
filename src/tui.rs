@@ -245,7 +245,7 @@ fn push_message_lines(lines: &mut Vec<Line<'static>>, msg: &crate::app::Message)
 /// Sort IDs and determine which fit within `max_chars` (the label budget —
 /// the ` > id1, id2 ` portion, not including `" Goals"`).
 /// Returns `(visible ids sorted, needs_ellipsis)`.
-fn running_ids<'a>(mut ids: Vec<&'a str>, max_chars: usize) -> (Vec<&'a str>, bool) {
+fn running_ids(mut ids: Vec<&str>, max_chars: usize) -> (Vec<&str>, bool) {
     ids.sort_unstable();
     let n = ids.len();
 
@@ -268,6 +268,8 @@ fn running_ids<'a>(mut ids: Vec<&'a str>, max_chars: usize) -> (Vec<&'a str>, bo
 /// Sorts IDs alphabetically, fits as many as possible within `max_chars`,
 /// truncating with `…` when needed.
 /// Returns e.g. `" > alpha, beta, … "` (truncated) or `" > alpha, beta "`.
+/// Only used by tests; production code calls `goal_pane_title_line` for styled output.
+#[cfg(test)]
 fn running_label(ids: Vec<&str>, max_chars: usize) -> String {
     let (visible, ellipsis) = running_ids(ids, max_chars);
     if visible.is_empty() {

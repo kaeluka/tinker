@@ -197,12 +197,11 @@ impl App {
     /// turn creates a new `Role::Agent` message; subsequent chunks extend it
     /// in-place so the REPL doesn't accumulate thousands of tiny entries.
     pub fn append_agent_message(&mut self, goal_id: &str, text: &str) {
-        if let Some(&idx) = self.agent_msg_idx.get(goal_id) {
-            if let Some(msg) = self.messages.get_mut(idx) {
+        if let Some(&idx) = self.agent_msg_idx.get(goal_id)
+            && let Some(msg) = self.messages.get_mut(idx) {
                 msg.text.push_str(text);
                 return;
             }
-        }
         let idx = self.messages.len();
         self.messages.push(Message { role: Role::Agent(goal_id.to_string()), text: text.to_string() });
         self.agent_msg_idx.insert(goal_id.to_string(), idx);

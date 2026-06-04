@@ -291,7 +291,7 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     let mut d = days;
     let mut y = 1970u64;
     loop {
-        let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+        let leap = (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400);
         let diy = if leap { 366 } else { 365 };
         if d < diy {
             break;
@@ -299,7 +299,7 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
         d -= diy;
         y += 1;
     }
-    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let leap = (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400);
     let dim = [
         31u64,
         if leap { 29 } else { 28 },
@@ -345,7 +345,6 @@ pub fn extract_modified_files(output: &str) -> Vec<String> {
         ] {
             if let Some(rest) = line.strip_prefix(prefix) {
                 let path = rest
-                    .trim()
                     .split_whitespace()
                     .next()
                     .unwrap_or("")

@@ -109,6 +109,9 @@ struct SpawnGoalRequest {
 /// Receives messages via `msg_rx`, runs the LLM with session resumption, and
 /// emits SessionEvents back on `session_tx`. Cleanup hook fires only before
 /// the first LLM turn of a new session (llm_session_id is None).
+// Each parameter is a distinct capability or config value; grouping into a
+// struct would obscure the injected-capability boundary without reducing complexity.
+#[allow(clippy::too_many_arguments)]
 async fn goal_agent_loop(
     goal: goal::Goal,
     mut msg_rx: mpsc::Receiver<String>,
@@ -472,6 +475,10 @@ async fn main() -> Result<()> {
     result
 }
 
+// Composition-root event loop: all parameters are distinct capability handles or
+// config values wired at startup. Bundling into a struct adds indirection without
+// reducing the number of distinct concerns.
+#[allow(clippy::too_many_arguments)]
 async fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: Arc<Mutex<App>>,
@@ -950,14 +957,13 @@ fn handle_session_event(
             dispatch_peer_consultations(app, &goal_id, &consultations, session_senders, goal_spawn_tx, log);
             // Silence detection: if the session produced no output at all, prompt
             // the agent to surface what happened. Applies uniformly to all sessions.
-            if session_text.trim().is_empty() {
-                if let Some(tx) = session_senders.get(&goal_id) {
+            if session_text.trim().is_empty()
+                && let Some(tx) = session_senders.get(&goal_id) {
                     let _ = tx.try_send(
                         "You produced no response to the previous message. \
                          Did you mean to say something?".to_string()
                     );
                 }
-            }
         }
         SessionEvent::CleanupBlocked { goal_id, dirty_files, error } => {
             let msg = if let Some(e) = error {
@@ -1104,8 +1110,8 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                 }
 
                 // Generic session-switching: /<known-goal-id>
-                if let Some(id) = input.strip_prefix('/') {
-                    if known_session_ids.iter().any(|&s| s == id) {
+                if let Some(id) = input.strip_prefix('/')
+                    && known_session_ids.contains(&id) {
                         app.active_session = id.to_string();
                         app.repl_scroll.y = None;
                         let msg = format!("switched to {} — type to chat, /<goal-id> to switch", id);
@@ -1115,7 +1121,6 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                         return KeyAction::None;
                     }
                     // Unknown slash command: fall through as ordinary input.
-                }
 
                 let session_id = app.active_session.clone();
                 app.push_user_message(&input, &session_id);

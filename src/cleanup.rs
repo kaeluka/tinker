@@ -42,14 +42,13 @@ pub fn file_contains_marker(content: &str) -> bool {
 fn line_is_marker(line: &str) -> bool {
     let trimmed = line.trim_start();
     for prefix in COMMENT_PREFIXES {
-        if let Some(rest) = trimmed.strip_prefix(prefix) {
-            if let Some(after_marker) = rest.trim_start().strip_prefix(MARKER) {
+        if let Some(rest) = trimmed.strip_prefix(prefix)
+            && let Some(after_marker) = rest.trim_start().strip_prefix(MARKER) {
                 // Exempt angle-bracket placeholders (e.g. `<one-line reason>`,
                 // `<reason>`). These are format-example lines that teach the
                 // marker convention; real markers always carry a concrete reason.
                 return !is_placeholder_reason(after_marker);
             }
-        }
     }
     false
 }
@@ -111,13 +110,11 @@ fn walk(fs: &dyn Filesystem, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     for entry in entries {
         if fs.is_dir(&entry) {
             walk(fs, &entry, out)?;
-        } else if should_scan_file(&entry) {
-            if let Ok(content) = fs.read_to_string(&entry) {
-                if file_contains_marker(&content) {
+        } else if should_scan_file(&entry)
+            && let Ok(content) = fs.read_to_string(&entry)
+                && file_contains_marker(&content) {
                     out.push(entry);
                 }
-            }
-        }
     }
     Ok(())
 }

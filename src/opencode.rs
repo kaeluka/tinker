@@ -136,22 +136,19 @@ impl OpenCodeRunner for RealOpenCodeRunner {
             let Ok(ev) = serde_json::from_str::<RawEvent>(&line) else {
                 continue;
             };
-            if !sid_emitted {
-                if let Some(id) = &ev.session_id {
+            if !sid_emitted
+                && let Some(id) = &ev.session_id {
                     returned_session_id = id.clone();
                     on_session_id(id.clone());
                     sid_emitted = true;
                 }
-            }
             match ev.event_type.as_str() {
                 "text" => {
-                    if let Some(part) = &ev.part {
-                        if part.part_type == "text" {
-                            if let Some(text) = &part.text {
+                    if let Some(part) = &ev.part
+                        && part.part_type == "text"
+                            && let Some(text) = &part.text {
                                 on_chunk(text.clone());
                             }
-                        }
-                    }
                 }
                 "tool_use" => {
                     if let Some(part) = &ev.part {
@@ -218,13 +215,11 @@ impl OpenCodeRunner for RealOpenCodeRunner {
                             };
                             match ev.event_type.as_str() {
                                 "text" => {
-                                    if let Some(part) = &ev.part {
-                                        if part.part_type == "text" {
-                                            if let Some(text) = &part.text {
+                                    if let Some(part) = &ev.part
+                                        && part.part_type == "text"
+                                            && let Some(text) = &part.text {
                                                 on_chunk(text.clone());
                                             }
-                                        }
-                                    }
                                 }
                                 "tool_use" => {
                                     if let Some(part) = &ev.part {
