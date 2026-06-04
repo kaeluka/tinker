@@ -1,4 +1,5 @@
-use crate::app::{App, Focus, ModalField, Phase, Role};
+use crate::app::{App, Focus, GoalListItem, ModalField, Phase, Role};
+use crate::app::session_base_id;
 use crate::goal_session::TRIGGER_REASON_MARKER;
 use crate::goal::{build_tree, GoalNode};
 use std::time::Duration;
@@ -319,13 +320,6 @@ fn push_message_lines(lines: &mut Vec<Line<'static>>, msg: &crate::app::Message)
 }
 
 
-/// Strip the `~{counter}` suffix from a fresh sub-session ID, returning the
-/// parent goal ID. For ordinary session IDs (no `~`) the value is returned
-/// unchanged. Examples: `"fresh-agents~1"` → `"fresh-agents"`, `"tend"` → `"tend"`.
-fn session_base_id(id: &str) -> &str {
-    id.split_once('~').map_or(id, |(base, _)| base)
-}
-
 /// Sort IDs and determine which fit within `max_chars` (the label budget —
 /// the ` > id1, id2 ` portion, not including `" Goals"`).
 /// Returns `(visible ids sorted, needs_ellipsis)`.
@@ -457,54 +451,78 @@ fn draw_goal_tree(
 
     let tree = build_tree(&app.goals);
     let flat = flatten_tree(&tree);
-    let selected_goal = app.selected_goal().map(|g| g.id.clone());
+    // Depth map for permanent goals — used to indent ephemerals at parent_depth + 1.
+    let depth_by_id: std::collections::HashMap<&str, usize> = flat.iter()
+        .map(|(d, n)| (n.goal.id.as_str(), *d))
+        .collect();
+    let selected_id = app.selected_item_id();
     // Pre-compute the set of "base" goal IDs that have any active session,
     // including fresh sub-sessions (e.g. `fresh-agents~1` counts as `fresh-agents`).
     let running_base_ids: std::collections::HashSet<&str> = app.running_sessions.keys()
         .map(|k| session_base_id(k.as_str()))
         .collect();
-    let list_lines: Vec<Line> = flat
+    let items = app.flat_items();
+    let list_lines: Vec<Line> = items
         .iter()
-        .map(|(depth, node)| {
-            let is_selected = selected_goal.as_deref() == Some(&node.goal.id);
-            let is_active = running_base_ids.contains(node.goal.id.as_str());
+        .map(|item| {
+            let id = item.id();
+            let is_selected = selected_id.as_deref() == Some(id);
 
-            let name_style = if is_selected {
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-            let id_style = if is_selected {
-                name_style
-            } else if is_active {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)
-            };
+            match item {
+                GoalListItem::Goal(g) => {
+                    let depth = depth_by_id.get(g.id.as_str()).copied().unwrap_or(0);
+                    let is_active = running_base_ids.contains(g.id.as_str());
 
-            let marker_style = if is_active {
-                Style::default().fg(Color::DarkGray)
-            } else {
-                name_style
-            };
-            let marker_str = if is_active {
-                "▶ ".to_string()
-            } else {
-                "◉ ".to_string()
-            };
+                    let name_style = if is_selected {
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    };
+                    let id_style = if is_selected {
+                        name_style
+                    } else if is_active {
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                    };
+                    let marker_style = if is_active {
+                        Style::default().fg(Color::DarkGray)
+                    } else {
+                        name_style
+                    };
+                    let marker_str = if is_active { "▶ " } else { "◉ " };
+                    let indent = "  ".repeat(depth);
+                    let preview = truncate_with_ellipsis(&g.summary, 60);
+                    let mut spans = vec![
+                        Span::styled(format!("{}{}", indent, marker_str), marker_style),
+                        Span::styled(g.id.clone(), id_style),
+                    ];
+                    if !preview.is_empty() {
+                        spans.push(Span::styled(format!(" — {}", preview), name_style));
+                    }
+                    Line::from(spans)
+                }
+                GoalListItem::Ephemeral(session_id) => {
+                    let parent_id = session_base_id(session_id);
+                    let depth = depth_by_id.get(parent_id).copied().unwrap_or(0) + 1;
+                    let is_active = app.running_sessions.contains_key(session_id.as_str());
 
-            let indent = "  ".repeat(*depth);
-            let id_label = node.goal.id.clone();
-            let preview = truncate_with_ellipsis(&node.goal.summary, 60);
-
-            let mut spans = vec![
-                Span::styled(format!("{}{}", indent, marker_str), marker_style),
-                Span::styled(id_label, id_style),
-            ];
-            if !preview.is_empty() {
-                spans.push(Span::styled(format!(" — {}", preview), name_style));
+                    let id_style = if is_selected {
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    } else if is_active {
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                    };
+                    let marker_style = Style::default().fg(Color::DarkGray);
+                    let marker_str = if is_active { "▶ " } else { "◉ " };
+                    let indent = "  ".repeat(depth);
+                    Line::from(vec![
+                        Span::styled(format!("{}{}", indent, marker_str), marker_style),
+                        Span::styled(session_id.clone(), id_style),
+                    ])
+                }
             }
-            Line::from(spans)
         })
         .collect();
 
@@ -520,12 +538,12 @@ fn draw_goal_tree(
         sep_area,
     );
 
-    let text_lines: Vec<Line> = match app.selected_goal() {
+    let text_lines: Vec<Line> = match app.flat_items().into_iter().nth(app.selected_goal) {
         None => vec![Line::from(Span::styled(
             "(no selection)",
             Style::default().fg(Color::DarkGray),
         ))],
-        Some(g) => {
+        Some(GoalListItem::Goal(g)) => {
             let header = goal_detail_header_line(&g);
             let mut lines: Vec<Line> = vec![header, Line::from("")];
             lines.extend(
@@ -546,6 +564,30 @@ fn draw_goal_tree(
             }
             lines
         }
+        Some(GoalListItem::Ephemeral(session_id)) => {
+            let parent_id = session_base_id(&session_id);
+            let is_active = app.running_sessions.contains_key(session_id.as_str());
+            let header = Line::from(vec![
+                Span::styled(
+                    format!("↳ sub-session of {}", parent_id),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]);
+            let mut lines = vec![header, Line::from("")];
+            if is_active {
+                let reason = app.running_sessions.get(session_id.as_str())
+                    .and_then(|r| r.as_ref())
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
+                if !reason.is_empty() {
+                    lines.push(Line::from(vec![
+                        Span::styled("▶ ", Style::default().fg(Color::DarkGray)),
+                        Span::raw(reason.to_string()),
+                    ]));
+                }
+            }
+            lines
+        }
     };
     let p = Paragraph::new(text_lines).wrap(Wrap { trim: false });
     let total = p.line_count(text_area.width);
@@ -555,7 +597,7 @@ fn draw_goal_tree(
 }
 
 fn draw_log(frame: &mut Frame, app: &mut App, area: Rect) {
-    let selected_id = app.selected_goal().map(|g| g.id.clone());
+    let selected_id = app.selected_item_id();
     let title = log_pane_title(selected_id.as_deref());
 
     let is_active_log = selected_id.as_deref().map(|id| app.running_sessions.contains_key(id)).unwrap_or(false);
@@ -1404,6 +1446,73 @@ mod tests {
             "parent goal row must be active when its sub-session is running");
         assert!(!is_active_other,
             "unrelated goal must not be marked active");
+    }
+
+    /// Spec (tui — fresh sub-sessions / goal list): `flat_items` returns
+    /// ephemerals nested immediately after their dispatcher goal, in insertion order.
+    #[test]
+    fn test_spec_flat_items_includes_ephemerals_after_parent() {
+        let mut app = App::new();
+        app.goals = vec![
+            Goal { id: "alpha".to_string(), summary: String::new(), description: String::new(),
+                parent_id: String::new(), children: vec![], related: vec![], tier: None,
+                kind: None, source_path: None },
+            Goal { id: "beta".to_string(), summary: String::new(), description: String::new(),
+                parent_id: String::new(), children: vec![], related: vec![], tier: None,
+                kind: None, source_path: None },
+        ];
+        app.ephemeral_sessions.insert("alpha~1".to_string());
+        app.ephemeral_sessions.insert("alpha~2".to_string());
+        app.ephemeral_sessions_ordered.push("alpha~1".to_string());
+        app.ephemeral_sessions_ordered.push("alpha~2".to_string());
+
+        let items = app.flat_items();
+        let ids: Vec<&str> = items.iter().map(|i| i.id()).collect();
+        assert_eq!(ids, vec!["alpha", "alpha~1", "alpha~2", "beta"],
+            "ephemerals must appear immediately after their parent, before siblings");
+    }
+
+    /// Spec (tui — fresh sub-sessions / selection): selecting an ephemeral row
+    /// makes `selected_item_id` return its full session ID.
+    #[test]
+    fn test_spec_selected_item_id_returns_ephemeral_session_id() {
+        let mut app = App::new();
+        app.goals = vec![
+            Goal { id: "alpha".to_string(), summary: String::new(), description: String::new(),
+                parent_id: String::new(), children: vec![], related: vec![], tier: None,
+                kind: None, source_path: None },
+        ];
+        app.ephemeral_sessions.insert("alpha~1".to_string());
+        app.ephemeral_sessions_ordered.push("alpha~1".to_string());
+
+        // flat_items: [Goal("alpha"), Ephemeral("alpha~1")]
+        app.selected_goal = 1; // select the ephemeral
+        assert_eq!(app.selected_item_id(), Some("alpha~1".to_string()));
+        assert!(app.selected_goal().is_none(),
+            "selected_goal() must return None when an ephemeral is selected");
+    }
+
+    /// Spec (tui — fresh sub-sessions / log pane): the log pane must show
+    /// output for an ephemeral sub-session when that row is selected, using
+    /// the session ID as the lookup key (same as for permanent goals).
+    #[test]
+    fn test_spec_log_pane_uses_selected_item_id_for_ephemeral() {
+        let mut app = App::new();
+        app.goals = vec![
+            Goal { id: "alpha".to_string(), summary: String::new(), description: String::new(),
+                parent_id: String::new(), children: vec![], related: vec![], tier: None,
+                kind: None, source_path: None },
+        ];
+        app.ephemeral_sessions.insert("alpha~1".to_string());
+        app.ephemeral_sessions_ordered.push("alpha~1".to_string());
+        app.goal_logs.insert("alpha~1".to_string(), "sub-session output".to_string());
+
+        app.selected_goal = 1; // ephemeral row
+        // The ID used for log lookup must be "alpha~1", not "alpha".
+        let id = app.selected_item_id();
+        assert_eq!(id.as_deref(), Some("alpha~1"));
+        assert!(app.goal_logs.contains_key("alpha~1"),
+            "log lookup by ephemeral session ID must find the sub-session output");
     }
 
 }

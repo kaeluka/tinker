@@ -108,9 +108,9 @@ pub const FRESH_DISPATCH_INSTRUCTIONS: &str =
      </@{your-goal-id}|label>\n\
      ```\n\
      \n\
-     Replace `{your-goal-id}` with your actual goal ID (e.g., `fresh-agents`) and \
-     `label` with a short correlation tag (e.g., `analyze-auth`). The label is \
-     optional — use an empty label `<@fresh-agents|>` if you don't need correlation. \
+     Replace `{your-goal-id}` with your actual goal ID and `label` with a short \
+     correlation tag. The label is optional — use an empty label \
+     `<@{your-goal-id}|>` if you don't need correlation. \
      Each fresh sub-session receives the same startup context as you and replies via \
      `<@{your-goal-id}>your reply</@{your-goal-id}>`. Decomposition is one level \
      deep — fresh sub-sessions cannot spawn further fresh sub-sessions.\n\

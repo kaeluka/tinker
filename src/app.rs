@@ -3,6 +3,33 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
+/// An item in the goal list — either a permanent goal loaded from disk or an
+/// ephemeral fresh sub-session spawned by a dispatcher goal.
+#[derive(Clone, Debug)]
+pub enum GoalListItem {
+    Goal(Goal),
+    /// A fresh sub-session: its full session ID (e.g. `"coding-standards~1"`).
+    Ephemeral(String),
+}
+
+impl GoalListItem {
+    /// The display / session ID for this item.
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Goal(g) => &g.id,
+            Self::Ephemeral(id) => id,
+        }
+    }
+
+}
+
+/// Strip the `~{counter}` suffix from a fresh sub-session ID, returning the
+/// parent goal ID. For ordinary session IDs (no `~`) the value is returned
+/// unchanged. Examples: `"fresh-agents~1"` → `"fresh-agents"`, `"tend"` → `"tend"`.
+pub fn session_base_id(id: &str) -> &str {
+    id.split_once('~').map_or(id, |(base, _)| base)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Role {
     User(String),
@@ -149,13 +176,15 @@ pub struct App {
     /// Session IDs that belong to ephemeral fresh sub-sessions. These are
     /// removed from `session_senders` by the run loop once they complete.
     pub ephemeral_sessions: HashSet<String>,
+    /// Ordered list of ephemeral session IDs for goal-list display. Maintained
+    /// in insertion order so sub-sessions appear in the order they were spawned.
+    /// Entries stay until `retire_completed_ephemeral_sessions` removes them.
+    pub ephemeral_sessions_ordered: Vec<String>,
     /// Monotone counter used to assign unique IDs to fresh sub-sessions.
     pub fresh_session_counter: u64,
     /// Index into the WERKELN_VERBS list; advanced every ~2 s while sessions run.
-    #[allow(dead_code)] // read side not yet wired in TUI renderer
     pub werkeln_verb_idx: usize,
     /// When the verb index was last advanced.
-    #[allow(dead_code)] // read side not yet wired in TUI renderer
     pub werkeln_last_advance: Instant,
 }
 
@@ -192,6 +221,7 @@ impl App {
             active_session: "tend".to_string(),
             agent_msg_idx: HashMap::new(),
             ephemeral_sessions: HashSet::new(),
+            ephemeral_sessions_ordered: Vec::new(),
             fresh_session_counter: 0,
             werkeln_verb_idx: 0,
             werkeln_last_advance: Instant::now(),
@@ -246,7 +276,8 @@ impl App {
     /// Retire completed ephemeral sessions: returns the session IDs whose
     /// channels should be dropped from `session_senders`. A session is
     /// considered complete when it has been removed from `running_sessions`.
-    /// The returned IDs are also removed from `ephemeral_sessions`.
+    /// The returned IDs are also removed from `ephemeral_sessions` and
+    /// `ephemeral_sessions_ordered`.
     pub fn retire_completed_ephemeral_sessions(&mut self) -> Vec<String> {
         let completed: Vec<String> = self.ephemeral_sessions.iter()
             .filter(|id| !self.running_sessions.contains_key(*id))
@@ -255,11 +286,45 @@ impl App {
         for id in &completed {
             self.ephemeral_sessions.remove(id);
         }
+        self.ephemeral_sessions_ordered.retain(|id| self.ephemeral_sessions.contains(id));
+        // Clamp selection in case ephemerals that were selected got retired.
+        let n = self.flat_items().len();
+        if n == 0 {
+            self.selected_goal = 0;
+        } else if self.selected_goal >= n {
+            self.selected_goal = n - 1;
+        }
         completed
     }
 
+    /// The combined flat list of permanent goals and ephemeral sub-sessions,
+    /// in tree order with ephemerals nested immediately after their dispatcher.
+    pub fn flat_items(&self) -> Vec<GoalListItem> {
+        let goals = self.flat_goals();
+        let mut items: Vec<GoalListItem> = Vec::with_capacity(goals.len() + self.ephemeral_sessions_ordered.len());
+        for goal in &goals {
+            items.push(GoalListItem::Goal(goal.clone()));
+            for eph_id in &self.ephemeral_sessions_ordered {
+                if session_base_id(eph_id) == goal.id.as_str() {
+                    items.push(GoalListItem::Ephemeral(eph_id.clone()));
+                }
+            }
+        }
+        items
+    }
+
+    /// The session ID of the currently-selected item (goal or ephemeral).
+    pub fn selected_item_id(&self) -> Option<String> {
+        self.flat_items().into_iter().nth(self.selected_goal).map(|i| i.id().to_string())
+    }
+
+    /// The currently-selected permanent goal, if the selection points at one.
+    /// Returns `None` when an ephemeral sub-session is selected.
     pub fn selected_goal(&self) -> Option<Goal> {
-        self.flat_goals().into_iter().nth(self.selected_goal)
+        match self.flat_items().into_iter().nth(self.selected_goal)? {
+            GoalListItem::Goal(g) => Some(g),
+            GoalListItem::Ephemeral(_) => None,
+        }
     }
 
     pub fn flat_goals(&self) -> Vec<Goal> {
@@ -277,7 +342,7 @@ impl App {
     }
 
     pub fn select_next_goal(&mut self) {
-        let n = self.flat_goals().len();
+        let n = self.flat_items().len();
         if n > 0 {
             self.selected_goal = (self.selected_goal + 1).min(n - 1);
             self.goal_text_scroll.reset_to_top();

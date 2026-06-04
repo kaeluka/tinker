@@ -432,7 +432,7 @@ async fn main() -> Result<()> {
                     let mut a = app_ref.lock().unwrap();
                     a.goals = load.goals;
                     a.update_parse_errors(load.errors);
-                    if a.selected_goal >= a.flat_goals().len().max(1) {
+                    if a.selected_goal >= a.flat_items().len().max(1) {
                         a.selected_goal = 0;
                     }
                 }
@@ -702,7 +702,7 @@ async fn run_loop(
                 log.emit("tui", logger::LogEvent::TuiScrollChanged { pane: "goal_text".to_string(), y: scroll_after.3 });
             }
             if sel_after != sel_before {
-                let gid = app.lock().unwrap().flat_goals().get(sel_after).map(|g| g.id.clone());
+                let gid = app.lock().unwrap().flat_items().get(sel_after).map(|i| i.id().to_string());
                 log.emit("tui", logger::LogEvent::TuiSelectionChanged { goal_id: gid });
             }
             continue;
@@ -737,7 +737,7 @@ async fn run_loop(
             {
                 let a = app.lock().unwrap();
                 if a.selected_goal != sel_before {
-                    let gid = a.flat_goals().get(a.selected_goal).map(|g| g.id.clone());
+                    let gid = a.flat_items().get(a.selected_goal).map(|i| i.id().to_string());
                     log.emit("tui", logger::LogEvent::TuiSelectionChanged { goal_id: gid });
                 }
                 if a.focus != focus_before {
@@ -1169,6 +1169,7 @@ fn handle_session_event(
                     let first_line = task.lines().next().unwrap_or("").to_string();
                     app.running_sessions.insert(session_id.clone(), Some(first_line.clone()));
                     app.ephemeral_sessions.insert(session_id.clone());
+                    app.ephemeral_sessions_ordered.push(session_id.clone());
                     let sys = format!("<@{}> → fresh sub-session `{}`: {}", goal_id, session_id, first_line);
                     app.push_system_message(&sys);
                     log.emit(&goal_id, logger::LogEvent::TinkerSystemMessageReceived { content: sys });
@@ -3286,6 +3287,8 @@ mod tests {
         // Register two ephemeral sessions.
         app.ephemeral_sessions.insert("g~1".into());
         app.ephemeral_sessions.insert("g~2".into());
+        app.ephemeral_sessions_ordered.push("g~1".into());
+        app.ephemeral_sessions_ordered.push("g~2".into());
         // g~1 is still running; g~2 has finished.
         app.running_sessions.insert("g~1".into(), Some("task".into()));
 
@@ -3300,6 +3303,11 @@ mod tests {
         assert!(
             app.ephemeral_sessions.contains("g~1"),
             "running ephemeral session must remain in ephemeral_sessions",
+        );
+        assert_eq!(
+            app.ephemeral_sessions_ordered,
+            vec!["g~1".to_string()],
+            "completed session must also be removed from ephemeral_sessions_ordered",
         );
     }
 

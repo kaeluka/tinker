@@ -1,6 +1,6 @@
 id = "tui"
 kind = "feature"
-summary = "This goal owns the terminal interface rendering: the two-column layout with the live conversation pane on the left and the stacked goal-list, goal-text, and session-log bands on the right, plus goal-list row format, the goal-detail header (summary and tier/kind tag above the body), goal-ID visual consistency across surfaces, per-session conversation views, active-session switching, the options dialog (trigger reason, goal settings, session-reset warning), queue and trigger-reason display, and scroll behavior."
+summary = "This goal owns the terminal interface rendering: the two-column layout, goal-list row format including ephemeral sub-sessions nested under their dispatcher, the goal-detail header, goal-ID visual consistency, per-session conversation views, active-session switching, session log access for both permanent and ephemeral sessions, the options dialog, queue and trigger-reason display, goals-pane label normalization for ephemeral sessions, and scroll behavior."
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left
@@ -128,7 +128,7 @@ pane is what they turn to, and the summary delivers scope before the
 body text arrives. The tier tag is there because a wrong tier degrades
 output quality or inflates cost silently for the whole session; the
 only check is seeing the assigned value while work runs. The session
-log title uses the goal id — consistent with the goal-ID identity
+log title uses the selected item's id (goal or ephemeral sub-session) — consistent with the goal-ID identity
 principle above.
 
 """

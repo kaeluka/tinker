@@ -4,7 +4,7 @@ summary = "This goal owns the fresh-dispatch mechanism: goal agents dispatch to 
 description = """
 ## WHAT
 
-Goal agents can dispatch to ephemeral sub-sessions of themselves. A spawning agent addresses a fresh dispatch to its own goal id and an optional label (separated by `|`); the label lets the dispatcher correlate incoming replies. The fresh sub-session receives the same startup context as the dispatcher and replies via ordinary @-messages. Decomposition is one level deep — fresh sub-sessions carry standard startup context, not fresh-dispatch capability. Fresh sub-sessions are observable via the conversation pane (reachable by REPL switching). Completed sub-sessions remain in the registry until the next batch starts — so the user can inspect what ran and read their logs between batches. At batch-start they are silently removed (any period during which at least one session is active or a message is pending delivery constitutes a batch).
+Goal agents can dispatch to ephemeral sub-sessions of themselves. A spawning agent addresses a fresh dispatch to its own goal id and an optional label; the label lets the dispatcher correlate incoming replies. The fresh sub-session receives the same startup context as the dispatcher and replies via ordinary @-messages. Decomposition is one level deep — fresh sub-sessions carry standard startup context, not fresh-dispatch capability. Completed sub-sessions remain inspectable until the next batch starts; at batch-start they are silently removed (any period during which at least one session is active or a message is pending delivery constitutes a batch).
 
 ## WHY
 
@@ -27,7 +27,7 @@ reason = "fresh sub-sessions run in the shared main working directory alongside 
 
 [[related]]
 id = "tui"
-reason = "fresh sub-sessions are visible in the session view while active; tui governs how they are rendered and distinguished from permanent sessions."
+reason = "tui governs fresh sub-session display: nested layout under the dispatcher in the goals list, log access via selection, and label normalization so the dispatcher name represents all its sub-sessions in the pane header."
 
 [[related]]
 id = "coding-standards"
