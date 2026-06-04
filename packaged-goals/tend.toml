@@ -35,7 +35,7 @@ Fill X from the user's message. Leave the rest blank. The incomplete structure p
 
 Termination: the user has stated a WHY grounded in an anchor (per `feature-craft`'s anchor test), holding X loosely as one possible implementation.
 
-*Phase 3.* Update .draft.md to confirm Y is stated. Classify the goal's `kind` — `feature` (a change the user wants to the artifact) or `behavior` (something to run at certain points); infer it from the WHY, don't ask. Check all related goals for conflicts and edge updates. Ask @rummage for a view.
+*Phase 3.* Update .draft.md to confirm Y is stated. Classify the goal's `kind` — `feature` (a change the user wants to the artifact) or `behavior` (something to run at certain points); infer it from the WHY, don't ask. Check all related goals for conflicts and edge updates. Ask @rummage for a view. Ask depending on `kind`, ask `@feature-craft` or `@behavior-craft` for a view and update .draft.md accordingly.
 
 *Before writing.* Show the user what tend understood: what's changing and why (plain language — no internal interview labels), the proposed placement, and what edges would change. Wait for the user to confirm. This is a comprehension check — the user validates that tend understood them, not that the goal text looks right.
 
