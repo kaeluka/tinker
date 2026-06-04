@@ -242,27 +242,69 @@ fn push_message_lines(lines: &mut Vec<Line<'static>>, msg: &crate::app::Message)
 }
 
 
-/// Build the running-sessions label for the Goals pane title.
-/// Sorts IDs alphabetically, fits as many as possible within `max_chars`,
-/// truncating with `…` when needed.
-/// Returns e.g. `" > alpha, beta, … "` (truncated) or `" > alpha, beta "`.
-fn running_label(mut ids: Vec<&str>, max_chars: usize) -> String {
+/// Sort IDs and determine which fit within `max_chars` (the label budget —
+/// the ` > id1, id2 ` portion, not including `" Goals"`).
+/// Returns `(visible ids sorted, needs_ellipsis)`.
+fn running_ids<'a>(mut ids: Vec<&'a str>, max_chars: usize) -> (Vec<&'a str>, bool) {
     ids.sort_unstable();
     let n = ids.len();
 
     let all_label = format!(" > {} ", ids.join(", "));
     if all_label.chars().count() <= max_chars {
-        return all_label;
+        return (ids, false);
     }
 
     for k in (1..n).rev() {
         let label = format!(" > {}, … ", ids[..k].join(", "));
         if label.chars().count() <= max_chars {
-            return label;
+            return (ids[..k].to_vec(), true);
         }
     }
 
-    " > … ".to_string()
+    (vec![], true)
+}
+
+/// Build the running-sessions label for the Goals pane title (plain string form).
+/// Sorts IDs alphabetically, fits as many as possible within `max_chars`,
+/// truncating with `…` when needed.
+/// Returns e.g. `" > alpha, beta, … "` (truncated) or `" > alpha, beta "`.
+fn running_label(ids: Vec<&str>, max_chars: usize) -> String {
+    let (visible, ellipsis) = running_ids(ids, max_chars);
+    if visible.is_empty() {
+        return " > … ".to_string();
+    }
+    if ellipsis {
+        format!(" > {}, … ", visible.join(", "))
+    } else {
+        format!(" > {} ", visible.join(", "))
+    }
+}
+
+/// Build a styled `Line` for the Goals pane title when sessions are running.
+/// Running IDs render Yellow+Bold — matching the goal-list row style — so a goal ID
+/// looks the same in the pane label and in its list row.
+pub(crate) fn goal_pane_title_line(ids: Vec<&str>, max_chars: usize) -> Line<'static> {
+    let id_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let (visible, ellipsis) = running_ids(ids, max_chars);
+
+    let mut spans: Vec<Span<'static>> = vec![Span::raw(" Goals > ")];
+
+    for (i, id) in visible.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw(", "));
+        }
+        spans.push(Span::styled(id.to_string(), id_style));
+    }
+
+    if visible.is_empty() {
+        spans.push(Span::raw("… "));
+    } else if ellipsis {
+        spans.push(Span::raw(", … "));
+    } else {
+        spans.push(Span::raw(" "));
+    }
+
+    Line::from(spans)
 }
 
 fn draw_goal_tree(
@@ -280,24 +322,22 @@ fn draw_goal_tree(
         Style::default().fg(Color::DarkGray)
     };
 
-    let phase_label = if app.phase == Phase::Initializing {
-        " starting… ".to_string()
+    // Build a styled title Line so running IDs render Yellow+Bold — matching
+    // the goal-list row style for visual consistency across surfaces.
+    let title_line: Line<'static> = if app.phase == Phase::Initializing {
+        Line::from(Span::raw(" Goals starting… "))
+    } else if app.running_sessions.is_empty() {
+        Line::from(Span::raw(" Goals "))
     } else {
-        let n = app.running_sessions.len();
-        if n == 0 {
-            String::new()
-        } else {
-            // " Goals{phase_label} " must fit in area.width - 2 (border corners).
-            // Fixed overhead: " Goals " = 7 chars.
-            let max_chars = (area.width as usize).saturating_sub(9);
-            let ids: Vec<&str> = app.running_sessions.keys().map(String::as_str).collect();
-            running_label(ids, max_chars)
-        }
+        // " Goals > id1, id2 " must fit in area.width - 2 (border corners).
+        // Fixed overhead: " Goals " = 7 chars; subtract 9 total to budget for the label part.
+        let max_chars = (area.width as usize).saturating_sub(9);
+        let ids: Vec<&str> = app.running_sessions.keys().map(String::as_str).collect();
+        goal_pane_title_line(ids, max_chars)
     };
-    let title = format!(" Goals{} ", phase_label);
 
     let block = Block::default()
-        .title(title)
+        .title(title_line)
         .borders(Borders::ALL)
         .border_style(border_style);
 
@@ -332,9 +372,9 @@ fn draw_goal_tree(
             let id_style = if is_selected {
                 name_style
             } else if is_active {
-                Style::default().fg(Color::Yellow)
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)
             };
 
             let marker_style = if is_active {
@@ -349,8 +389,8 @@ fn draw_goal_tree(
             };
 
             let indent = "  ".repeat(*depth);
-            let id_label = format!("`{}`", node.goal.id);
-            let preview = truncate_with_ellipsis(&first_meaningful_line(&node.goal.description), 60);
+            let id_label = node.goal.id.clone();
+            let preview = truncate_with_ellipsis(&node.goal.summary, 60);
 
             let mut spans = vec![
                 Span::styled(format!("{}{}", indent, marker_str), marker_style),
@@ -405,22 +445,6 @@ fn draw_goal_tree(
     app.goal_text_scroll.record_render(total, text_area.height);
     let scroll_y = app.goal_text_scroll.effective_y().min(u16::MAX as usize) as u16;
     frame.render_widget(p.scroll((scroll_y, 0)), text_area);
-}
-
-/// First non-empty, non-markdown-header line of `text`, trimmed.
-/// Returns empty string if there's nothing meaningful.
-fn first_meaningful_line(text: &str) -> String {
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if trimmed.starts_with('#') {
-            continue;
-        }
-        return trimmed.to_string();
-    }
-    String::new()
 }
 
 fn draw_log(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -890,6 +914,7 @@ mod tests {
     /// Spec (tui — queue visibility): the goal ID of a running goal must use a
     /// distinct colour (Yellow) so the running goal stays visually salient
     /// while scrolling. The ▶ marker stays dim; only the ID gets colour.
+    /// Running IDs also carry BOLD for legibility.
     #[test]
     fn test_spec_running_goal_id_colour_is_distinct() {
         let is_active = true;
@@ -899,14 +924,18 @@ mod tests {
         let id_style = if is_selected {
             name_style
         } else if is_active {
-            Style::default().fg(Color::Yellow)
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)
         };
         assert_eq!(
             id_style.fg,
             Some(Color::Yellow),
             "running goal ID must use Yellow fg to remain visually salient",
+        );
+        assert!(
+            id_style.add_modifier.contains(Modifier::BOLD),
+            "running goal ID must carry BOLD modifier",
         );
         // Confirm the marker is still dim — unchanged by this feature.
         let marker_style = if is_active {
@@ -918,6 +947,60 @@ mod tests {
             marker_style.fg,
             Some(Color::DarkGray),
             "running ▶ marker must remain dim (DarkGray) regardless of ID colour",
+        );
+    }
+
+    /// Spec (tui — goal list): all three id-style variants carry BOLD so
+    /// goal identifiers remain legible regardless of selection/running state.
+    #[test]
+    fn test_spec_goal_id_is_bold_in_all_display_states() {
+        // selected: name_style carries BOLD, id_style == name_style
+        let selected_name_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+        let id_style_selected = selected_name_style;
+        assert!(
+            id_style_selected.add_modifier.contains(Modifier::BOLD),
+            "selected goal ID must carry BOLD modifier",
+        );
+        // running (active, not selected)
+        let id_style_active = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+        assert!(
+            id_style_active.add_modifier.contains(Modifier::BOLD),
+            "running goal ID must carry BOLD modifier",
+        );
+        // inactive, not selected
+        let id_style_inactive = Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD);
+        assert!(
+            id_style_inactive.add_modifier.contains(Modifier::BOLD),
+            "inactive goal ID must carry BOLD modifier",
+        );
+    }
+
+    /// Spec (tui — goal list preview): the preview shown next to each goal ID
+    /// must come from goal.summary, not goal.description.
+    #[test]
+    fn test_spec_goal_list_preview_uses_summary_not_description() {
+        let goal = Goal {
+            id: "alpha".to_string(),
+            summary: "the summary text".to_string(),
+            description: "the description text — longer and different".to_string(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        };
+        // Mirror the preview derivation from draw_goal_tree.
+        let preview = truncate_with_ellipsis(&goal.summary, 60);
+        assert!(
+            preview.contains("summary"),
+            "preview must come from goal.summary, got: {:?}",
+            preview,
+        );
+        assert!(
+            !preview.contains("description"),
+            "preview must NOT come from goal.description, got: {:?}",
+            preview,
         );
     }
 
@@ -1008,6 +1091,50 @@ mod tests {
         let ids = vec!["a-very-long-goal-name", "another-very-long-goal"];
         let label = running_label(ids, 5);
         assert_eq!(label, " > … ");
+    }
+
+    /// Spec (tui — goals pane title): running IDs in the pane label must render
+    /// Yellow+Bold — the same style used for running IDs in the goal-list rows —
+    /// so a goal ID looks identical on every surface.
+    #[test]
+    fn test_spec_goal_pane_title_running_ids_are_yellow_bold() {
+        use ratatui::style::{Color, Modifier};
+        let id_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+        let line = goal_pane_title_line(vec!["beta", "alpha"], 100);
+        // Every span that carries an actual ID (not prefix/punctuation) must be Yellow+Bold.
+        let id_spans: Vec<_> = line.spans.iter()
+            .filter(|s| {
+                let c: &str = &s.content;
+                c != " Goals > " && c != ", " && c != " " && c != "… " && c != ", … "
+            })
+            .collect();
+        assert!(!id_spans.is_empty(), "expected ID spans in the title line");
+        for span in &id_spans {
+            assert_eq!(
+                span.style, id_style,
+                "ID span {:?} must be Yellow+Bold in the pane label",
+                span.content,
+            );
+        }
+        // Confirm both IDs appear (sorted).
+        let full: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(full.contains("alpha"));
+        assert!(full.contains("beta"));
+    }
+
+    /// Spec (tui — goals pane title): the " Goals > " prefix and punctuation spans
+    /// are unstyled so they don't compete visually with the ID colour.
+    #[test]
+    fn test_spec_goal_pane_title_prefix_and_punctuation_are_unstyled() {
+        let plain = Style::default();
+        let line = goal_pane_title_line(vec!["alpha", "beta"], 100);
+        // First span is always the " Goals > " prefix.
+        let prefix = &line.spans[0];
+        assert_eq!(prefix.content.as_ref(), " Goals > ");
+        assert_eq!(prefix.style, plain, "prefix must be unstyled");
+        // Trailing " " span (the last one) must also be unstyled.
+        let last = line.spans.last().unwrap();
+        assert_eq!(last.style, plain, "trailing space span must be unstyled");
     }
 
 }

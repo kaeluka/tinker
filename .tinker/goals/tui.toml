@@ -1,6 +1,6 @@
 id = "tui"
 kind = "feature"
-summary = "This goal owns the terminal interface rendering: the two-column layout with the live conversation pane on the left and the stacked goal-list, goal-text, and session-log bands on the right, plus per-session conversation views, active-session switching, queue and trigger-reason display, and scroll behavior."
+summary = "This goal owns the terminal interface rendering: the two-column layout with the live conversation pane on the left and the stacked goal-list, goal-text, and session-log bands on the right, plus goal-list row format, goal-ID visual consistency across surfaces, per-session conversation views, active-session switching, queue and trigger-reason display, and scroll behavior."
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left
@@ -30,7 +30,8 @@ init message, before the user has typed anything — is not rendered
 in the conversation pane. The first entry the user sees is their own
 first message.
 
-In the goal list, only the list is selectable — the text beneath is
+In the goal list, each row shows the goal id in bold followed by the
+goal's summary. Only the list is selectable — the text beneath is
 read-and-scroll only. Keyboard navigation auto-scrolls the list so
 the selected goal stays visible (edge scrolling).
 
@@ -53,7 +54,9 @@ shows only that next index. For tend, rummage, and jog, ▶ appears
 when the user submits a message; for goal agents, at dispatch. It
 clears on Done. Markers render dim/grey so they don't dominate
 the goal name. The goal ID of a running goal renders in a distinct
-colour. When a marked goal is selected, the goal-text region
+colour. The goal list's pane label shows running IDs inline
+(`Goals > id1, id2, …`); those IDs render bold and in the running
+color, matching their list rows. When a marked goal is selected, the goal-text region
 appends a section beneath the description listing every pending
 invocation for that goal in queue order — running first, then queued
 — each line carrying its glyph or index and trigger reason. The queue
@@ -99,6 +102,13 @@ stay visible at a glance. The queue surface is read-only by
 deliberate choice: the user wanted to see what is running without
 being able to cancel or reorder it. Queue control is a separate
 concern, deferred until there is a real need.
+
+Goal IDs render bold and state-colored everywhere they appear — list
+rows, the pane label, and any future surface. A goal ID is a stable
+identity; a different style in a different place forces mental
+translation. Bold identifiers scan faster than plain ones on a
+navigation surface. Rows show the summary rather than the first WHAT
+line because the summary is the compact, purpose-built scope description.
 
 """
 parent_id = ""
