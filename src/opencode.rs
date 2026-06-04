@@ -406,10 +406,11 @@ mod tests {
         assert!(fires(nonempty_stderr, with_sid), "non-empty stderr + session id must trigger re-injection");
     }
 
-    // spec (backends): when a tool call is denied by an agent-file rule, opencode
-    // emits a tool_use event with status "error" and an error field. format_tool_use
-    // must surface this as a ⚠-prefixed line so the denial reaches the conversation
-    // pane regardless of whether the LLM produces text in response.
+    // spec (backends): when a tool call fails or is denied (e.g. by opencode's
+    // built-in tool gating), opencode emits a tool_use event with status "error"
+    // and an error field. format_tool_use must surface this as a ⚠-prefixed line
+    // so the error reaches the conversation pane regardless of whether the LLM
+    // produces text in response.
     #[test]
     fn test_spec_denied_tool_call_emits_warning_chunk() {
         let part = RawPart {

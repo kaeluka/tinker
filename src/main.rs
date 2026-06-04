@@ -2167,7 +2167,7 @@ mod tests {
     }
 
     #[test]
-    fn test_spec_tinker_static_persona_in_agent_dynamic_goals_in_init() {
+    fn test_spec_tinker_static_persona_in_description_dynamic_goals_in_init() {
         let content = packaged_tend_goal().description;
         let init = tend_init_prompt("- demo-goal-id: a demo description", "");
         assert!(init.contains("Current goals"), "init prompt must label the dynamic goals section");

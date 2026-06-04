@@ -273,9 +273,9 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
 
 /// Session-invariant framework preamble for claude goal agents.
 /// Delivered as the system prompt so it persists across session turns without
-/// repeating in the per-dispatch init message. Mirrors the persona opencode's
-/// `tinker.md` carries; file-access boundaries are conveyed via the prompt
-/// rather than a harness-level permission block.
+/// repeating in the per-dispatch init message. On opencode the same preamble
+/// rides in the session init message instead; file-access boundaries are
+/// conveyed via the prompt, not a harness-level permission block.
 pub fn goal_agent_framework_preamble() -> String {
     format!(
         "{message_passing_and_progress}\n\
