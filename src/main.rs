@@ -495,14 +495,24 @@ async fn run_loop(
     // Session registry: maps goal_id → message channel sender.
     // Tend is pre-populated (eager start); all other sessions start lazily.
     let mut session_senders: HashMap<String, mpsc::UnboundedSender<String>> = HashMap::new();
+    // Tracks whether the system is currently in an active batch (any session
+    // holds a running_sessions slot). Used to detect idle↔active transitions
+    // for BatchTransition event emission.
+    let mut batch_active = false;
 
     // Eager-start tend: find its goal, spawn goal_agent_loop, send the initial trigger.
     {
         let tend_goal = app.lock().unwrap().goals.iter().find(|g| g.id == "tend").cloned()
             .unwrap_or_else(packaged_tend_goal);
-        let compact_index = {
+        let goals_index = {
             let a = app.lock().unwrap();
-            if a.goals.is_empty() { "[]".to_string() } else { goal::build_compact_index(&a.goals) }
+            if a.goals.is_empty() {
+                "[]".to_string()
+            } else if use_full_goal_context {
+                goal::build_full_text_index(&a.goals)
+            } else {
+                goal::build_compact_index(&a.goals)
+            }
         };
         let neighbor_section = {
             let table = goal_session::build_neighborhood_table(&tend_goal);
@@ -520,9 +530,9 @@ async fn run_loop(
             }
         };
         let trigger = if use_full_goal_context {
-            tend_init_prompt_full_context(&compact_index, &neighbor_section)
+            tend_init_prompt_full_context(&goals_index, &neighbor_section)
         } else {
-            tend_init_prompt(&compact_index, &neighbor_section)
+            tend_init_prompt(&goals_index, &neighbor_section)
         };
         let (tend_tx, tend_rx) = mpsc::unbounded_channel::<String>();
         session_senders.insert("tend".to_string(), tend_tx.clone());
@@ -700,6 +710,8 @@ async fn run_loop(
                     running_goal_ids: running_after,
                 });
             }
+            // Detect and emit batch transitions after all session events are processed.
+            check_and_emit_batch_transition(&mut app.lock().unwrap(), &mut batch_active, &log);
         }
 
         // Terminal events (50ms poll)
@@ -808,9 +820,12 @@ async fn run_loop(
                             session_senders.remove(&id);
                         }
                     }
-                    if matches!(session_id.as_str(), "tend" | "rummage" | "jog") {
-                        app.lock().unwrap().running_sessions.insert(session_id.clone(), None);
-                    }
+                    // Mark ALL sessions as running at message-send time — not just
+                    // interactive agents. The user's message is already in flight
+                    // (either delivered to an existing sender or queued for spawn),
+                    // so the batch is active from this moment. The Chunk event's
+                    // `or_insert(None)` will be a no-op when the entry is already here.
+                    app.lock().unwrap().running_sessions.insert(session_id.clone(), None);
                     if let Some(tx) = session_senders.get(&session_id) {
                         let _ = tx.send(msg);
                     } else {
@@ -822,6 +837,8 @@ async fn run_loop(
                             fresh_session: None,
                         });
                     }
+                    // Emit idle→active transition now that running_sessions is updated.
+                    check_and_emit_batch_transition(&mut app.lock().unwrap(), &mut batch_active, &log);
                 }
                 KeyAction::ConfirmOptions { goal_id, reason, new_tier } => {
                     {
@@ -882,6 +899,9 @@ async fn run_loop(
                             fresh_session: None,
                         });
                     }
+                    // Non-interactive goals are inserted into running_sessions above;
+                    // emit idle→active transition if the batch just became active.
+                    check_and_emit_batch_transition(&mut app.lock().unwrap(), &mut batch_active, &log);
                 }
                 KeyAction::None => {}
             }
@@ -1154,7 +1174,16 @@ fn dispatch_peer_consultations(
             || app.ephemeral_sessions.contains(recipient.as_str());
 
         if let Some(tx) = session_senders.get(recipient) {
-            let _ = tx.send(formatted);
+            if tx.send(formatted).is_err() {
+                // The recipient's session task has exited and its channel is closed.
+                // Surface this as a system message so the user can see the lost delivery.
+                let warn = format!(
+                    "⚠ <@{}> → @{}: delivery lost — session receiver dropped (agent may have exited)",
+                    sender, recipient
+                );
+                app.push_system_message(&warn);
+                log.emit(sender, logger::LogEvent::TinkerSystemMessageReceived { content: warn });
+            }
         } else if app.goals.iter().any(|g| &g.id == recipient) {
             let _ = goal_spawn_tx.send(SpawnGoalRequest {
                 goal_id: recipient.clone(),
@@ -1185,6 +1214,36 @@ fn known_agent_ids<'a>(
 }
 
 
+
+/// Check whether the batch (active/idle) state has changed and emit a
+/// `BatchTransition` log event plus a user-visible system message if so.
+///
+/// A batch is "active" whenever `running_sessions` is non-empty — any LLM
+/// session is processing a turn or awaiting delivery. Idle means no session
+/// holds a slot. `batch_active` is the caller-owned tracking flag; it is
+/// mutated in-place on every detected transition.
+fn check_and_emit_batch_transition(
+    app: &mut App,
+    batch_active: &mut bool,
+    log: &logger::LogSender,
+) {
+    let now_active = !app.running_sessions.is_empty();
+    if now_active && !*batch_active {
+        *batch_active = true;
+        let msg = "— batch active —";
+        app.push_system_message(msg);
+        log.emit("harness", logger::LogEvent::BatchTransition {
+            direction: "idle_to_active".to_string(),
+        });
+    } else if !now_active && *batch_active {
+        *batch_active = false;
+        let msg = "— batch idle —";
+        app.push_system_message(msg);
+        log.emit("harness", logger::LogEvent::BatchTransition {
+            direction: "active_to_idle".to_string(),
+        });
+    }
+}
 
 /// Unified session event handler. Routes events from any agent session to the
 /// appropriate App state updates and peer consultations.
@@ -1985,13 +2044,16 @@ mod tests {
     #[test]
     fn test_spec_full_goal_context_flag_routes_to_full_text_index() {
         let main_rs = include_str!("main.rs");
+        // Check with the argument included so the pattern only matches the production
+        // call site, not this test's own source (which contains the bare function name
+        // as a string literal but not the call-with-argument form).
         assert!(
-            main_rs.contains("goal::build_full_text_index"),
-            "main.rs must call build_full_text_index on the full-context path",
+            main_rs.contains("build_full_text_index(&a.goals)"),
+            "main.rs must call build_full_text_index(&a.goals) on the full-context path",
         );
         assert!(
-            main_rs.contains("tend_init_prompt_full_context"),
-            "main.rs must call tend_init_prompt_full_context on the full-context path",
+            main_rs.contains("tend_init_prompt_full_context(&goals_index"),
+            "main.rs must call tend_init_prompt_full_context with goals_index on the full-context path",
         );
         assert!(
             main_rs.contains("use_full_goal_context"),
@@ -2572,6 +2634,67 @@ mod tests {
         let _ = rummage_rx.try_recv();
     }
 
+    // spec (peer-consult): when a recipient's session task has exited (receiver
+    // dropped), dispatch_peer_consultations must surface a warning system message
+    // rather than silently discarding the delivery.
+    #[test]
+    fn test_spec_peer_consult_dropped_receiver_surfaces_warning() {
+        let (msg_tx, _) = mpsc::unbounded_channel::<String>();
+        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+
+        // Create a sender for "rummage" but immediately drop the receiver — simulates
+        // a session task that has exited.
+        let (rummage_tx, rummage_rx) = mpsc::unbounded_channel::<String>();
+        drop(rummage_rx);
+
+        let mut senders = HashMap::new();
+        senders.insert("tend".to_string(), msg_tx.clone());
+        senders.insert("rummage".to_string(), rummage_tx);
+
+        let mut app = App::new();
+        let consultations = vec![("rummage".to_string(), "check the auth module".to_string())];
+        dispatch_peer_consultations(
+            &mut app,
+            "tend",
+            &consultations,
+            &senders,
+            &spawn_tx,
+            &logger::noop_sender(),
+        );
+
+        let warn = app.messages.iter().find(|m| {
+            m.role == app::Role::System && m.text.contains("delivery lost")
+        });
+        assert!(
+            warn.is_some(),
+            "a dropped-receiver must surface a 'delivery lost' system message"
+        );
+        let text = &warn.unwrap().text;
+        assert!(text.contains("tend"), "warning must name the sender");
+        assert!(text.contains("rummage"), "warning must name the recipient");
+    }
+
+    // spec (peer-consult): the session message channels and the goal-spawn channel
+    // must be unbounded so delivery never silently drops when a recipient is under
+    // load.  A bounded try_send on capacity-16 or -32 channels silently discards
+    // the message when the channel is full; unbounded senders never fail due to capacity.
+    #[test]
+    fn test_spec_peer_consult_session_channels_are_unbounded() {
+        let src = include_str!("main.rs");
+        // Use concat to prevent this test's own source from satisfying the negative patterns.
+        // If the bounded capacity numbers reappear in production code these assertions fail.
+        let bounded_str_ch  = ["mpsc::channel::<String>(", "16)"].concat();
+        let bounded_spawn_ch = ["mpsc::channel::<SpawnGoal", "Request>(32)"].concat();
+        assert!(
+            !src.contains(&bounded_str_ch),
+            "session message channels must be unbounded — bounded capacity-16 String channel found in production code",
+        );
+        assert!(
+            !src.contains(&bounded_spawn_ch),
+            "goal-spawn channel must be unbounded — bounded capacity-32 SpawnGoalRequest channel found in production code",
+        );
+    }
+
     // spec (backends): "--help/-h prints all startup flags with a brief description and exits
     // cleanly, without attempting TUI initialisation."
     // All three flags must appear in the help output text and exit must happen before any
@@ -2947,15 +3070,23 @@ mod tests {
         );
     }
 
-    // spec (tui — queue visibility): the SendToSession handler must insert
-    // interactive agents (tend, rummage, jog) into running_sessions at submission
-    // time so ▶ appears the moment the user sends a message, not at first chunk.
+    // spec (tui — queue visibility / tend-introspection): the SendToSession handler
+    // must insert ALL sessions into running_sessions at submission time so ▶ appears
+    // the moment a message is sent and batch-transition detection fires correctly.
+    // The former guard restricting this to tend/rummage/jog has been removed.
     #[test]
-    fn test_spec_interactive_agent_running_sessions_on_submit() {
+    fn test_spec_all_sessions_inserted_into_running_sessions_on_submit() {
         let src = include_str!("main.rs");
+        // The unconditional insert must be present; the old guard must be gone.
         assert!(
             src.contains("running_sessions.insert(session_id"),
-            "SendToSession handler must insert interactive session into running_sessions at submission time",
+            "SendToSession handler must insert session into running_sessions at submission time",
+        );
+        // The old guard that limited this to interactive agents must be absent.
+        let old_guard = ["matches!(session_id.as_str(), \"tend\" | \"rummage\" | \"jog\")"].concat();
+        assert!(
+            !src.contains(&old_guard),
+            "SendToSession handler must not restrict running_sessions insertion to interactive agents only",
         );
     }
 
@@ -3554,6 +3685,57 @@ mod tests {
     }
 
     // spec (fresh-agents): batch detection — retirement must NOT fire when the
+    // spec (tend-introspection): check_and_emit_batch_transition emits "— batch active —"
+    // system message and sets batch_active=true on idle→active transition (running_sessions
+    // becomes non-empty). No second emission when already active.
+    #[test]
+    fn test_spec_batch_transition_idle_to_active_emits_system_message() {
+        let mut app = App::new();
+        let mut batch_active = false;
+        let log = logger::noop_sender();
+
+        // Seed a running session to make the system active.
+        app.running_sessions.insert("rummage".to_string(), None);
+
+        check_and_emit_batch_transition(&mut app, &mut batch_active, &log);
+
+        assert!(batch_active, "batch_active must be set to true on idle→active");
+        assert!(
+            app.messages.iter().any(|m| m.role == app::Role::System && m.text == "— batch active —"),
+            "idle→active must push '— batch active —' system message"
+        );
+
+        // Call again — running_sessions still non-empty, already active. No new message.
+        let msg_count = app.messages.len();
+        check_and_emit_batch_transition(&mut app, &mut batch_active, &log);
+        assert_eq!(app.messages.len(), msg_count, "no duplicate emission when already active");
+    }
+
+    // spec (tend-introspection): check_and_emit_batch_transition emits "— batch idle —"
+    // system message and sets batch_active=false on active→idle transition (running_sessions
+    // becomes empty). No second emission when already idle.
+    #[test]
+    fn test_spec_batch_transition_active_to_idle_emits_system_message() {
+        let mut app = App::new();
+        let mut batch_active = true; // start as if already active
+
+        let log = logger::noop_sender();
+
+        // running_sessions is empty — system is idle.
+        check_and_emit_batch_transition(&mut app, &mut batch_active, &log);
+
+        assert!(!batch_active, "batch_active must be set to false on active→idle");
+        assert!(
+            app.messages.iter().any(|m| m.role == app::Role::System && m.text == "— batch idle —"),
+            "active→idle must push '— batch idle —' system message"
+        );
+
+        // Call again — already idle. No new message.
+        let msg_count = app.messages.len();
+        check_and_emit_batch_transition(&mut app, &mut batch_active, &log);
+        assert_eq!(app.messages.len(), msg_count, "no duplicate emission when already idle");
+    }
+
     // dispatcher is an ephemeral coordinator (mid-batch), when any ephemeral is
     // still running, OR when the permanent dispatcher is itself in running_sessions
     // (a batch message from a completed sub-session is pending delivery to it).

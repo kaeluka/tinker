@@ -4,7 +4,7 @@ summary = "This goal owns the fresh-dispatch mechanism: goal agents dispatch to 
 description = """
 ## WHAT
 
-Goal agents can dispatch to ephemeral sub-sessions of themselves. A spawning agent addresses a fresh dispatch to its own goal id and an optional label; the label lets the dispatcher correlate incoming replies. The fresh sub-session receives the same startup context as the dispatcher — including fresh-dispatch capability — and replies via ordinary @-messages. A sub-session may itself dispatch further sub-sessions, acting as a coordinator: it remains reachable for replies until the batch ends. Each dispatched sub-task must be a genuine decomposition — narrower than the problem the dispatcher received, with the LLM deciding when a task is atomic enough not to decompose further. Completed sub-sessions remain inspectable until the next batch starts; at batch-start they are silently removed (any period during which at least one session is active or a message is pending delivery constitutes a batch).
+Goal agents can dispatch to ephemeral sub-sessions of themselves. A spawning agent addresses a fresh dispatch to its own goal id and an optional label; the label lets the dispatcher correlate incoming replies. The fresh sub-session receives the same startup context as the dispatcher — including fresh-dispatch capability — and replies via ordinary @-messages. A sub-session may itself dispatch further sub-sessions, acting as a coordinator: it remains reachable for replies until the batch ends. Each dispatched sub-task must be a genuine decomposition — narrower than the problem the dispatcher received, with the LLM deciding when a task is atomic enough not to decompose further. The system carries a global batch state — **active** whenever any work is in flight (a session is processing, a reply is being routed, or a user message is pending), **idle** when nothing is outstanding. A continuous period of activity constitutes a batch; continued user input extends it. Completed sub-sessions remain inspectable until the next batch starts, when they are silently retired.
 
 ## WHY
 
@@ -28,6 +28,10 @@ reason = "fresh sub-sessions run in the shared main working directory alongside 
 [[related]]
 id = "tui"
 reason = "tui governs fresh sub-session display: accurate nesting under the immediate dispatcher at all depths, appearance at dispatch time rather than at turn completion, log access via selection, and pane-label normalization to the root permanent goal name."
+
+[[related]]
+id = "tend-introspection"
+reason = "tend-introspection captures batch state transitions — batch-start and batch-end — as event log entries and system messages, making the active/idle lifecycle this goal defines observable in the runtime event log."
 
 [[related]]
 id = "coding-standards"

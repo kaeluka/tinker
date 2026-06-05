@@ -1,6 +1,6 @@
 id = "tend-introspection"
 kind = "feature"
-summary = "This goal owns tend's runtime introspection substrate — the append-only event log at .tinker/logs/runtime.jsonl capturing turns, messages, goal-session lifecycle, dispatch, cleanup, goal-file changes, and TUI state, plus the semantic UI state snapshot at .tinker/state/runtime.json, written async and non-blocking so tend can observe its own state."
+summary = "This goal owns tend's runtime introspection substrate — the append-only event log at .tinker/logs/runtime.jsonl capturing turns, messages, goal-session lifecycle, dispatch, cleanup, goal-file changes, TUI state, and batch state transitions, plus the semantic UI state snapshot at .tinker/state/runtime.json, written async and non-blocking; batch transitions also emit as user-visible system messages."
 description = """
 ## WHAT
 A runtime introspection substrate that lets tend inspect its own
@@ -21,8 +21,10 @@ tend-injected system messages (full content plus a `source` field
 naming the emitting component — dispatcher, harness);
 goal-session lifecycle (dispatched, started, finished) with
 observable facts; `@`-dispatch emissions; cleanup-hook results;
-goal-file changes; and TUI structural state changes (selection,
-focus, scroll, queue). The session-start event captures the
+goal-file changes; TUI structural state changes (selection,
+focus, scroll, queue); and **batch state transitions** — when the
+system moves from idle to active and back — as first-class events,
+alongside the existing system-message stream. The session-start event captures the
 system-prompt text plus a goal-list hash so persona/goal drift is
 detectable across sessions. The log format carries a `kind` discriminator, supports
 `jq`-style aggregation, and lets tend retrieve a single event at low
@@ -89,3 +91,7 @@ reason = "tend-introspection's substrate captures tui's structural state (select
 [[related]]
 id = "goal-agents"
 reason = "tend-introspection logs goal-session lifecycle events (dispatched/started/finished), @-dispatch emissions, and a session-start system-prompt and goal-list-hash capture; the lifecycle and dispatch events it records are produced by goal-agents' session registry."
+
+[[related]]
+id = "fresh-agents"
+reason = "fresh-agents owns the batch concept (active/idle system state and the retirement trigger); tend-introspection captures batch state transitions as first-class event log entries and system messages."

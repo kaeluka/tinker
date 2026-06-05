@@ -99,6 +99,13 @@ pub enum LogEvent {
     TuiQueueChanged {
         running_goal_ids: Vec<String>,
     },
+    /// Emitted when the system transitions between idle and active (a batch
+    /// starts or all sessions complete). `direction` is `"idle_to_active"` or
+    /// `"active_to_idle"`. Also emitted as a user-visible system message so
+    /// batch boundaries are observable in the conversation pane.
+    BatchTransition {
+        direction: String,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -628,7 +635,35 @@ mod tests {
         assert_eq!(files.len(), 2, "BTreeSet must deduplicate repeated paths");
     }
 
-    // spec (tinker-introspection): TuiScrollChanged updates the correct
+    // spec (tend-introspection): BatchTransition serializes as snake_case kind
+    // with a `direction` field set to "idle_to_active" or "active_to_idle".
+    // It is NOT state-changing — apply_to_state must return false, so it never
+    // triggers a state-snapshot write. Both directions must be representable.
+    #[test]
+    fn test_spec_batch_transition_serializes_and_is_not_state_changing() {
+        for direction in &["idle_to_active", "active_to_idle"] {
+            let event = LogEvent::BatchTransition { direction: direction.to_string() };
+            let entry = LogEntry {
+                ts: "2026-06-05T00:00:00Z".to_string(),
+                source: "harness".to_string(),
+                event: event.clone(),
+            };
+            let json = serde_json::to_string(&entry).unwrap();
+            let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(val["kind"], "batch_transition", "kind must be batch_transition");
+            assert_eq!(val["direction"], *direction, "direction field must round-trip");
+            assert_eq!(val["source"], "harness");
+            // Must not mark state dirty — batch state is not in the UI snapshot.
+            let mut state = StateSnapshot::default();
+            let changed = apply_to_state(&entry, &mut state);
+            assert!(
+                !changed,
+                "BatchTransition({direction}) must not mark state dirty"
+            );
+        }
+    }
+
+    // spec (tend-introspection): TuiScrollChanged updates the correct
     // pane in the state snapshot's scroll_offsets. All four pane names are handled;
     // unknown pane names are silently ignored (open extension point).
     #[test]
