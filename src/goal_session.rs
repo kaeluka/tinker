@@ -172,7 +172,10 @@ pub enum SessionEvent {
     /// A streamed text chunk from the LLM.
     Chunk { goal_id: String, text: String },
     /// The session has finished processing the current message.
-    Done { goal_id: String },
+    /// `full_output` is the complete assembled reply from the LLM — used by the
+    /// harness for envelope extraction at Done time, bypassing the chunk-reconstructed
+    /// `current_session_text` which can have gaps when the event channel is under load.
+    Done { goal_id: String, full_output: String },
     /// Cleanup of tinker-test-case markers failed before this goal session
     /// could start. `dirty_files` lists files still containing markers;
     /// `error` is set when cleanup itself errored before it could finish.
@@ -671,7 +674,8 @@ pub async fn run_goal(
         .run(&message, None, &work_dir, on_sid, on_chunk)
         .await?;
 
-    let _ = tx.send(SessionEvent::Done { goal_id: goal_id.clone() }).await;
+    let output = full_output.lock().unwrap().clone();
+    let _ = tx.send(SessionEvent::Done { goal_id: goal_id.clone(), full_output: output.clone() }).await;
 
     // Intra-dispatch continuity: the structured-summary request continues
     // the same LLM conversation as the main work, so the summary can refer
@@ -680,7 +684,6 @@ pub async fn run_goal(
         .await
         .unwrap_or_default();
 
-    let output = full_output.lock().unwrap().clone();
     Ok((output, summary))
 }
 

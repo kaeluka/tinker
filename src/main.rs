@@ -121,7 +121,7 @@ struct SpawnGoalRequest {
 #[allow(clippy::too_many_arguments)]
 async fn goal_agent_loop(
     goal: goal::Goal,
-    mut msg_rx: mpsc::Receiver<String>,
+    mut msg_rx: mpsc::UnboundedReceiver<String>,
     session_tx: mpsc::Sender<SessionEvent>,
     oc: Arc<dyn OpenCodeRunner>,
     oc_cleanup: Arc<dyn OpenCodeRunner>,
@@ -256,10 +256,10 @@ async fn goal_agent_loop(
                     files_modified,
                     tool_calls,
                     summary_chars: 0,
-                    full_output: output,
+                    full_output: output.clone(),
                     backend: backend_name.clone(),
                 });
-                let _ = session_tx.send(SessionEvent::Done { goal_id: goal_id.clone() }).await;
+                let _ = session_tx.send(SessionEvent::Done { goal_id: goal_id.clone(), full_output: output }).await;
             }
             Err(e) => {
                 log.emit("goal_session", logger::LogEvent::GoalSessionFinished {
@@ -270,12 +270,12 @@ async fn goal_agent_loop(
                     files_modified: vec![],
                     tool_calls: 0,
                     summary_chars: 0,
-                    full_output: output,
+                    full_output: output.clone(),
                     backend: backend_name.clone(),
                 });
                 // Clear session_id so next message starts a fresh session.
                 llm_session_id = None;
-                let _ = session_tx.send(SessionEvent::Done { goal_id: goal_id.clone() }).await;
+                let _ = session_tx.send(SessionEvent::Done { goal_id: goal_id.clone(), full_output: output }).await;
             }
         }
     }
@@ -402,7 +402,7 @@ async fn main() -> Result<()> {
     }
 
     let (session_tx, mut session_rx) = mpsc::channel::<SessionEvent>(128);
-    let (goal_spawn_tx, mut goal_spawn_rx) = mpsc::channel::<SpawnGoalRequest>(32);
+    let (goal_spawn_tx, mut goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
 
     // Goal watcher task — re-discovers .tinker dirs each cycle and re-merges
     {
@@ -479,8 +479,8 @@ async fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: Arc<Mutex<App>>,
     session_rx: &mut mpsc::Receiver<SessionEvent>,
-    goal_spawn_tx: mpsc::Sender<SpawnGoalRequest>,
-    goal_spawn_rx: &mut mpsc::Receiver<SpawnGoalRequest>,
+    goal_spawn_tx: mpsc::UnboundedSender<SpawnGoalRequest>,
+    goal_spawn_rx: &mut mpsc::UnboundedReceiver<SpawnGoalRequest>,
     oc_goal: Arc<dyn OpenCodeRunner>,
     oc_goal_high: Arc<dyn OpenCodeRunner>,
     oc_goal_low: Arc<dyn OpenCodeRunner>,
@@ -494,7 +494,7 @@ async fn run_loop(
 ) -> Result<()> {
     // Session registry: maps goal_id → message channel sender.
     // Tend is pre-populated (eager start); all other sessions start lazily.
-    let mut session_senders: HashMap<String, mpsc::Sender<String>> = HashMap::new();
+    let mut session_senders: HashMap<String, mpsc::UnboundedSender<String>> = HashMap::new();
 
     // Eager-start tend: find its goal, spawn goal_agent_loop, send the initial trigger.
     {
@@ -524,7 +524,7 @@ async fn run_loop(
         } else {
             tend_init_prompt(&compact_index, &neighbor_section)
         };
-        let (tend_tx, tend_rx) = mpsc::channel::<String>(16);
+        let (tend_tx, tend_rx) = mpsc::unbounded_channel::<String>();
         session_senders.insert("tend".to_string(), tend_tx.clone());
         let app_ref = app.clone();
         let session_tx_t = session_tx.clone();
@@ -537,7 +537,7 @@ async fn run_loop(
         tokio::spawn(async move {
             goal_agent_loop(tend_goal, tend_rx, session_tx_t, oc_t, oc_cleanup_t, fs_t, work_dir_t, app_ref, log_t, backend_t, false, None, false).await;
         });
-        let _ = tend_tx.try_send(trigger);
+        let _ = tend_tx.send(trigger);
     }
 
     loop {
@@ -601,7 +601,7 @@ async fn run_loop(
                     .find(|g| g.id == permanent_goal_id)
                     .cloned();
                 if let Some(dispatcher_goal) = goal {
-                    let (msg_tx_fresh, msg_rx_fresh) = mpsc::channel::<String>(16);
+                    let (msg_tx_fresh, msg_rx_fresh) = mpsc::unbounded_channel::<String>();
                     session_senders.insert(fresh.session_id.clone(), msg_tx_fresh.clone());
                     let lean_init_fresh = backend_name == "claude";
                     let compact_index = {
@@ -645,7 +645,7 @@ async fn run_loop(
                     let log_fresh = log.clone();
                     let backend_fresh = backend_name.to_string();
                     let work_dir_fresh = work_dir.clone();
-                    let _ = msg_tx_fresh.try_send(req.message);
+                    let _ = msg_tx_fresh.send(req.message);
                     tokio::spawn(async move {
                         goal_agent_loop(
                             fresh_goal, msg_rx_fresh, session_tx_fresh,
@@ -656,11 +656,11 @@ async fn run_loop(
                     });
                 }
             } else if let Some(tx) = session_senders.get(&req.goal_id) {
-                let _ = tx.try_send(req.message);
+                let _ = tx.send(req.message);
             } else {
                 let goal = app.lock().unwrap().goals.iter().find(|g| g.id == req.goal_id).cloned();
                 if let Some(goal) = goal {
-                    let (msg_tx_goal, msg_rx_goal) = mpsc::channel::<String>(16);
+                    let (msg_tx_goal, msg_rx_goal) = mpsc::unbounded_channel::<String>();
                     session_senders.insert(req.goal_id.clone(), msg_tx_goal.clone());
                     let oc_for_goal = match goal.tier.as_deref() {
                         Some("high") => oc_goal_high.clone(),
@@ -675,7 +675,7 @@ async fn run_loop(
                     let backend_goal = backend_name.to_string();
                     let lean_init_goal = backend_name == "claude";
                     let work_dir_goal = work_dir.clone();
-                    let _ = msg_tx_goal.try_send(req.message);
+                    let _ = msg_tx_goal.send(req.message);
                     tokio::spawn(async move {
                         goal_agent_loop(
                             goal, msg_rx_goal, session_tx_goal,
@@ -812,11 +812,11 @@ async fn run_loop(
                         app.lock().unwrap().running_sessions.insert(session_id.clone(), None);
                     }
                     if let Some(tx) = session_senders.get(&session_id) {
-                        let _ = tx.send(msg).await;
+                        let _ = tx.send(msg);
                     } else {
                         // Session not yet spawned — route through lazy spawn so the
                         // first user message to rummage/jog triggers session_init_message.
-                        let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
+                        let _ = goal_spawn_tx.send(SpawnGoalRequest {
                             goal_id: session_id,
                             message: msg,
                             fresh_session: None,
@@ -876,7 +876,7 @@ async fn run_loop(
                             }
                         }
                         log.emit("dispatcher", logger::LogEvent::TinkerSystemMessageReceived { content: sys_msg });
-                        let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
+                        let _ = goal_spawn_tx.send(SpawnGoalRequest {
                             goal_id: goal_id.clone(),
                             message: reason_str,
                             fresh_session: None,
@@ -1129,8 +1129,8 @@ fn dispatch_peer_consultations(
     app: &mut App,
     sender: &str,
     consultations: &[(String, String)],
-    session_senders: &HashMap<String, mpsc::Sender<String>>,
-    goal_spawn_tx: &mpsc::Sender<SpawnGoalRequest>,
+    session_senders: &HashMap<String, mpsc::UnboundedSender<String>>,
+    goal_spawn_tx: &mpsc::UnboundedSender<SpawnGoalRequest>,
     log: &logger::LogSender,
 ) {
     for (recipient, msg) in consultations {
@@ -1154,9 +1154,9 @@ fn dispatch_peer_consultations(
             || app.ephemeral_sessions.contains(recipient.as_str());
 
         if let Some(tx) = session_senders.get(recipient) {
-            let _ = tx.try_send(formatted);
+            let _ = tx.send(formatted);
         } else if app.goals.iter().any(|g| &g.id == recipient) {
-            let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
+            let _ = goal_spawn_tx.send(SpawnGoalRequest {
                 goal_id: recipient.clone(),
                 message: formatted,
                 fresh_session: None,
@@ -1172,7 +1172,7 @@ fn dispatch_peer_consultations(
 /// Collect all IDs the @-block parser should recognise: current registry entries
 /// plus all known goal IDs (so agents can address goals not yet spawned).
 fn known_agent_ids<'a>(
-    session_senders: &'a HashMap<String, mpsc::Sender<String>>,
+    session_senders: &'a HashMap<String, mpsc::UnboundedSender<String>>,
     goals: &'a [goal::Goal],
 ) -> Vec<&'a str> {
     let mut ids: Vec<&str> = session_senders.keys().map(|s| s.as_str()).collect();
@@ -1191,8 +1191,8 @@ fn known_agent_ids<'a>(
 fn handle_session_event(
     app: &mut App,
     ev: SessionEvent,
-    goal_spawn_tx: &mpsc::Sender<SpawnGoalRequest>,
-    session_senders: &HashMap<String, mpsc::Sender<String>>,
+    goal_spawn_tx: &mpsc::UnboundedSender<SpawnGoalRequest>,
+    session_senders: &HashMap<String, mpsc::UnboundedSender<String>>,
     fs: &dyn Filesystem,
     log: &logger::LogSender,
 ) {
@@ -1244,11 +1244,15 @@ fn handle_session_event(
                 }
             }
         }
-        SessionEvent::Done { goal_id } => {
+        SessionEvent::Done { goal_id, full_output } => {
             app.finalize_agent_message(&goal_id);
             // Clear the ▶ indicator for any session type, including interactive agents.
             app.running_sessions.remove(&goal_id);
-            let session_text = app.current_session_text.remove(&goal_id).unwrap_or_default();
+            // current_session_text was used during streaming for pre-announcement scanning;
+            // its content is not used here — full_output from the Done event is the authoritative
+            // complete assembled reply and is free of chunk-delivery gaps.
+            app.current_session_text.remove(&goal_id);
+            let session_text = full_output;
             // Reload goals — any session may have written TOML files.
             if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
                 app.goals = load.goals;
@@ -1293,7 +1297,7 @@ fn handle_session_event(
                     app.push_system_message(&correction_msg);
                     log.emit("correction-injector", logger::LogEvent::TinkerSystemMessageReceived { content: correction_msg });
                     if let Some(tx) = session_senders.get("tend") {
-                        let _ = tx.try_send(msg);
+                        let _ = tx.send(msg);
                     }
                     return;
                 } else if !new_errors.is_empty() {
@@ -1371,7 +1375,7 @@ fn handle_session_event(
                         &goal_id,
                         logger::LogEvent::TinkerSystemMessageReceived { content: sys },
                     );
-                    let _ = goal_spawn_tx.try_send(SpawnGoalRequest {
+                    let _ = goal_spawn_tx.send(SpawnGoalRequest {
                         goal_id: perm_base.clone(),
                         message: task.clone(),
                         fresh_session: Some(FreshSessionConfig {
@@ -1403,7 +1407,7 @@ fn handle_session_event(
             // the agent to surface what happened. Applies uniformly to all sessions.
             if session_text.trim().is_empty()
                 && let Some(tx) = session_senders.get(&goal_id) {
-                    let _ = tx.try_send(
+                    let _ = tx.send(
                         "You produced no response to the previous message. \
                          Did you mean to say something?".to_string()
                     );
@@ -1707,10 +1711,10 @@ mod tests {
     use crate::app::ModalField;
 
     fn make_test_session_senders(
-        msg_tx: &mpsc::Sender<String>,
-    ) -> (HashMap<String, mpsc::Sender<String>>, mpsc::Receiver<String>, mpsc::Receiver<String>) {
-        let (rummage_tx, rummage_rx) = mpsc::channel::<String>(8);
-        let (jog_tx, jog_rx) = mpsc::channel::<String>(8);
+        msg_tx: &mpsc::UnboundedSender<String>,
+    ) -> (HashMap<String, mpsc::UnboundedSender<String>>, mpsc::UnboundedReceiver<String>, mpsc::UnboundedReceiver<String>) {
+        let (rummage_tx, rummage_rx) = mpsc::unbounded_channel::<String>();
+        let (jog_tx, jog_rx) = mpsc::unbounded_channel::<String>();
         let mut senders = HashMap::new();
         senders.insert("tend".to_string(), msg_tx.clone());
         senders.insert("rummage".to_string(), rummage_tx);
@@ -1733,9 +1737,10 @@ mod tests {
     // This exhaustive-match test compiles only while both variants stay absent.
     #[test]
     fn test_spec_summary_ready_variant_removed() {
-        // Exhaustive match ensures LlmSessionId and SummaryReady stay absent,
-        // and that Done does not carry a crashed field.
-        let evt = SessionEvent::Done { goal_id: "x".into() };
+        // Exhaustive match ensures LlmSessionId and SummaryReady stay absent.
+        // Done carries goal_id and full_output (the complete assembled reply for
+        // envelope extraction, bypassing chunk-reconstructed current_session_text).
+        let evt = SessionEvent::Done { goal_id: "x".into(), full_output: "".into() };
         match evt {
             SessionEvent::Chunk { .. } => {}
             SessionEvent::Done { .. } => {}
@@ -2390,8 +2395,8 @@ mod tests {
     // the recipient is a known goal ID not yet in the session registry.
     #[test]
     fn test_spec_goal_agent_dispatch_triggers_lazy_spawn() {
-        let (msg_tx, _msg_rx) = mpsc::channel::<String>(8);
-        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (msg_tx, _msg_rx) = mpsc::unbounded_channel::<String>();
+        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
         let (senders, _, _) = make_test_session_senders(&msg_tx);
 
         let mut app = App::new();
@@ -2427,7 +2432,7 @@ mod tests {
     // all goal IDs from app.goals (so agents can address unspawned goals).
     #[test]
     fn test_spec_known_agent_ids_includes_goals_and_registry() {
-        let (msg_tx, _) = mpsc::channel::<String>(8);
+        let (msg_tx, _) = mpsc::unbounded_channel::<String>();
         let (senders, _, _) = make_test_session_senders(&msg_tx);
         let goals = vec![
             goal::Goal { id: "tui".into(), summary: String::new(), description: String::new(),
@@ -2458,10 +2463,10 @@ mod tests {
     // to the correct channel and formats the message with the sender name.
     #[test]
     fn test_spec_peer_consult_dispatch_routes_to_correct_channel() {
-        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
-        let (rummage_tx, mut rummage_rx) = mpsc::channel::<String>(8);
-        let (jog_tx, mut jog_rx) = mpsc::channel::<String>(8);
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<String>();
+        let (rummage_tx, mut rummage_rx) = mpsc::unbounded_channel::<String>();
+        let (jog_tx, mut jog_rx) = mpsc::unbounded_channel::<String>();
+        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
 
         let mut senders = HashMap::new();
         senders.insert("tend".to_string(), msg_tx.clone());
@@ -2502,8 +2507,8 @@ mod tests {
     // and truncating the agent's actual reply.
     #[test]
     fn test_spec_peer_consult_dispatch_includes_reply_instruction() {
-        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<String>();
+        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
         let mut senders = HashMap::new();
         senders.insert("tend".to_string(), msg_tx);
         let mut app = App::new();
@@ -2537,10 +2542,10 @@ mod tests {
     // so the user can observe the exchange in real time.
     #[test]
     fn test_spec_peer_consult_pushes_system_message_for_visibility() {
-        let (msg_tx, _) = mpsc::channel::<String>(8);
-        let (rummage_tx, mut rummage_rx) = mpsc::channel::<String>(8);
-        let (jog_tx, _) = mpsc::channel::<String>(8);
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (msg_tx, _) = mpsc::unbounded_channel::<String>();
+        let (rummage_tx, mut rummage_rx) = mpsc::unbounded_channel::<String>();
+        let (jog_tx, _) = mpsc::unbounded_channel::<String>();
+        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
 
         let mut senders = HashMap::new();
         senders.insert("tend".to_string(), msg_tx.clone());
@@ -2826,7 +2831,7 @@ mod tests {
         let mut app = App::new();
         assert!(!app.user_has_interacted, "user_has_interacted must start false");
 
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
         let senders = HashMap::new();
         let log = logger::noop_sender();
 
@@ -2866,7 +2871,7 @@ mod tests {
         use crate::goal_session::SessionEvent;
 
         let mut app = App::new();
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
         let senders = HashMap::new();
         let log = logger::noop_sender();
 
@@ -2883,7 +2888,7 @@ mod tests {
             "tend must appear in running_sessions while processing a response (chunk received)",
         );
 
-        let done = SessionEvent::Done { goal_id: "tend".to_string() };
+        let done = SessionEvent::Done { goal_id: "tend".to_string(), full_output: "hi".to_string() };
         handle_session_event(&mut app, done, &spawn_tx, &senders, &RealFilesystem, &log);
 
         assert!(
@@ -2893,21 +2898,21 @@ mod tests {
     }
 
     // spec (agent-liveness): when a session produces no output at all (empty
-    // current_session_text at Done time), a follow-up message must be sent back
+    // full_output in the Done event), a follow-up message must be sent back
     // into that session's channel so the agent is prompted to surface what happened.
     #[test]
     fn test_spec_silence_detection_sends_followup_on_empty_response() {
         use crate::goal_session::SessionEvent;
 
         let mut app = App::new();
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
-        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
+        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<String>();
         let mut senders = HashMap::new();
         senders.insert("rummage".to_string(), msg_tx);
         let log = logger::noop_sender();
 
-        // No chunk emitted — current_session_text is empty at Done time.
-        let done = SessionEvent::Done { goal_id: "rummage".to_string() };
+        // full_output is empty — no output produced this turn.
+        let done = SessionEvent::Done { goal_id: "rummage".to_string(), full_output: "".to_string() };
         handle_session_event(&mut app, done, &spawn_tx, &senders, &RealFilesystem, &log);
 
         assert!(
@@ -2923,8 +2928,8 @@ mod tests {
         use crate::goal_session::SessionEvent;
 
         let mut app = App::new();
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
-        let (msg_tx, mut msg_rx) = mpsc::channel::<String>(8);
+        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<String>();
         let mut senders = HashMap::new();
         senders.insert("rummage".to_string(), msg_tx);
         let log = logger::noop_sender();
@@ -2932,7 +2937,8 @@ mod tests {
         let chunk = SessionEvent::Chunk { goal_id: "rummage".to_string(), text: "working on it".to_string() };
         handle_session_event(&mut app, chunk, &spawn_tx, &senders, &RealFilesystem, &log);
 
-        let done = SessionEvent::Done { goal_id: "rummage".to_string() };
+        // full_output carries the session's actual text; silence detection checks this.
+        let done = SessionEvent::Done { goal_id: "rummage".to_string(), full_output: "working on it".to_string() };
         handle_session_event(&mut app, done, &spawn_tx, &senders, &RealFilesystem, &log);
 
         assert!(
@@ -2957,8 +2963,8 @@ mod tests {
     // a new @-dispatch must still go to spawn immediately — no serial queue.
     #[test]
     fn test_spec_at_dispatch_spawns_when_goal_agent_already_running() {
-        let (msg_tx, _msg_rx) = mpsc::channel::<String>(8);
-        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (msg_tx, _msg_rx) = mpsc::unbounded_channel::<String>();
+        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
         let (senders, _, _) = make_test_session_senders(&msg_tx);
 
         let mut app = App::new();
@@ -2989,8 +2995,8 @@ mod tests {
     // must add it to running_sessions so the dim ▶ marker appears in the goal list.
     #[test]
     fn test_spec_at_dispatch_adds_goal_agent_to_running_sessions() {
-        let (msg_tx, _msg_rx) = mpsc::channel::<String>(8);
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (msg_tx, _msg_rx) = mpsc::unbounded_channel::<String>();
+        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
         let (senders, _, _) = make_test_session_senders(&msg_tx);
 
         let mut app = App::new();
@@ -3029,8 +3035,8 @@ mod tests {
     // before the interactive agent has processed its incoming reply.
     #[test]
     fn test_spec_at_dispatch_tracks_interactive_agents_in_running_sessions() {
-        let (msg_tx, _msg_rx) = mpsc::channel::<String>(8);
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (msg_tx, _msg_rx) = mpsc::unbounded_channel::<String>();
+        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
         let (senders, _, _) = make_test_session_senders(&msg_tx);
 
         let mut app = App::new();
@@ -3077,13 +3083,13 @@ mod tests {
     // and does not retire it before it can consume the buffered reply.
     #[test]
     fn test_spec_at_dispatch_tracks_ephemeral_coordinator_in_running_sessions() {
-        let (msg_tx, _msg_rx) = mpsc::channel::<String>(8);
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(4);
+        let (msg_tx, _msg_rx) = mpsc::unbounded_channel::<String>();
+        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
         let (senders, _, _) = make_test_session_senders(&msg_tx);
 
         let mut app = App::new();
         // Register a live sender for the coordinator so the message is delivered.
-        let (coord_tx, _coord_rx) = mpsc::channel::<String>(4);
+        let (coord_tx, _coord_rx) = mpsc::unbounded_channel::<String>();
         let mut senders_with_coord = senders.clone();
         senders_with_coord.insert("fresh-agents~1".to_string(), coord_tx);
         // Mark the coordinator as an ephemeral session (as the runtime does).
@@ -3107,8 +3113,8 @@ mod tests {
     // dispatches must both go to spawn immediately — neither is queued.
     #[test]
     fn test_spec_dispatch_no_queue_gating_two_concurrent_agents() {
-        let (msg_tx, _) = mpsc::channel::<String>(8);
-        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
+        let (msg_tx, _) = mpsc::unbounded_channel::<String>();
+        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
         let (senders, _, _) = make_test_session_senders(&msg_tx);
 
         let mut app = App::new();
@@ -3393,8 +3399,8 @@ mod tests {
     // running_sessions so it is visible in the TUI.
     #[test]
     fn test_spec_fresh_agents_done_event_spawns_ephemeral_session() {
-        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
-        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
 
         let mut app = App::new();
         app.goals.push(goal::Goal {
@@ -3409,15 +3415,13 @@ mod tests {
             source_path: None,
         });
 
-        // Simulate a session text containing a fresh dispatch envelope.
-        app.current_session_text.insert(
-            "my-goal".into(),
-            "<@my-goal|work>analyse the module</@my-goal|work>".into(),
-        );
-
         handle_session_event(
             &mut app,
-            SessionEvent::Done { goal_id: "my-goal".into() },
+            SessionEvent::Done {
+                goal_id: "my-goal".into(),
+                // full_output carries the complete reply — envelope extraction uses this directly.
+                full_output: "<@my-goal|work>analyse the module</@my-goal|work>".into(),
+            },
             &spawn_tx,
             &senders,
             &crate::realfs::RealFilesystem,
@@ -3442,13 +3446,63 @@ mod tests {
         );
     }
 
+    // spec (peer-consult): envelope extraction at Done uses full_output, not the
+    // chunk-reconstructed current_session_text. Chunks can be dropped when the
+    // session event channel is under load; full_output from the Done event is the
+    // authoritative complete reply.
+    #[test]
+    fn test_spec_peer_consult_done_uses_full_output_not_chunk_text() {
+        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
+
+        let mut app = App::new();
+        app.goals.push(goal::Goal {
+            id: "my-goal".into(),
+            summary: String::new(),
+            description: "the goal".into(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        });
+
+        // current_session_text has partial/incomplete content — no envelope.
+        app.current_session_text.insert("my-goal".into(), "partial output without envelope".into());
+
+        handle_session_event(
+            &mut app,
+            SessionEvent::Done {
+                goal_id: "my-goal".into(),
+                // full_output is the authoritative reply and contains the envelope.
+                full_output: "<@my-goal|work>analyse the module</@my-goal|work>".into(),
+            },
+            &spawn_tx,
+            &senders,
+            &crate::realfs::RealFilesystem,
+            &logger::noop_sender(),
+        );
+
+        // current_session_text must be cleared on Done.
+        assert!(
+            !app.current_session_text.contains_key("my-goal"),
+            "current_session_text must be cleared on Done"
+        );
+
+        // Envelope from full_output must have been processed — spawn must be enqueued.
+        let req = spawn_rx.try_recv()
+            .expect("envelope in full_output must be processed even when current_session_text had no envelope");
+        assert!(req.fresh_session.is_some(), "spawn request must carry fresh_session config");
+    }
+
     // spec (fresh-agents): ephemeral coordinators CAN spawn further fresh sub-sessions
     // (unbounded depth). A coordinator uses its own session ID in dispatch tags so
     // sub-sub-sessions reply to it rather than to the permanent goal agent.
     #[test]
     fn test_spec_fresh_agents_ephemeral_coordinator_can_spawn_sub_sessions() {
-        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
-        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
 
         let mut app = App::new();
         app.goals.push(goal::Goal {
@@ -3465,14 +3519,12 @@ mod tests {
 
         // A coordinator uses its OWN ephemeral ID in the dispatch tag so sub-sessions
         // can reply to it via @-message routing.
-        app.current_session_text.insert(
-            "my-goal~1".into(),
-            "<@my-goal~1|sub>nested sub-task</@my-goal~1|sub>".into(),
-        );
-
         handle_session_event(
             &mut app,
-            SessionEvent::Done { goal_id: "my-goal~1".into() },
+            SessionEvent::Done {
+                goal_id: "my-goal~1".into(),
+                full_output: "<@my-goal~1|sub>nested sub-task</@my-goal~1|sub>".into(),
+            },
             &spawn_tx,
             &senders,
             &crate::realfs::RealFilesystem,
@@ -3548,20 +3600,18 @@ mod tests {
     #[test]
     fn test_spec_fresh_agents_interactive_agents_can_fresh_dispatch() {
         for agent_id in &["tend", "rummage", "jog"] {
-            let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
-            let (msg_tx, _) = mpsc::channel::<String>(1);
+            let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+            let (msg_tx, _) = mpsc::unbounded_channel::<String>();
             let (senders, _, _) = make_test_session_senders(&msg_tx);
 
             let mut app = App::new();
             // An interactive agent emits a fresh-dispatch envelope in its output.
-            app.current_session_text.insert(
-                agent_id.to_string(),
-                format!("<@{}|sub>some task</@{}|sub>", agent_id, agent_id),
-            );
-
             handle_session_event(
                 &mut app,
-                SessionEvent::Done { goal_id: agent_id.to_string() },
+                SessionEvent::Done {
+                    goal_id: agent_id.to_string(),
+                    full_output: format!("<@{}|sub>some task</@{}|sub>", agent_id, agent_id),
+                },
                 &spawn_tx,
                 &senders,
                 &crate::realfs::RealFilesystem,
@@ -3581,8 +3631,8 @@ mod tests {
     // fresh dispatch, producing unique IDs for concurrent sub-sessions.
     #[test]
     fn test_spec_fresh_agents_counter_increments_per_dispatch() {
-        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
-        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
 
         let mut app = App::new();
         app.goals.push(goal::Goal {
@@ -3597,14 +3647,12 @@ mod tests {
             source_path: None,
         });
 
-        app.current_session_text.insert(
-            "g".into(),
-            "<@g|a>task a</@g|a>\n<@g|b>task b</@g|b>".into(),
-        );
-
         handle_session_event(
             &mut app,
-            SessionEvent::Done { goal_id: "g".into() },
+            SessionEvent::Done {
+                goal_id: "g".into(),
+                full_output: "<@g|a>task a</@g|a>\n<@g|b>task b</@g|b>".into(),
+            },
             &spawn_tx,
             &senders,
             &crate::realfs::RealFilesystem,
@@ -3624,8 +3672,8 @@ mod tests {
     // message from the dispatcher's fresh-dispatch envelope.
     #[test]
     fn test_spec_fresh_agents_spawn_request_carries_task() {
-        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
-        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
 
         let mut app = App::new();
         app.goals.push(goal::Goal {
@@ -3639,14 +3687,12 @@ mod tests {
             kind: None,
             source_path: None,
         });
-        app.current_session_text.insert(
-            "g".into(),
-            "<@g|check>review auth module</@g|check>".into(),
-        );
-
         handle_session_event(
             &mut app,
-            SessionEvent::Done { goal_id: "g".into() },
+            SessionEvent::Done {
+                goal_id: "g".into(),
+                full_output: "<@g|check>review auth module</@g|check>".into(),
+            },
             &spawn_tx,
             &senders,
             &crate::realfs::RealFilesystem,
@@ -3744,8 +3790,8 @@ mod tests {
     // update goal_list_scroll.last_total — before the turn completes.
     #[test]
     fn test_spec_fresh_agents_chunk_pre_announces_ephemeral_session() {
-        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
-        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
 
         let mut app = App::new();
         app.goals.push(goal::Goal {
@@ -3810,8 +3856,8 @@ mod tests {
         use std::path::PathBuf;
         use std::sync::Arc;
 
-        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
-        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
 
         let fs = Arc::new(MockFs::new());
         let tinker_dir = PathBuf::from("/.tinker");
@@ -3852,12 +3898,14 @@ mod tests {
         let pre_id = app.ephemeral_sessions_ordered.first().cloned().expect("session must be pre-announced");
         assert!(app.ephemeral_sessions.contains(&pre_id), "pre-announced session must be in ephemeral_sessions");
 
-        // Turn ends without a closing tag — no complete envelope in session text.
-        // (current_session_text already has the opening tag from the Chunk above;
-        //  Done processes whatever is accumulated — no closing tag → no complete envelope.)
+        // Turn ends without a closing tag — full_output has only the opening tag;
+        // envelope extraction finds no complete envelope → no spawn, pre-announced removed.
         handle_session_event(
             &mut app,
-            SessionEvent::Done { goal_id: "my-goal".into() },
+            SessionEvent::Done {
+                goal_id: "my-goal".into(),
+                full_output: "<@my-goal|orphan>\n".into(),
+            },
             &spawn_tx,
             &senders,
             &*fs,
@@ -3894,8 +3942,8 @@ mod tests {
         use std::path::PathBuf;
         use std::sync::Arc;
 
-        let (spawn_tx, mut spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
-        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
 
         let fs = Arc::new(MockFs::new());
         let tinker_dir = PathBuf::from("/.tinker");
@@ -3949,9 +3997,14 @@ mod tests {
         );
 
         // Done fires — must reuse the pre-announced ID.
+        // full_output is the complete assembled reply; the pre-announced session is
+        // matched against the envelope found here.
         handle_session_event(
             &mut app,
-            SessionEvent::Done { goal_id: "my-goal".into() },
+            SessionEvent::Done {
+                goal_id: "my-goal".into(),
+                full_output: "<@my-goal|label>\ndo the work\n</@my-goal|label>\n".into(),
+            },
             &spawn_tx,
             &senders,
             &*fs,
@@ -3978,8 +4031,8 @@ mod tests {
     // multi-level depth is preserved and the coordinator receives replies correctly.
     #[test]
     fn test_spec_fresh_agents_chunk_pre_announce_uses_coordinator_id_as_prefix() {
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
-        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
 
         let mut app = App::new();
         app.goals.push(goal::Goal {
@@ -4137,8 +4190,8 @@ mod tests {
         use std::path::PathBuf;
         use std::sync::Arc;
 
-        let (spawn_tx, _spawn_rx) = mpsc::channel::<SpawnGoalRequest>(8);
-        let (senders, _, _) = make_test_session_senders(&mpsc::channel::<String>(1).0);
+        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
 
         // Set up a MockFs with a goal TOML so that the Done event's goal-reload
         // keeps the goal in app.goals (rather than wiping it).
@@ -4172,13 +4225,12 @@ mod tests {
         assert_eq!(app.goal_list_scroll.last_total, 1, "precondition: last_total is 1 before insertion");
 
         // Fire a Done event with a fresh dispatch envelope — this inserts an ephemeral.
-        app.current_session_text.insert(
-            "my-goal".into(),
-            "<@my-goal|work>do the task</@my-goal|work>".into(),
-        );
         handle_session_event(
             &mut app,
-            SessionEvent::Done { goal_id: "my-goal".into() },
+            SessionEvent::Done {
+                goal_id: "my-goal".into(),
+                full_output: "<@my-goal|work>do the task</@my-goal|work>".into(),
+            },
             &spawn_tx,
             &senders,
             &*fs,

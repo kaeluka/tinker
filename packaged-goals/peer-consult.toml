@@ -1,6 +1,6 @@
 id = "peer-consult"
 kind = "feature"
-summary = "This goal owns the @-block agent-to-agent messaging channel: the detection of <@agent-or-goal-id>…</@agent-or-goal-id> envelopes in a finalised reply, tag-boundary scoping, fire-and-forget routing to the named agent's input channel, and the system message that surfaces each exchange to the user."
+summary = "This goal owns the @-block agent-to-agent messaging channel: the detection of <@agent-or-goal-id>…</@agent-or-goal-id> envelopes in a finalised reply, tag-boundary scoping, guaranteed delivery to recognised IDs (the harness never silently drops), envelope extraction from the complete assembled reply, and the system message that surfaces each exchange to the user."
 description = """
 ## WHAT
 Any agent in the session registry can send a one-way message to any
@@ -19,6 +19,14 @@ is dropped silently.
 The system detects these envelopes after each reply finalises, routes
 each to the named agent's input channel, and pushes a system message so
 the user can see the exchange.
+
+Delivery to a recognised ID is guaranteed from the harness's side —
+the sender does not await confirmation (fire-and-forget from the
+sender's perspective), but the harness does not silently drop the
+message: failures are queued, retried, or surfaced. The
+unrecognised-ID drop above is the only permitted silent discard.
+Envelope extraction uses the complete assembled reply so no envelope
+is missed when output arrives in fragments.
 
 A reply may contain multiple envelopes; each is routed independently.
 Messaging is fire-and-forget: the sender does not block or await a

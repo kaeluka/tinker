@@ -113,7 +113,7 @@ reason = "execution model — concurrent agents in shared main tree, coordinatio
 
 [[related]]
 id = "peer-consult"
-reason = "peer-consult governs the @-block protocol and delivery rules; goal-agents implements the session registry that makes @-dispatch universal across the whole agent population."
+reason = "peer-consult governs the @-block protocol and delivery rules, including the no-drop delivery guarantee for recognised IDs; goal-agents implements the session registry that is the source of truth for recognition and makes @-dispatch universal."
 
 [[related]]
 id = "goal-storage"

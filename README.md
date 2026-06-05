@@ -189,10 +189,11 @@ accurately under their immediate dispatcher at every level. When the batch
 ends, all sub-sessions at every depth are retired.
 
 Any agent — persistent or ephemeral — can send a message to any other by name.
-There is no central dispatcher. When a goal session finds a gap it cannot
-resolve, it messages rummage. When rummage needs intent context, it messages
-tend. When jog wants to read the spec, it messages tend. The exchange resolves
-without you brokering it.
+There is no central dispatcher. Delivery to any recognised agent is guaranteed —
+the harness never silently drops a message. When a goal session finds a gap it
+cannot resolve, it messages rummage. When rummage needs intent context, it
+messages tend. When jog wants to read the spec, it messages tend. The exchange
+resolves without you brokering it.
 
 This is an actor model applied to specification documents. The goals are not
 passive files waiting for a human to notice conflicts. They are live sessions
