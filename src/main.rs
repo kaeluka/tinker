@@ -33,7 +33,7 @@ use std::{io, path::PathBuf, sync::{Arc, Mutex}, time::Duration};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
-type RunnerQuad = (Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>);
+type RunnerSet = (Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>);
 
 fn packaged_tend_goal() -> Goal {
     const TOML: &str = include_str!("../packaged-goals/tend.toml");
@@ -356,33 +356,39 @@ async fn main() -> Result<()> {
     )?;
     let model_config = config::load_model_config(fs.as_ref(), &config_path);
 
-    // Four runner instances: high-tier (tend/rummage/jog + other high goals),
-    // mid-tier (default goal sessions), low-tier (low goal sessions), cleanup (cheapest).
-    let (oc_goal_high, oc_goal, oc_goal_low, oc_cleanup_runner): RunnerQuad = if use_claude {
+    // Five runner instances:
+    //   oc_tend        — exclusive to tend; carries tend_system_prompt() as a persistent
+    //                    struct-level fallback so tend's file-scope boundary is enforced
+    //                    on every turn (including turn 2+ where no per-call prompt is set).
+    //   oc_goal_high   — high-tier non-tend goal agents (rummage, jog, …); NO struct-level
+    //                    system prompt, so resume turns pass no --system-prompt and the
+    //                    claude session retains its original system prompt from turn 1.
+    //   oc_goal        — mid-tier (default goal sessions)
+    //   oc_goal_low    — low-tier goal sessions
+    //   oc_cleanup_runner — cleanup / scheduler (cheapest model)
+    let (oc_tend, oc_goal_high, oc_goal, oc_goal_low, oc_cleanup_runner): RunnerSet = if use_claude {
         let tinker_m = model_config.claude_high(CLAUDE_TINKER_MODEL);
         let goal_m = model_config.claude_mid(CLAUDE_GOAL_MODEL);
         let cleanup_m = model_config.claude_low(CLAUDE_SCHEDULER_MODEL);
         (
-            // tend uses a fixed struct-level system prompt (file-scope boundary +
-            // tend goal description); goal agents receive a goal-specific system
-            // prompt per-call from goal_agent_loop on the first turn.
+            // tend: struct-level prompt delivers file-scope boundary on every turn.
             Arc::new(ClaudeRunner::with_system_prompt(tinker_m, tend_system_prompt())),
+            // high-tier goal agents: system prompt delivered per-call on first turn only;
+            // no struct-level fallback so resume turns do not overwrite session identity.
+            Arc::new(ClaudeRunner::new(tinker_m)),
             Arc::new(ClaudeRunner::new(goal_m)),
             Arc::new(ClaudeRunner::new(cleanup_m)),
             Arc::new(ClaudeRunner::new(cleanup_m)),
         )
     } else if use_default_model {
-        (
-            Arc::new(RealOpenCodeRunner::new_default()),
-            Arc::new(RealOpenCodeRunner::new_default()),
-            Arc::new(RealOpenCodeRunner::new_default()),
-            Arc::new(RealOpenCodeRunner::new_default()),
-        )
+        let r: Arc<dyn OpenCodeRunner> = Arc::new(RealOpenCodeRunner::new_default());
+        (r.clone(), r.clone(), r.clone(), r.clone(), r)
     } else {
         let tinker_m = model_config.opencode_high(OPENCODE_TINKER_MODEL);
         let goal_m = model_config.opencode_mid(OPENCODE_GOAL_MODEL);
         let cleanup_m = model_config.opencode_low(OPENCODE_SCHEDULER_MODEL);
         (
+            Arc::new(RealOpenCodeRunner::new(tinker_m)),
             Arc::new(RealOpenCodeRunner::new(tinker_m)),
             Arc::new(RealOpenCodeRunner::new(goal_m)),
             Arc::new(RealOpenCodeRunner::new(cleanup_m)),
@@ -475,6 +481,7 @@ async fn main() -> Result<()> {
         oc_goal_high,
         oc_goal_low,
         oc_cleanup_runner,
+        oc_tend,
         fs.clone(),
         work_dir.clone(),
         session_tx,
@@ -504,6 +511,7 @@ async fn run_loop(
     oc_goal_high: Arc<dyn OpenCodeRunner>,
     oc_goal_low: Arc<dyn OpenCodeRunner>,
     oc_cleanup_runner: Arc<dyn OpenCodeRunner>,
+    oc_tend: Arc<dyn OpenCodeRunner>,
     fs: Arc<dyn Filesystem>,
     work_dir: std::path::PathBuf,
     session_tx: mpsc::Sender<SessionEvent>,
@@ -557,7 +565,7 @@ async fn run_loop(
         session_senders.insert("tend".to_string(), tend_tx.clone());
         let app_ref = app.clone();
         let session_tx_t = session_tx.clone();
-        let oc_t = oc_goal_high.clone();
+        let oc_t = oc_tend.clone();
         let oc_cleanup_t = oc_cleanup_runner.clone();
         let fs_t = fs.clone();
         let work_dir_t = work_dir.clone();
@@ -2832,9 +2840,9 @@ mod tests {
         );
     }
 
-    // spec (backends): tend's claude runner must be constructed with a system prompt so the
+    // spec (backends): oc_tend's claude runner must be constructed with a system prompt so the
     // file-access boundary arrives as a persistent system message, not a user-turn instruction.
-    // ClaudeRunner::new must not be used for the tend (tinker_m) slot in the claude branch.
+    // ClaudeRunner::new must not be used for the oc_tend slot in the claude branch.
     #[test]
     fn test_spec_claude_tend_runner_wired_with_system_prompt() {
         let main_rs = include_str!("main.rs");
@@ -2846,6 +2854,33 @@ mod tests {
             !tend_runner_line.contains("ClaudeRunner::new("),
             "tend's claude runner must use with_system_prompt, not ClaudeRunner::new — got: {}",
             tend_runner_line.trim()
+        );
+    }
+
+    // spec (backends): the high-tier goal-agent runner (oc_goal_high) must be constructed
+    // WITHOUT a struct-level system prompt. If it carried tend_system_prompt(), every
+    // high-tier non-tend goal agent (rummage, jog, …) would have tend's identity injected
+    // via --system-prompt on turn 2+, when system_prompt_for_run is None and the runner
+    // falls back to its struct-level prompt. oc_goal_high is separate from oc_tend
+    // precisely to prevent that identity overwrite.
+    #[test]
+    fn test_spec_claude_goal_high_runner_uses_new_not_with_system_prompt() {
+        let main_rs = include_str!("main.rs");
+        // The second ClaudeRunner line for tinker_m must be ClaudeRunner::new, not with_system_prompt.
+        let high_goal_runner_line = main_rs
+            .lines()
+            .filter(|l| l.contains("Arc::new(ClaudeRunner") && l.contains("tinker_m"))
+            .nth(1)
+            .expect("must find two ClaudeRunner constructions for tinker_m: oc_tend (with_system_prompt) and oc_goal_high (new)");
+        assert!(
+            high_goal_runner_line.contains("ClaudeRunner::new(tinker_m"),
+            "oc_goal_high must use ClaudeRunner::new(tinker_m) — no struct-level system prompt — got: {}",
+            high_goal_runner_line.trim()
+        );
+        assert!(
+            !high_goal_runner_line.contains("with_system_prompt"),
+            "oc_goal_high must NOT use with_system_prompt — got: {}",
+            high_goal_runner_line.trim()
         );
     }
 
