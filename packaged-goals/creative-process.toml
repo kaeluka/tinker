@@ -122,4 +122,4 @@ reason = "The hardness principle and the dual-duty sharpening (surface inflectio
 
 [[related]]
 id = "rummage"
-reason = "Rummage grounds its input-observability split (investigates code directly because code is executable; contrast with jog which must question the user) in this goal's observability / human-as-termination principle. This goal also instantiates 'the dialectic must continue after a goal is written' on the spec↔code gap: rummage is the backward pass that catches drift."
+reason = "Rummage grounds its prove-by-execution stance and its intent-question boundary (surface contradictions to tend rather than resolving them) in this goal's observability and human-as-termination principle — behavioral truth comes from running the system, and the decision of what behavior should be belongs to the user, not to rummage's inference."

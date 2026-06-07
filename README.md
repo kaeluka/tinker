@@ -117,9 +117,9 @@ Two axes organize them into a system rather than a list:
 - **Producers vs. skeptics.** Tend and goal sessions move forward and treat
   the goal as authoritative — they build from it. Rummage and jog move
   backward and treat the goal as signal-with-noise — the gap under
-  investigation may be in the goal itself. When a skeptic finds something
-  wanting, it commissions the paired producer to fix it: rummage to a goal
-  session, jog to tend.
+  investigation may be in the goal itself. When a skeptic finds a
+  contradiction, it surfaces the finding to tend. Tend owns the verdict —
+  code drift or intent gap — and routes any repair from there.
 
 - **Observable vs. drawn-out inputs.** Goal sessions and rummage work with
   directly observable inputs — the written goal and the running code
@@ -127,14 +127,21 @@ Two axes organize them into a system rather than a list:
   with inputs that cannot be read directly: tacit intent can only be drawn
   out through dialogue. That is why they are the human-coupled agents.
 
-**Rummage** checks whether the code does what the goal says. When something
-needs explaining — a bug, surprising output, behavior you do not trust, code
-you are about to change — rummage investigates: reads what is there, writes
-scratch tests, traces the problem from symptom to cause. After each finding
-it asks what else belongs there — the call sites that use the same path, the
-tests that cover the same behavior, the adjacent code that would have the
-same bug. When it confirms the code diverged from the goal, it writes a
-failing test and sends the owning goal agent a message pointing at the test.
+**Rummage** is the precision backstop — the agent other goals route to when
+they need code reality, technical validation, or a counterexample. Every claim
+rummage receives is treated as a hypothesis; execution is the only thing that
+closes it. Language models cannot reliably answer questions about running
+behavior from static analysis alone — reading files produces inference, not
+ground truth. Reading code is only for forming a hypothesis; every hypothesis
+must then be tested by running the code — scratch tests, traced outputs,
+exercised code paths. If
+execution fails, rummage withholds the answer rather than substituting a guess.
+Rummage is preauthorized to run code without asking permission — it does not
+stop to check before executing. Every finding it reports names exactly what was
+executed to produce it. It does not decide what behavior should be; that is
+tend's call. When rummage finds behavior that appears to contradict a goal, it
+surfaces the finding to tend. Tend owns the verdict on whether the gap is a
+code drift or an intent gap, and routes any repair from there.
 
 **Jog** checks for gaps between any two layers. It builds a set of things in
 each source — what the spec says, what the code does — by sending read-only

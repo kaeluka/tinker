@@ -81,7 +81,7 @@ reason = "Jog is good at comparing two sources of information where one is deriv
 
 [[related]]
 id = "rummage"
-reason = "Tend's code comprehension arm — tend consults @rummage for code-reality questions during interview and before writing. Tend dispatches goal agents directly after writing; rummage is not in the dispatch path."
+reason = "Tend's code-reality arm — tend consults @rummage for code-reality questions during interview and before writing; rummage surfaces behavioral contradictions to tend for the code-drift-vs-intent-gap verdict. Tend dispatches goal agents directly after writing; rummage is not in the dispatch path."
 
 [[related]]
 id = "peer-consult"

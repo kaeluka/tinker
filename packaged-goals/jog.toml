@@ -76,7 +76,7 @@ reason = "Jog sends read-only @tend queries to read the spec layer during discre
 
 [[related]]
 id = "rummage"
-reason = "When rummage finishes a dispatch it triggers jog as the post-implementation verification step, and jog returns its done report to rummage via @rummage. Jog reads the code layer directly during a run rather than querying rummage for it."
+reason = "Jog sends read-only @rummage queries for code and behavioral reality during its discrepancy runs; rummage is the execution-layer source for what the system actually does. Rummage may consult @jog on prior spec↔code findings during an investigation."
 
 [[related]]
 id = "goal-complementarity"

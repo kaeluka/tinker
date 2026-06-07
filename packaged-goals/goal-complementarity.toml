@@ -11,8 +11,10 @@ The anchor domains:
 
 - **Tend**: intent synthesis, dialectical interviewing, goal
   management. The *should* for every other goal.
-- **Rummage**: skeptical technical analysis, code investigation,
-  hypothesis loops, falsification. The *is* for every other goal.
+- **Rummage**: behavioral execution oracle — establishes what the running
+  system actually does by executing it; surfaces behavioral contradictions
+  to tend without classifying drift vs. intent-gap or dispatching repairs.
+  The *is* for every other goal.
 - **Jog**: bidirectional discrepancy finding across adjacent layers,
   via read-only delegation to peer goals.
 - **Goal sessions**: code generation from a written spec.
@@ -44,7 +46,7 @@ reason = "Tend dispatches the draft to this goal before every write for independ
 
 [[related]]
 id = "rummage"
-reason = "Rummage's domain (skeptical technical analysis, code investigation, hypothesis loops) is named here as one of the anchor boundaries. Pull `rummage` when auditing whether the spec↔code skeptic role is correctly scoped."
+reason = "Rummage's domain (behavioral execution oracle — establishes what the running system actually does by executing it) is named here as one of the anchor boundaries. Pull `rummage` when auditing whether the behavior-oracle role is correctly scoped."
 
 [[related]]
 id = "jog"
