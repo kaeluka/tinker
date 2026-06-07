@@ -16,6 +16,11 @@ pub type Chunk = Box<dyn FnMut(String) + Send>;
 /// `on_session_id` is called once when a session ID is first seen on the stream.
 /// `on_chunk` is called for each streamed text chunk.
 /// Returns the session ID seen during the run (or empty string if none).
+///
+/// `system_prompt` is used only when `session_id` is `None` (new session) to
+/// deliver the session-invariant context via the backend's system-prompt
+/// mechanism (agent file for opencode, `--system-prompt` for claude).  Pass
+/// `None` on resumed sessions — the backend already holds that context.
 #[async_trait]
 pub trait OpenCodeRunner: Send + Sync {
     async fn run(
@@ -23,6 +28,7 @@ pub trait OpenCodeRunner: Send + Sync {
         message: &str,
         session_id: Option<&str>,
         work_dir: &Path,
+        system_prompt: Option<&str>,
         on_session_id: Chunk,
         on_chunk: Chunk,
     ) -> Result<String>;

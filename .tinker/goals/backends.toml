@@ -1,76 +1,68 @@
 id = "backends"
 kind = "feature"
-summary = "This goal owns the pluggable LLM backend abstraction — the runner trait wired at the composition root and its two implementations (opencode running under its default agent with persona delivered in the session init message, and claude via --system-prompt and streaming JSON), including per-backend model-tier defaults, the claude high-tier pin to claude-opus-4-8, persona delivery, and re-injection of CLI error output into the session."
+summary = "This goal owns the pluggable LLM backend abstraction — two implementations (opencode via ephemeral agents/-directory file, and claude via its system-prompt mechanism) that deliver identical system prompt content (the goal's spec plus the framework preamble defined by goal-agents) with the trigger reason as the first turn message, per-backend model-tier defaults, the claude high-tier pin to claude-opus-4-8, and re-injection of CLI error output into the session."
 description = """
 ## WHAT
-Tinker runs against a **pluggable backend** — the LLM CLI it shells
-out to — chosen at startup. Two backends exist today: **opencode**
-(the default) and **claude** (selected with the `--claude` flag).
-Both are co-equal implementations of the same runner trait, wired to
-real instances only at the composition root; business logic depends
-on the trait, not on any vendor's CLI.
+Tinker runs against a pluggable backend — the LLM CLI it shells out to
+— chosen at startup. Two backends exist today: **opencode** (the
+default) and **claude** (selected with `--claude`). Both are
+co-equal implementations of the same backend abstraction, wired at the
+application entry point; business logic depends on the abstraction,
+not on any vendor's CLI.
 
-Each backend maps tinker's roles to its own models and delivers agent
-personas its own way:
+**System prompt.** Both backends deliver an identical system prompt to
+every goal agent session — the framework preamble (owned by
+`goal-agents`) plus the goal's full description and neighbor table.
+The trigger reason is sent as the first turn message. The assembled
+system prompt string is identical across backends for goal agents;
+only the delivery mechanism differs. Tend is intentionally excepted:
+it takes a different system prompt path on each backend.
 
-- **opencode** (default): runs its own configured model defaults under
-  opencode's default agent — no `--agent` profile is selected and no
-  agent files are written. Every session's persona, tend included, is
-  delivered in the session init message (the goal description), not via
-  an agent file or a `permission:` block. File-access boundaries are
-  conveyed through the prompt, not enforced at the backend level.
+**opencode** writes the system prompt to an ephemeral file in the
+project-local `agents/` directory for each session, invokes opencode
+with that file as the agent, and deletes the file when the session
+ends (via drop). Session IDs returned by opencode are stored for
+subsequent turns.
 
-- **claude** (`--claude`): maps roles to `claude-opus-4-8` (tend, high
-  tier) and `sonnet` (goal sessions, mid tier); the high tier uses a
-  pinned full model ID rather than the `opus` short alias because the
-  alias can silently resolve to an unvalidated model version. Passes
-  each persona via `--system-prompt` instead of an agent file; resumes
-  sessions with `--resume <session-id>`; parses streaming JSON
-  (`--output-format stream-json --verbose`).
+**claude** maps roles to `claude-opus-4-8` (tend, high tier) and
+`sonnet` (goal sessions, mid tier) — the high tier uses a pinned full
+model ID rather than the short alias, which can silently resolve to an
+unvalidated version. It delivers the system prompt via claude's
+system-prompt flag, resumes sessions by session ID, and parses
+streaming output.
 
-  *Persona delivery split.* Session-invariant content arrives via
-  `--system-prompt`: for tend, its role description and write-scope
-  constraint; for goal agents, the
-  framework preamble (message passing protocol, progress guarantee,
-  rules, neighbor consultation mandate). Per-session content arrives in
-  the init message: for goal agents, the goal spec, trigger reason, and
-  neighbor table. On opencode there is no agent file: the same
-  session-invariant preamble and the per-dispatch content both ride in
-  the session init message.
+Both backends rely on prompt-level compliance with the file-access
+boundaries their personas state; mechanical guardrails are slated to
+be reintroduced through the prompts.
 
-  **No harness-level path enforcement on either backend today.**
-  opencode writes no agent files and passes no `permission:` rules, and
-  the claude runner passes no tool-denial flags, so neither backend
-  mechanically restricts file access. Both tend and goal agents rely on prompt-level
-  compliance with the file-access boundaries their personas state;
-  mechanical guardrails are slated to be reintroduced through the
-  prompts.
+Which model fills each tier is overridable at runtime through
+`model-config`; the per-backend mappings above are the built-in
+defaults.
 
-Which model fills each tier, per backend, is overridable at runtime
-through `model-config`, a `.tinker/config.toml` file; the per-backend
-mappings above are the built-in defaults each tier falls back to when
-the config leaves a slot unset.
-
-**Error feedback.** When a CLI process exits with an error, the runner
-captures the error output and re-injects it as a message into the
-active session before the session closes, so the agent can read it
-and decide how to respond — route through a peer `@`-message, retry a
+**Error feedback.** When a CLI process exits with an error, the backend
+captures its output and re-injects it as a message into the active
+session, so the agent can read and respond — route to a peer, retry a
 transient failure, or report the obstacle rather than dying silently.
 
 Startup argument handling is governed by `startup-args`. Recognised
-flags for this goal's backends are `--claude` (select the claude backend) and
+flags: `--claude` (select the claude backend) and
 `--tend-full-goal-context` (restore full goal text in tend's context
 instead of the compact index).
 
 ## WHY
-Tinker's business logic should depend on a backend abstraction, not
-on one vendor's CLI: the user picks the models they prefer at
-startup, and a new backend slots in by implementing the runner rather
-than by editing the system around it.
+Tinker's business logic should depend on a backend abstraction, not on
+one vendor's CLI: the user picks models at startup, and a new backend
+slots in by implementing the abstraction rather than by editing the
+system around it.
 
-Re-injecting the error closes the loop — a CLI failure becomes a signal
-the agent can hear and course-correct from, rather than a silent
-process death.
+Delivering the same system prompt on both backends ensures agents
+behave consistently regardless of backend choice — goal instructions
+in system-prompt position carry the authority the model treats as
+foundational, rather than being reasoned away from as a user message.
+
+Re-injecting errors closes the loop — a CLI failure becomes a signal
+the agent can hear and course-correct from, rather than silent process
+death.
 
 """
 parent_id = ""
@@ -93,8 +85,8 @@ reason = "agent-liveness defines the progress guarantee this goal's harness mech
 
 [[related]]
 id = "goal-agents"
-reason = "goal-agents defines the uniform session registry and unified runner task this goal's runner trait must support; per-tier model resolution for every goal agent is wired through the backend at the composition root. Changes to the registry or the tier field affect what the runner abstraction must provide."
+reason = "goal-agents defines the uniform session registry and unified runner task this goal's backend abstraction must support; per-tier model resolution for every goal agent is wired through the backend at the application entry point. Changes to the registry or the tier field affect what the abstraction must provide. goal-agents also owns the framework preamble text that forms part of the system prompt both backends deliver."
 
 [[related]]
 id = "peer-consult"
-reason = "peer-consult's envelope extraction and no-drop delivery guarantee operate on the finalized output this goal's runner trait delivers; when output buffering or delivery changes, the complete-output invariant peer-consult's scanning depends on must be preserved."
+reason = "peer-consult's envelope extraction and no-drop delivery guarantee operate on the finalized output this goal's backends deliver; when output buffering or delivery changes, the complete-output invariant peer-consult's scanning depends on must be preserved."

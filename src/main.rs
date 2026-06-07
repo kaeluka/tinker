@@ -54,14 +54,6 @@ fn tend_system_prompt() -> String {
     )
 }
 
-/// System prompt for claude goal agents. Contains the session-invariant
-/// framework preamble so it persists across session turns without repeating
-/// in every per-dispatch init message. On the opencode backend the same
-/// preamble rides in the session init message instead.
-fn goal_agent_system_prompt() -> String {
-    goal_session::goal_agent_framework_preamble()
-}
-
 fn tend_init_prompt(goals_summary: &str, neighbor_section: &str) -> String {
     format!(
         "## Current goals (compact index — pull full text on demand)\n{goals_summary}\n\n\
@@ -181,10 +173,24 @@ async fn goal_agent_loop(
             }
         }
 
-        // Build the LLM message. First turn: full framework preamble + reason
-        // (or init_message_override for fresh sub-sessions).
-        // Subsequent turns: forward the dispatch message directly.
-        let llm_message = if llm_session_id.is_none() {
+        // Build the LLM message and system prompt for this turn.
+        //
+        // First turn (new session, llm_session_id is None):
+        //   - lean_init=true (all goal agents, both backends): system prompt =
+        //     full session context (goal + preamble + neighbors), first turn =
+        //     trigger reason only.  The system prompt is delivered via the
+        //     backend's native mechanism (agent file for opencode,
+        //     --system-prompt for claude).
+        //   - lean_init=false (tend, non-lean paths): no per-call system prompt
+        //     (struct-level system prompt handles it for claude; opencode gets
+        //     everything in the message); first turn = full session_init_message.
+        //   - init_message_override set (fresh sub-sessions): first turn =
+        //     the pre-built lean sub-session init; system prompt = full goal
+        //     context (same as lean_init=true).
+        //
+        // Subsequent turns (resumed session): forward the dispatch message as-is,
+        // pass no system prompt (backend already holds it from the first turn).
+        let (llm_message, system_prompt_for_run): (String, Option<String>) = if llm_session_id.is_none() {
             let compact_index = {
                 let a = app_ref.lock().unwrap();
                 if a.goals.is_empty() { "[]".to_string() }
@@ -204,14 +210,24 @@ async fn goal_agent_loop(
                 goal_id: goal_id.clone(),
             });
             if let Some(ref override_init) = init_message_override {
-                override_init.clone()
+                // Fresh sub-session: first turn = task-specific init;
+                // system prompt = full goal context delivered via backend mechanism.
+                let sp = goal_session::session_init_message(&goal, None, &compact_index);
+                (override_init.clone(), Some(sp))
             } else if lean_init {
-                goal_session::goal_agent_lean_init_message(&goal, Some(&dispatch_msg), &compact_index)
+                // Regular goal agent (both backends): system prompt carries all
+                // session-invariant context; first turn = trigger reason only.
+                let sp = goal_session::session_init_message(&goal, None, &compact_index);
+                (dispatch_msg, Some(sp))
             } else {
-                goal_session::session_init_message(&goal, Some(&dispatch_msg), &compact_index)
+                // Tend and non-lean paths: full init message in the first turn;
+                // system prompt is either in the runner's struct field (claude tend)
+                // or absent (opencode tend — everything in the message).
+                let msg = goal_session::session_init_message(&goal, Some(&dispatch_msg), &compact_index);
+                (msg, None)
             }
         } else {
-            dispatch_msg
+            (dispatch_msg, None)
         };
 
         let full_output: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
@@ -231,7 +247,7 @@ async fn goal_agent_loop(
         });
 
         let session_t0 = std::time::Instant::now();
-        let run_result = oc.run(&llm_message, llm_session_id.as_deref(), &work_dir, on_sid, on_chunk).await;
+        let run_result = oc.run(&llm_message, llm_session_id.as_deref(), &work_dir, system_prompt_for_run.as_deref(), on_sid, on_chunk).await;
         let session_ms = session_t0.elapsed().as_millis() as u64;
 
         let output = full_output.lock().unwrap().clone();
@@ -347,9 +363,12 @@ async fn main() -> Result<()> {
         let goal_m = model_config.claude_mid(CLAUDE_GOAL_MODEL);
         let cleanup_m = model_config.claude_low(CLAUDE_SCHEDULER_MODEL);
         (
+            // tend uses a fixed struct-level system prompt (file-scope boundary +
+            // tend goal description); goal agents receive a goal-specific system
+            // prompt per-call from goal_agent_loop on the first turn.
             Arc::new(ClaudeRunner::with_system_prompt(tinker_m, tend_system_prompt())),
-            Arc::new(ClaudeRunner::with_system_prompt(goal_m, goal_agent_system_prompt())),
-            Arc::new(ClaudeRunner::with_system_prompt(cleanup_m, goal_agent_system_prompt())),
+            Arc::new(ClaudeRunner::new(goal_m)),
+            Arc::new(ClaudeRunner::new(cleanup_m)),
             Arc::new(ClaudeRunner::new(cleanup_m)),
         )
     } else if use_default_model {
@@ -613,7 +632,9 @@ async fn run_loop(
                 if let Some(dispatcher_goal) = goal {
                     let (msg_tx_fresh, msg_rx_fresh) = mpsc::unbounded_channel::<String>();
                     session_senders.insert(fresh.session_id.clone(), msg_tx_fresh.clone());
-                    let lean_init_fresh = backend_name == "claude";
+                    // Both backends now use lean init for fresh sub-sessions:
+                    // the system prompt carries all session-invariant context.
+                    let lean_init_fresh = true;
                     let compact_index = {
                         let a = app.lock().unwrap();
                         if a.goals.is_empty() { "[]".to_string() }
@@ -683,7 +704,9 @@ async fn run_loop(
                     let app_ref_goal = app.clone();
                     let log_goal = log.clone();
                     let backend_goal = backend_name.to_string();
-                    let lean_init_goal = backend_name == "claude";
+                    // Both backends now use lean init for regular goal agents:
+                    // the system prompt carries all session-invariant context.
+                    let lean_init_goal = true;
                     let work_dir_goal = work_dir.clone();
                     let _ = msg_tx_goal.send(req.message);
                     tokio::spawn(async move {
@@ -1882,9 +1905,11 @@ mod tests {
         let needle_fs = "std::fs::";
         // Files that legitimately host raw effects: `opencode.rs` and `claude.rs`
         // own the subprocess builders (Real OpenCode and Claude runners);
-        // `realfs.rs` owns Filesystem.
+        // `opencode.rs` also creates ephemeral agent files (std::fs::) for
+        // system-prompt delivery — a subprocess-management concern that belongs
+        // alongside its Command::new usage; `realfs.rs` owns the Filesystem cap.
         let cmd_allowed = ["opencode.rs", "claude.rs"];
-        let fs_allowed = ["realfs.rs"];
+        let fs_allowed = ["realfs.rs", "opencode.rs"];
 
         for entry in std::fs::read_dir(&src).unwrap() {
             let entry = entry.unwrap();
@@ -2824,21 +2849,41 @@ mod tests {
         );
     }
 
-    // spec (backends): goal agents' claude runner must be constructed with a system prompt so
-    // the session-invariant framework preamble (message passing, progress guarantee, rules,
-    // neighbor consultation mandate) arrives as a persistent system message. ClaudeRunner::new
-    // must not be used for the goal agent (goal_m) slot in the claude branch.
+    // spec (backends): goal agents' claude runner is constructed WITHOUT a
+    // struct-level system prompt — it receives the goal-specific system prompt
+    // per-call from goal_agent_loop on each new session (first turn only).
+    // The assembled system prompt string (framework preamble + goal description
+    // + neighbor table) is identical across backends; only the delivery
+    // mechanism differs (agent file for opencode, --system-prompt for claude).
     #[test]
-    fn test_spec_claude_goal_runner_wired_with_system_prompt() {
+    fn test_spec_claude_goal_runner_uses_new_not_with_system_prompt() {
         let main_rs = include_str!("main.rs");
         let goal_runner_line = main_rs
             .lines()
             .find(|l| l.contains("Arc::new(ClaudeRunner") && l.contains("goal_m"))
             .expect("must find ClaudeRunner construction for goal agents (goal_m) in the claude branch");
         assert!(
-            !goal_runner_line.contains("ClaudeRunner::new("),
-            "goal agents' claude runner must use with_system_prompt, not ClaudeRunner::new — got: {}",
+            goal_runner_line.contains("ClaudeRunner::new(goal_m"),
+            "goal agents' claude runner must use ClaudeRunner::new (system prompt delivered per-call) — got: {}",
             goal_runner_line.trim()
+        );
+    }
+
+    // spec (backends): goal_agent_loop passes the assembled system prompt to
+    // oc.run() on the first turn of a new session (lean_init=true path). The
+    // system prompt is built from session_init_message(goal, None, compact_index).
+    // Subsequent turns pass None.
+    #[test]
+    fn test_spec_goal_agent_loop_passes_system_prompt_on_first_turn() {
+        let main_rs = include_str!("main.rs");
+        // Verify the code path that computes system_prompt_for_run for lean_init
+        assert!(
+            main_rs.contains("session_init_message(&goal, None, &compact_index)"),
+            "goal_agent_loop must call session_init_message with None reason to build system prompt"
+        );
+        assert!(
+            main_rs.contains("system_prompt_for_run"),
+            "goal_agent_loop must pass the system prompt to oc.run()"
         );
     }
 

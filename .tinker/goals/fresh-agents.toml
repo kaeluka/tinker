@@ -1,14 +1,18 @@
 id = "fresh-agents"
 kind = "feature"
-summary = "This goal owns the fresh-dispatch mechanism: goal agents dispatch to ephemeral sub-sessions for tasks with inherent parallelism; sub-sessions receive full dispatch capability and may act as coordinators, depth is unbounded, and all sub-sessions are retired when the batch ends."
+summary = "This goal owns the fresh-dispatch mechanism: goal agents dispatch to ephemeral sub-sessions whenever possible; sub-sessions receive full dispatch capability and may act as coordinators, depth is unbounded, all sub-sessions are retired when the batch ends, and the @-envelope is the only permitted means of sub-session spawning."
 description = """
 ## WHAT
 
 Goal agents can dispatch to ephemeral sub-sessions of themselves. A spawning agent addresses a fresh dispatch to its own goal id and an optional label; the label lets the dispatcher correlate incoming replies. The fresh sub-session receives the same startup context as the dispatcher — including fresh-dispatch capability — and replies via ordinary @-messages. A sub-session may itself dispatch further sub-sessions, acting as a coordinator: it remains reachable for replies until the batch ends. Each dispatched sub-task must be a genuine decomposition — narrower than the problem the dispatcher received, with the LLM deciding when a task is atomic enough not to decompose further. The system carries a global batch state — **active** whenever any work is in flight (a session is processing, a reply is being routed, or a user message is pending), **idle** when nothing is outstanding. A continuous period of activity constitutes a batch; continued user input extends it. Completed sub-sessions remain inspectable until the next batch starts, when they are silently retired.
 
+**The @-envelope is the only permitted means of sub-session spawning** — this excludes any native agent-creation capability the LLM backend may offer. Such calls bypass the harness: result routing, sub-session visibility, and batch tracking all depend on the envelope path and are absent without it.
+
 ## WHY
 
-When a task has inherent parallelism — independent sub-tasks that don't need to share context — the right default is to distribute the work. The existing dispatch model gives agents no way to do this: all work accumulates in one session, degrading quality as context grows and keeping the dispatching session burdened with content it doesn't need. Fresh dispatches make parallelism the default path: each sub-session starts clean and focused, the dispatching session stays tight, and results return via the normal reply channel. The same rationale applies at every level: a coordinator that finds further decomposable work in its own task should distribute it too.
+The right default is to distribute work into fresh sub-sessions whenever possible. All work accumulating in one session degrades quality as context grows and burdens the dispatching session with content it doesn't need. Fresh dispatches keep each session clean and focused; results return via the normal reply channel. The same rationale applies at every level: a coordinator that can decompose its own task further should do so.
+
+The exclusive-channel constraint exists because the visibility the user experiences — sub-sessions nested in the goals pane, log access, result routing back to the dispatcher — is only available when spawning goes through the envelope. A native-tool call is invisible to the harness and produces none of this. Without the constraint, models default to native tool calls because they are more familiar from training, silently losing all tracking and routing.
 
 """
 parent_id = ""

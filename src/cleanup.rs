@@ -208,7 +208,7 @@ async fn run_oc_oneshot(
 ) -> Result<()> {
     let on_sid: Box<dyn FnMut(String) + Send> = Box::new(|_| {});
     let on_chunk: Box<dyn FnMut(String) + Send> = Box::new(|_| {});
-    oc.run(message, None, work_dir, on_sid, on_chunk).await?;
+    oc.run(message, None, work_dir, None, on_sid, on_chunk).await?;
     Ok(())
 }
 
@@ -466,6 +466,7 @@ mod tests {
             _message: &str,
             _session_id: Option<&str>,
             _work_dir: &Path,
+            _system_prompt: Option<&str>,
             _on_session_id: Chunk,
             _on_chunk: Chunk,
         ) -> Result<String> {
@@ -497,6 +498,7 @@ mod tests {
             _message: &str,
             _session_id: Option<&str>,
             _work_dir: &Path,
+            _system_prompt: Option<&str>,
             _on_session_id: Chunk,
             _on_chunk: Chunk,
         ) -> Result<String> {

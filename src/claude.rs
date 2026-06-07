@@ -73,10 +73,14 @@ impl OpenCodeRunner for ClaudeRunner {
         message: &str,
         session_id: Option<&str>,
         work_dir: &Path,
+        system_prompt: Option<&str>,
         mut on_session_id: Chunk,
         mut on_chunk: Chunk,
     ) -> Result<String> {
-        let mut cmd = claude_command(&self.model, self.system_prompt.as_deref(), session_id, work_dir);
+        // Per-call system_prompt (goal-specific) takes priority over the
+        // struct-level one (used for tend, which has a fixed scope boundary).
+        let effective_sp = system_prompt.or(self.system_prompt.as_deref());
+        let mut cmd = claude_command(&self.model, effective_sp, session_id, work_dir);
 
         let mut child = cmd.spawn()?;
         if let Some(mut stdin) = child.stdin.take() {
@@ -170,6 +174,8 @@ impl OpenCodeRunner for ClaudeRunner {
                     status.code().unwrap_or(-1),
                     stderr_text.trim()
                 );
+                // Error-reinjection resumes the session — use the struct-level
+                // system prompt (for tend) or None (for goal agents).
                 let mut follow_cmd = claude_command(&self.model, self.system_prompt.as_deref(), Some(sid), work_dir);
                 if let Ok(mut follow_child) = follow_cmd.spawn() {
                     if let Some(mut stdin) = follow_child.stdin.take() {
@@ -513,6 +519,41 @@ mod tests {
         assert!(args.contains(&OsStr::new("--verbose")), "verbose required for stream-json");
         assert!(args.contains(&OsStr::new("--model")), "model flag must be present");
         assert!(args.contains(&OsStr::new("haiku")), "model must match");
+    }
+
+    // spec (backends): the per-call system_prompt (goal-specific, supplied on
+    // the first turn by goal_agent_loop) takes priority over the runner's
+    // struct-level system_prompt (used for tend's fixed scope boundary).
+    // When both are set, the per-call one wins. When only the struct-level is
+    // set, the struct-level is used.
+    #[test]
+    fn test_spec_per_call_system_prompt_overrides_struct_level() {
+        let runner = ClaudeRunner::with_system_prompt("sonnet", "struct-level prompt");
+
+        // Per-call system_prompt provided — it must override struct-level.
+        let effective = Some("per-call prompt").or(runner.system_prompt.as_deref());
+        let args = claude_args(&runner.model, effective, None);
+        assert!(
+            args.contains(&"--system-prompt".to_string()),
+            "--system-prompt flag must be present"
+        );
+        assert!(
+            args.contains(&"per-call prompt".to_string()),
+            "per-call system_prompt must appear in args"
+        );
+        assert!(
+            !args.contains(&"struct-level prompt".to_string()),
+            "struct-level system_prompt must NOT appear when per-call is set"
+        );
+
+        // No per-call system_prompt — struct-level must be used.
+        let no_per_call: Option<&str> = None;
+        let effective2 = no_per_call.or(runner.system_prompt.as_deref());
+        let args2 = claude_args(&runner.model, effective2, None);
+        assert!(
+            args2.contains(&"struct-level prompt".to_string()),
+            "struct-level system_prompt must be used when no per-call prompt is set"
+        );
     }
 
     // spec (backends): error output from a subprocess that exits non-zero is

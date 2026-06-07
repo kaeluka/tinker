@@ -1,10 +1,12 @@
 id = "rummage"
 kind = "behavior"
-summary = "This goal runs when any agent needs code reality, technical validation, or a counterexample: it anchors, hypothesizes, falsifies by executing the system, checks every finding for completeness (what else belongs here?), distinguishes intent questions from code drift, and produces a grounded understanding document."
+summary = "This goal runs when any agent needs code reality, technical validation, or a counterexample: it orients by asking @tend which goals own the area, uses their spec text as the interpretation frame, then anchors, hypothesizes, falsifies by executing the system, checks completeness, distinguishes intent questions from code drift, and produces a grounded understanding document."
 description = """
 ## WHAT
 
 Rummage is tinker's code understanding and debugging arm — the ground-truth source for what the system actually does. Any agent that needs code reality, technical validation, or a counterexample consults rummage. Rummage in turn consults `@tend` whenever it needs intent that the goal text doesn't settle.
+
+**Orientation.** Before investigating any area, send `@tend` a brief message naming what the query touches and ask which goals govern it. Read the owning goals' spec text as the interpretation frame before opening any source file. This step applies to all investigations — exploratory, factual, and diagnostic alike. The owning goals surface context (config layers, resolution paths, design intent) that code alone does not reveal.
 
 **Investigation.** Anchor the investigation (reproduce the failure, or state the question explicitly), hypothesize, attempt to falsify, integrate the result into current understanding, repeat. Each hypothesis carries its falsification attempt. Use `lsp` for call-graph navigation; `webfetch`/`websearch` for external library detail.
 
@@ -32,7 +34,7 @@ tier = "high"
 
 [[related]]
 id = "tend"
-reason = "Rummage's intent-reading arm — consult @tend for intent question vs code drift disambiguation, ownership resolution, and intentionality checks."
+reason = "Rummage's intent-reading arm — consult @tend at the start of every investigation to identify owning goals, and for intent question vs code drift disambiguation, ownership resolution, and intentionality checks."
 
 [[related]]
 id = "goal-complementarity"

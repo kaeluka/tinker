@@ -94,14 +94,14 @@ pub const MESSAGE_PASSING_AND_PROGRESS_SECTIONS: &str =
 
 /// Fresh-dispatch protocol instructions. Injected into regular goal-session
 /// init messages and fresh sub-session init messages so agents at every depth
-/// know how to distribute parallel sub-tasks.
+/// know how to decompose and distribute sub-tasks.
 pub const FRESH_DISPATCH_INSTRUCTIONS: &str =
     "## Fresh dispatch\n\
      \n\
-     When a task has independent sub-tasks that don't need to share context, \
-     default to distributing them to fresh sub-sessions of your own goal rather \
-     than accumulating everything in one context. Each sub-session stays focused \
-     on its task, which preserves quality and keeps your own context tight.\n\
+     Whenever you can decompose a sub-task, default to dispatching it to a fresh \
+     sub-session of your own goal rather than doing it inline. Each sub-session \
+     stays focused on its task, which preserves quality and keeps your own context \
+     tight.\n\
      \n\
      ```\n\
      <@{your-goal-id}|label>\n\
@@ -123,7 +123,14 @@ pub const FRESH_DISPATCH_INSTRUCTIONS: &str =
      **Each envelope must be self-contained.** The sub-session only sees the text \
      inside the tags — not your surrounding reply, not earlier turns. Write every \
      fresh dispatch as if the sub-session starts cold: include all the context it \
-     needs to complete the task without referring to \"above\" or \"earlier.\"";
+     needs to complete the task without referring to \"above\" or \"earlier.\"\n\
+     \n\
+     **The @-envelope is the only permitted means of spawning sub-sessions.** \
+     Tool-level agent-spawning APIs offered by the LLM backend — such as an \
+     `Agent` tool — must not be used. Such calls bypass the harness entirely: \
+     results are not delivered to the dispatcher, sub-sessions spawned that way \
+     are invisible to the goals pane and the event log, and batch accounting \
+     breaks. Use the @-envelope exclusively.";
 
 
 /// Generic neighbor-consultation mandate preamble — the invariant text that
@@ -313,11 +320,14 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
     prompt
 }
 
-/// Session-invariant framework preamble for claude goal agents.
-/// Delivered as the system prompt so it persists across session turns without
-/// repeating in the per-dispatch init message. On opencode the same preamble
-/// rides in the session init message instead; file-access boundaries are
-/// conveyed via the prompt, not a harness-level permission block.
+/// Session-invariant framework preamble component (message passing, progress
+/// guarantee, rules, neighbor mandate) without goal-specific content.
+///
+/// Not used in production — the full system prompt is now assembled by
+/// `session_init_message(goal, None, compact_index)` and delivered via the
+/// backend's native mechanism.  Retained for tests that verify the preamble's
+/// content properties.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn goal_agent_framework_preamble() -> String {
     format!(
         "{message_passing_and_progress}\n\
@@ -339,9 +349,14 @@ pub fn goal_agent_framework_preamble() -> String {
     )
 }
 
-/// Lean init message for claude goal agents where the framework preamble
-/// is already in the system prompt. Contains only goal-specific content:
-/// identity, goal index, goal description, neighbor table, trigger reason.
+/// Goal-specific init content without framework preamble (for cases where the
+/// preamble is already in the system prompt).  Contains: identity, goal index,
+/// goal description, neighbor table, and optional trigger reason.
+///
+/// Not used in production since both backends now deliver the full system prompt
+/// via `session_init_message(goal, None, compact_index)` and the first turn
+/// carries only the trigger reason.  Retained for tests.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn goal_agent_lean_init_message(goal: &Goal, reason: Option<&str>, compact_index: &str) -> String {
     let table = build_neighborhood_table(goal);
     let neighbors_section = if table.is_empty() {
@@ -623,7 +638,7 @@ pub async fn run_silent(
         buf_clone.lock().unwrap().push_str(&chunk);
     });
     let on_sid: Box<dyn FnMut(String) + Send> = Box::new(|_| {});
-    oc.run(message, session_id, work_dir, on_sid, on_chunk).await?;
+    oc.run(message, session_id, work_dir, None, on_sid, on_chunk).await?;
     let s = buf.lock().unwrap().clone();
     Ok(s)
 }
@@ -671,7 +686,7 @@ pub async fn run_goal(
         });
     });
     let session_id = oc
-        .run(&message, None, &work_dir, on_sid, on_chunk)
+        .run(&message, None, &work_dir, None, on_sid, on_chunk)
         .await?;
 
     let output = full_output.lock().unwrap().clone();
@@ -914,6 +929,7 @@ mod tests {
                 _message: &str,
                 session_id: Option<&str>,
                 _work_dir: &Path,
+                _system_prompt: Option<&str>,
                 _on_session_id: Chunk,
                 _on_chunk: Chunk,
             ) -> Result<String> {
@@ -1268,6 +1284,31 @@ mod tests {
         assert!(
             FRESH_DISPATCH_INSTRUCTIONS.contains("starts cold") || FRESH_DISPATCH_INSTRUCTIONS.contains("without referring"),
             "Fresh dispatch instructions must warn against referencing context outside the envelope"
+        );
+    }
+
+    // spec (fresh-agents): FRESH_DISPATCH_INSTRUCTIONS must prohibit tool-level
+    // agent-spawning APIs (e.g. an `Agent` tool offered by the LLM backend) and
+    // explain why: such calls bypass the harness, so results are not delivered to
+    // the dispatcher, sub-sessions are invisible to the goals pane and event log,
+    // and batch accounting breaks. The @-envelope is the only permitted channel.
+    #[test]
+    fn test_spec_fresh_agents_instructions_prohibit_native_agent_tool_apis() {
+        assert!(
+            FRESH_DISPATCH_INSTRUCTIONS.contains("only permitted"),
+            "instructions must state the @-envelope is the ONLY permitted means"
+        );
+        assert!(
+            FRESH_DISPATCH_INSTRUCTIONS.contains("bypass"),
+            "instructions must explain that native agent APIs bypass the harness"
+        );
+        assert!(
+            FRESH_DISPATCH_INSTRUCTIONS.contains("invisible") || FRESH_DISPATCH_INSTRUCTIONS.contains("not delivered"),
+            "instructions must state at least one consequence (invisible / not delivered)"
+        );
+        assert!(
+            FRESH_DISPATCH_INSTRUCTIONS.contains("batch"),
+            "instructions must mention batch accounting as a consequence"
         );
     }
 
