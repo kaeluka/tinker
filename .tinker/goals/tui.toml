@@ -51,6 +51,12 @@ under the cursor. New content keeps the view pinned to the bottom;
 scrolling up disables auto-follow until the user scrolls back down,
 where it re-engages.
 
+The REPL conversation pane must scroll smoothly regardless of how
+many messages have accumulated. Currently, every frame rebuilds the
+layout of the entire conversation, so rendering cost grows with total
+text and eventually breaks interactive scrolling. The layout cost of
+rendering accumulated messages must remain bounded.
+
 **Queue visibility.** When goals have running or pending sessions,
 the goal list marks them: a distinct glyph (`▶`) for the
 currently-running goal, a bracketed integer (`[1]`, `[2]`) marking a

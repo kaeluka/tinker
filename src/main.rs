@@ -8,6 +8,7 @@ mod goal_session;
 mod logger;
 mod opencode;
 mod realfs;
+mod repl_buffer;
 mod tui;
 #[cfg(test)]
 mod test_utils;
@@ -1720,6 +1721,7 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                     && known_session_ids.contains(&id) {
                         app.active_session = id.to_string();
                         app.repl_scroll.y = None;
+                        app.repl_buffer.invalidate();
                         let msg = format!("switched to {} — type to chat, /<goal-id> to switch", id);
                         app.push_system_message(&msg);
                         log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: msg });
@@ -2008,7 +2010,7 @@ mod tests {
         let mut app = App::new();
         for s in [&mut app.repl_scroll, &mut app.log_scroll,
                   &mut app.goal_text_scroll, &mut app.goal_list_scroll] {
-            s.record_render(200, 10);
+            s.record_render(200, 10, 0);
         }
         // Use ScrollDown (from the tail) so None → Some transition is observable.
 
@@ -4068,7 +4070,7 @@ mod tests {
             source_path: None,
         });
         // Simulate a prior render so last_total has a baseline.
-        app.goal_list_scroll.record_render(1, 8);
+        app.goal_list_scroll.record_render(1, 8, 0);
 
         // Fire a Chunk event with only the opening tag (no closing tag yet).
         handle_session_event(
@@ -4483,7 +4485,7 @@ mod tests {
         });
 
         // Simulate a prior render: last_total reflects 1 item (the goal itself).
-        app.goal_list_scroll.record_render(1, 8);
+        app.goal_list_scroll.record_render(1, 8, 0);
         assert_eq!(app.goal_list_scroll.last_total, 1, "precondition: last_total is 1 before insertion");
 
         // Fire a Done event with a fresh dispatch envelope — this inserts an ephemeral.
@@ -4529,7 +4531,7 @@ mod tests {
             });
         }
         // Simulate a render: 10 items, height 3 (so max_y = 7).
-        app.goal_list_scroll.record_render(10, 3);
+        app.goal_list_scroll.record_render(10, 3, 0);
         app.goal_list_scroll.y = Some(0);
         app.focus = Focus::Tree;
 

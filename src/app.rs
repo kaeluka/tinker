@@ -1,4 +1,5 @@
 use crate::goal::Goal;
+use crate::repl_buffer::ReplBuffer;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -45,7 +46,7 @@ pub fn session_parent_id(id: &str) -> &str {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum Role {
     User(String),
     System,
@@ -101,11 +102,15 @@ pub struct ScrollState {
     pub y: Option<usize>,
     pub last_total: usize,
     pub last_height: u16,
+    /// A cheap key representing the content + width that `last_total` was
+    /// computed for. When this differs from the current key the cached total
+    /// is stale and `line_count` must be re-run.
+    pub cache_key: u64,
 }
 
 impl ScrollState {
     pub fn new() -> Self {
-        Self { y: None, last_total: 0, last_height: 0 }
+        Self { y: None, last_total: 0, last_height: 0, cache_key: 0 }
     }
 
     fn max_y(&self) -> usize {
@@ -139,9 +144,14 @@ impl ScrollState {
         }
     }
 
-    pub fn record_render(&mut self, total: usize, height: u16) {
+    pub fn record_render(&mut self, total: usize, height: u16, cache_key: u64) {
         self.last_total = total;
         self.last_height = height;
+        self.cache_key = cache_key;
+    }
+
+    pub fn is_cache_valid(&self, cache_key: u64) -> bool {
+        self.cache_key == cache_key
     }
 
     /// Anchor at the top of the content. Use for panes that should default
@@ -179,6 +189,9 @@ pub struct App {
     pub focus: Focus,
     pub should_quit: bool,
     pub repl_scroll: ScrollState,
+    /// Retained REPL line cache that survives across frames. Invalidated when
+    /// the active session changes or the pane width changes.
+    pub repl_buffer: ReplBuffer,
     pub log_scroll: ScrollState,
     pub goal_text_scroll: ScrollState,
     pub goal_list_scroll: ScrollState,
@@ -228,6 +241,7 @@ impl App {
             focus: Focus::Repl,
             should_quit: false,
             repl_scroll: ScrollState::new(),
+            repl_buffer: ReplBuffer::new(),
             log_scroll: ScrollState::new(),
             goal_text_scroll: {
                 let mut s = ScrollState::new();

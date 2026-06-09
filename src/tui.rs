@@ -231,21 +231,17 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
         ..inner
     };
 
-    let mut lines: Vec<Line> = vec![];
-    for msg in &app.messages {
-        let visible = match &msg.role {
-            Role::System => true,
-            Role::User(id) | Role::Agent(id) => id == &app.active_session,
-        };
-        if visible {
-            push_message_lines(&mut lines, msg, msg_area.width);
-        }
-    }
-    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
-    let total = paragraph.line_count(msg_area.width);
-    app.repl_scroll.record_render(total, msg_area.height);
+    // Message pane: use the retained buffer, extended incrementally.
+    let active = app.active_session.clone();
+    app.repl_buffer.build_or_extend(&app.messages, &active, msg_area.width);
+    let total = app.repl_buffer.total_lines();
+    let cache_key = msg_area.width as u64 ^ total.wrapping_mul(0x9e3779b97f4a7c15) as u64;
+    app.repl_scroll.record_render(total, msg_area.height, cache_key);
     let scroll_y = app.repl_scroll.effective_y().min(u16::MAX as usize) as u16;
-    frame.render_widget(paragraph.scroll((scroll_y, 0)), msg_area);
+
+    let (viewport, scroll_offset) = app.repl_buffer.viewport_lines(scroll_y as usize, msg_area.height);
+    let paragraph = Paragraph::new(viewport).wrap(Wrap { trim: false });
+    frame.render_widget(paragraph.scroll((scroll_offset, 0)), msg_area);
 
     let input_line = Line::from(vec![
         Span::styled(prompt, prompt_style),
@@ -279,6 +275,7 @@ fn input_pane_layout(prompt: &str, input: &str, cursor: &str, width: u16, max: u
     (height, scroll)
 }
 
+#[allow(dead_code)]
 fn push_message_lines(lines: &mut Vec<Line<'static>>, msg: &crate::app::Message, pane_width: u16) {
     match &msg.role {
         Role::User(_) => {
@@ -550,7 +547,7 @@ fn draw_goal_tree(
 
     let list_paragraph = Paragraph::new(list_lines.clone());
     let list_total = list_lines.len();
-    app.goal_list_scroll.record_render(list_total, list_area.height);
+    app.goal_list_scroll.record_render(list_total, list_area.height, 0);
     let scroll_y = app.goal_list_scroll.effective_y().min(u16::MAX as usize) as u16;
     frame.render_widget(list_paragraph.scroll((scroll_y, 0)), list_area);
 
@@ -612,8 +609,13 @@ fn draw_goal_tree(
         }
     };
     let p = Paragraph::new(text_lines).wrap(Wrap { trim: false });
-    let total = p.line_count(text_area.width);
-    app.goal_text_scroll.record_render(total, text_area.height);
+    let cache_key = text_area.width as u64;
+    let total = if app.goal_text_scroll.is_cache_valid(cache_key) {
+        app.goal_text_scroll.last_total
+    } else {
+        p.line_count(text_area.width)
+    };
+    app.goal_text_scroll.record_render(total, text_area.height, cache_key);
     let scroll_y = app.goal_text_scroll.effective_y().min(u16::MAX as usize) as u16;
     frame.render_widget(p.scroll((scroll_y, 0)), text_area);
 }
@@ -654,8 +656,13 @@ fn draw_log(frame: &mut Frame, app: &mut App, area: Rect) {
             Some(log) => {
                 let lines: Vec<Line> = log.lines().flat_map(render_log_line).collect();
                 let p = Paragraph::new(lines).wrap(Wrap { trim: false });
-                let total = p.line_count(inner.width);
-                app.log_scroll.record_render(total, inner.height);
+                let cache_key = inner.width as u64;
+                let total = if app.log_scroll.is_cache_valid(cache_key) {
+                    app.log_scroll.last_total
+                } else {
+                    p.line_count(inner.width)
+                };
+                app.log_scroll.record_render(total, inner.height, cache_key);
                 let scroll_y = app.log_scroll.effective_y().min(u16::MAX as usize) as u16;
                 p.scroll((scroll_y, 0))
             }
@@ -810,7 +817,7 @@ mod tests {
         // Tail-follow starts engaged (y = None).
         assert!(s.y.is_none());
         // Pretend the renderer just drew 100 lines into a 10-row pane.
-        s.record_render(100, 10);
+        s.record_render(100, 10, 0);
         // Effective offset is pinned to the tail.
         assert_eq!(s.effective_y(), 90);
         // User scrolls up: follow is disabled, offset moves toward the top.
@@ -897,7 +904,7 @@ mod tests {
     #[test]
     fn test_spec_scroll_back_to_bottom_reengages_follow_tail() {
         let mut s = ScrollState::new();
-        s.record_render(100, 10);
+        s.record_render(100, 10, 0);
         // Scroll up to disengage follow.
         s.scroll_up(20);
         assert!(s.y.is_some());
@@ -1132,7 +1139,7 @@ mod tests {
     #[test]
     fn test_spec_scroll_reset_to_top() {
         let mut s = ScrollState::new();
-        s.record_render(100, 10);
+        s.record_render(100, 10, 0);
         // Tail-follow by default.
         assert_eq!(s.effective_y(), 90);
         s.reset_to_top();
@@ -1269,7 +1276,7 @@ mod tests {
         for i in 0..10 {
             app.goals.push(mk_goal(&format!("g{:02}", i)));
         }
-        app.goal_list_scroll.record_render(10, 3);
+        app.goal_list_scroll.record_render(10, 3, 0);
         // Selection starts at 0; first three are visible. Move past the
         // bottom of the viewport and the scroll offset must follow.
         for _ in 0..5 {
@@ -1293,7 +1300,7 @@ mod tests {
         for i in 0..10 {
             app.goals.push(mk_goal(&format!("g{:02}", i)));
         }
-        app.goal_list_scroll.record_render(10, 3);
+        app.goal_list_scroll.record_render(10, 3, 0);
         // Jump the selection to the bottom and pin the scroll there so the
         // top of the list is out of view.
         app.selected_goal = 9;
