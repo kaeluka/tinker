@@ -108,6 +108,7 @@ pulling full text.
 
 """
 parent_id = ""
+tier = "high"
 
 [[related]]
 id = "feature-craft"
