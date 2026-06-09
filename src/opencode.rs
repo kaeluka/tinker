@@ -9,7 +9,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::io::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tempfile::Builder;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
@@ -58,6 +58,14 @@ struct RawErrorData {
     message: Option<String>,
 }
 
+/// Directory opencode scans for project-local agent files: `<work_dir>/.opencode/agent/`.
+/// `--agent <stem>` only resolves when the file lives here — a top-level
+/// `agents/` is NOT discovered, so a misplaced file silently falls back to
+/// opencode's default agent (dropping the session's system prompt).
+pub(crate) fn agent_dir(work_dir: &Path) -> PathBuf {
+    work_dir.join(".opencode").join("agent")
+}
+
 /// Write `system_prompt` to an ephemeral `tinker-*.md` file in `agents_dir`.
 /// Returns the `NamedTempFile` (must stay alive until the opencode subprocess
 /// exits — the tempfile crate auto-deletes it on drop) and the file stem
@@ -84,8 +92,8 @@ pub(crate) fn create_agent_file_in_dir(
 /// Real `OpenCodeRunner` impl bound to a specific opencode model id.
 /// Construct one per role (tinker vs goal session) at the composition root.
 /// When `system_prompt` is provided for a new session (session_id=None), the
-/// runner writes it to an ephemeral agent file in `<work_dir>/agents/` and
-/// passes `--agent <stem>` to opencode so the content is delivered as the
+/// runner writes it to an ephemeral agent file in `<work_dir>/.opencode/agent/`
+/// and passes `--agent <stem>` to opencode so the content is delivered as the
 /// session's system prompt.  The file is deleted after the opencode process
 /// exits.  Resumed sessions skip agent-file creation entirely.
 pub struct RealOpenCodeRunner {
@@ -119,14 +127,14 @@ impl OpenCodeRunner for RealOpenCodeRunner {
         mut on_chunk: Chunk,
     ) -> Result<String> {
         // For new sessions with a system prompt: write it to an ephemeral agent
-        // file in <work_dir>/agents/ so opencode loads it as the session's system
-        // prompt via `--agent <stem>`.  The NamedTempFile is kept alive until the
+        // file in <work_dir>/.opencode/agent/ so opencode loads it as the session's
+        // system prompt via `--agent <stem>`.  The NamedTempFile is kept alive until the
         // end of this function, then dropped (auto-deleted by the tempfile crate).
         let _agent_file;
         let agent_name: Option<String>;
         if session_id.is_none() {
             if let Some(sp) = system_prompt {
-                let agents_dir = work_dir.join("agents");
+                let agents_dir = agent_dir(work_dir);
                 let (tmp, stem) = create_agent_file_in_dir(&agents_dir, sp)?;
                 _agent_file = Some(tmp);
                 agent_name = Some(stem);
@@ -372,8 +380,8 @@ pub fn opencode_command(
 /// Build the argv tinker passes to `opencode run`. Pure function so the
 /// security test can verify what flags we pass without spawning a subprocess.
 ///
-/// `agent_name` is the stem of an agent-file in `<work_dir>/agents/` that
-/// carries the session's system prompt.  Pass `None` for resumed sessions
+/// `agent_name` is the stem of an agent-file in `<work_dir>/.opencode/agent/`
+/// that carries the session's system prompt.  Pass `None` for resumed sessions
 /// or any call that has no system-prompt file.
 pub fn opencode_args(
     model: Option<&str>,
@@ -552,24 +560,32 @@ mod tests {
     }
 
     // spec (backends): new session with a system prompt writes it to a
-    // tinker-*.md file in <work_dir>/agents/ and returns a stem that is
-    // passed as `--agent <stem>` to opencode.  The file must contain the
-    // prompt verbatim and live in the agents/ subdirectory of work_dir.
+    // tinker-*.md file in <work_dir>/.opencode/agent/ and returns a stem that
+    // is passed as `--agent <stem>` to opencode.  The file must contain the
+    // prompt verbatim and live where opencode actually discovers agents — a
+    // top-level agents/ is NOT scanned and silently falls back to the default.
     #[test]
     fn test_spec_agent_file_created_with_correct_content_and_location() {
         let dir = tempfile::tempdir().expect("create tmpdir");
         let sp = "## My goal\n\nDo stuff with this prompt.";
-        let agents_dir = dir.path().join("agents");
+
+        // The agent dir must be the one opencode scans: <work_dir>/.opencode/agent/.
+        let agents_dir = agent_dir(dir.path());
+        assert_eq!(
+            agents_dir,
+            dir.path().join(".opencode").join("agent"),
+            "agent files must go in <work_dir>/.opencode/agent/ or opencode won't find them"
+        );
 
         let (tmp, stem) = create_agent_file_in_dir(&agents_dir, sp)
             .expect("create_agent_file_in_dir must succeed");
 
-        // File must exist in <work_dir>/agents/
+        // File must exist in <work_dir>/.opencode/agent/
         assert!(tmp.path().exists(), "agent file must exist");
         assert_eq!(
             tmp.path().parent().expect("file has parent"),
             agents_dir,
-            "agent file must be placed in <work_dir>/agents/"
+            "agent file must be placed in <work_dir>/.opencode/agent/"
         );
 
         // Content must match the system prompt verbatim
