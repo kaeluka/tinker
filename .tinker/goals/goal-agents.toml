@@ -1,6 +1,6 @@
 id = "goal-agents"
 kind = "feature"
-summary = "This goal owns the agent-architecture runtime: the uniform per-goal session registry, @goal-id universal dispatch routing, the runtime-injected framework preamble and dispatcher-provided spec-diff init section, the tier field and its session-start resolution, the unified event stream, the .tinker/ access prohibition, and tend's two structural exceptions (eager start with startup-silence and the goal-file parse-correction loop)."
+summary = "This goal owns the agent-architecture runtime: the uniform per-goal session registry, @goal-id universal dispatch routing, the runtime-injected framework preamble and dispatcher-provided spec-diff init section, the tier field and its kind-aware session-start resolution (behavior goals default to high, feature goals to mid), the unified event stream, the .tinker/ access prohibition, and tend's two structural exceptions (eager start with startup-silence and the goal-file parse-correction loop)."
 description = """
 ## WHAT
 Tinker's agent architecture follows one rule: **every goal is a
@@ -52,9 +52,10 @@ Goal agents needing a code inventory of what currently exists in
 their scope should consult `@rummage`.
 
 **Tier.** Every goal TOML may carry an optional `tier` field:
-`"high"`, `"mid"`, `"low"`, or absent (defaults to `"mid"`). Resolved at
-session start via `model-config`. Tend, rummage, and jog declare
-`tier = "high"`.
+`"high"`, `"mid"`, `"low"`, or absent. Absent defaults to `"high"` for
+behavior goals (complex tasks — reviewing, summarizing, understanding —
+benefit from the strongest model) and `"mid"` for feature goals. Resolved
+at session start via `model-config`.
 
 **Unified event stream.** Every session emits three kinds of event:
 a streamed output chunk, a done signal, and a cleanup-blocked signal

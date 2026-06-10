@@ -660,6 +660,7 @@ async fn run_loop(
                     let oc_for_fresh = match dispatcher_goal.tier.as_deref() {
                         Some("high") => oc_goal_high.clone(),
                         Some("low") => oc_goal_low.clone(),
+                        None => if dispatcher_goal.kind.as_deref() == Some("behavior") { oc_goal_high.clone() } else { oc_goal.clone() },
                         _ => oc_goal.clone(),
                     };
                     let session_tx_fresh = session_tx.clone();
@@ -689,6 +690,7 @@ async fn run_loop(
                     let oc_for_goal = match goal.tier.as_deref() {
                         Some("high") => oc_goal_high.clone(),
                         Some("low") => oc_goal_low.clone(),
+                        None => if goal.kind.as_deref() == Some("behavior") { oc_goal_high.clone() } else { oc_goal.clone() },
                         _ => oc_goal.clone(),
                     };
                     let session_tx_goal = session_tx.clone();
@@ -1742,7 +1744,16 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                     // Enter on a goal opens the options dialog. Pane focus
                     // stays on `Tree` — when the modal closes (submit or Esc),
                     // the user is still in the tree.
-                    let tier_display = g.tier.as_deref().unwrap_or("mid").to_string();
+                    let tier_display = match g.tier.as_deref() {
+                        Some(t) => t.to_string(),
+                        None => {
+                            // Default tier based on goal kind when tier is absent.
+                            match g.kind.as_deref() {
+                                Some("behavior") => "high".to_string(),
+                                _ => "mid".to_string(),
+                            }
+                        },
+                    };
                     app.modal = Some(crate::app::ModalState {
                         goal_id: g.id,
                         input: String::new(),
