@@ -63,7 +63,7 @@ On-disk TOML format at `.tinker/goals/<id>.toml`: ancestor-directory merge (cwd-
 Tier defaults are now kind-aware: behavior goals default to high tier, feature goals default to mid tier, and low tier is used only when explicitly set.
 TUI tier-change interaction: `t` on a focused goal cycles its tier (absent/mid → high → low → absent/mid) and writes the updated `tier` field immediately to the goal's source TOML file; the goal-detail header's `[kind · tier]` tag reflects the new value at once.
 
-- `src/main.rs` — `cycle_tier()` (three-value cycle logic), `KeyAction::CycleTier(goal_id)` variant, key-event dispatch (`t` in the goal-tree returns `CycleTier` for any goal with a `source_path`), and the `CycleTier` event-loop handler that mutates `app.goals` in-place, serializes via `toml::to_string_pretty()`, and writes via `fs.write()`
+- `src/main.rs` — `effective_goal_tier()` (single source of truth for kind-aware tier resolution: explicit tier wins, absent tier: behavior→high, feature/unknown→mid), `cycle_tier()` (three-value cycle logic), `KeyAction::CycleTier(goal_id)` variant, key-event dispatch (`t` in the goal-tree returns `CycleTier` for any goal with a `source_path`), and the `CycleTier` event-loop handler that mutates `app.goals` in-place, serializes via `toml::to_string_pretty()`, and writes via `fs.write()`
 
 ### goal-placement
 Placement reviewer: when tend creates or edits a goal, checks that it lives in the directory matching its scope — packaged (`~/.tinker/goals/`) for content valid across any tinker project, project-local (`.tinker/goals/`) for content specific to this project — and flags drift when edits make a packaged goal project-specific.

@@ -78,7 +78,8 @@ pub struct Goal {
     /// Cross-cutting related goals. Empty when the field is absent in TOML.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub related: Vec<RelatedLink>,
-    /// Model tier for sessions running this goal: "high", "mid", "low", or absent (defaults to "mid").
+    /// Model tier for sessions running this goal: "high", "mid", "low", or absent.
+    /// When absent, behavior goals default to "high" and feature goals to "mid".
     /// Resolved at session start via model-config for the current backend.
     /// Tend, rummage, and jog declare `tier = "high"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -916,7 +917,7 @@ reason = "handles the beta subproblem"
     }
 
     // spec: goal-agents — a goal TOML without a `tier` field loads with tier = None
-    // (optional field, defaults to mid-tier at session start).
+    // (optional field; effective tier resolved at session start, kind-aware).
     #[test]
     fn test_spec_tier_field_absent_loads_as_none() {
         let fs = MockFs::new();

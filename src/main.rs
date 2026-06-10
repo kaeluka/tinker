@@ -655,12 +655,12 @@ async fn run_loop(
                     // Clone dispatcher goal with the ephemeral session ID for event tracking.
                     let mut fresh_goal = dispatcher_goal.clone();
                     fresh_goal.id = fresh.session_id.clone();
-                    // Inherit the dispatcher's tier so high/low-tier goals get the
-                    // correct runner for their fresh sub-sessions.
-                    let oc_for_fresh = match dispatcher_goal.tier.as_deref() {
-                        Some("high") => oc_goal_high.clone(),
-                        Some("low") => oc_goal_low.clone(),
-                        None => if dispatcher_goal.kind.as_deref() == Some("behavior") { oc_goal_high.clone() } else { oc_goal.clone() },
+                    // Resolve the dispatcher's effective tier (explicit tier wins;
+                    // absent tier: behavior→high, feature→mid) so fresh sub-sessions
+                    // get the correct runner.
+                    let oc_for_fresh = match effective_goal_tier(&dispatcher_goal) {
+                        "high" => oc_goal_high.clone(),
+                        "low" => oc_goal_low.clone(),
                         _ => oc_goal.clone(),
                     };
                     let session_tx_fresh = session_tx.clone();
@@ -687,10 +687,9 @@ async fn run_loop(
                 if let Some(goal) = goal {
                     let (msg_tx_goal, msg_rx_goal) = mpsc::unbounded_channel::<String>();
                     session_senders.insert(req.goal_id.clone(), msg_tx_goal.clone());
-                    let oc_for_goal = match goal.tier.as_deref() {
-                        Some("high") => oc_goal_high.clone(),
-                        Some("low") => oc_goal_low.clone(),
-                        None => if goal.kind.as_deref() == Some("behavior") { oc_goal_high.clone() } else { oc_goal.clone() },
+                    let oc_for_goal = match effective_goal_tier(&goal) {
+                        "high" => oc_goal_high.clone(),
+                        "low" => oc_goal_low.clone(),
                         _ => oc_goal.clone(),
                     };
                     let session_tx_goal = session_tx.clone();
@@ -1528,6 +1527,18 @@ fn cycle_tier_display_prev(current: &str) -> &'static str {
     }
 }
 
+/// Resolves a goal's effective tier: an explicit `tier` field wins; when absent,
+/// behavior goals default to "high" and all others to "mid".
+fn effective_goal_tier(goal: &goal::Goal) -> &str {
+    match goal.tier.as_deref() {
+        Some(t) => t,
+        None => match goal.kind.as_deref() {
+            Some("behavior") => "high",
+            _ => "mid",
+        },
+    }
+}
+
 const MOUSE_SCROLL_STEP: usize = 3;
 
 fn handle_mouse(app: &mut App, ev: MouseEvent, area: ratatui::layout::Rect) {
@@ -1744,16 +1755,7 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                     // Enter on a goal opens the options dialog. Pane focus
                     // stays on `Tree` — when the modal closes (submit or Esc),
                     // the user is still in the tree.
-                    let tier_display = match g.tier.as_deref() {
-                        Some(t) => t.to_string(),
-                        None => {
-                            // Default tier based on goal kind when tier is absent.
-                            match g.kind.as_deref() {
-                                Some("behavior") => "high".to_string(),
-                                _ => "mid".to_string(),
-                            }
-                        },
-                    };
+                    let tier_display = effective_goal_tier(&g).to_string();
                     app.modal = Some(crate::app::ModalState {
                         goal_id: g.id,
                         input: String::new(),
@@ -2199,7 +2201,7 @@ mod tests {
         // Verify the lazy-spawn runner selection is tier-based (no name-based match).
         let main_rs = include_str!("main.rs");
         assert!(
-            main_rs.contains("Some(\"high\") => oc_goal_high"),
+            main_rs.contains("\"high\" => oc_goal_high"),
             "lazy spawn must use oc_goal_high for tier=high goals",
         );
         // The tinker_m variable on the Claude path must default to CLAUDE_TINKER_MODEL.
@@ -2222,7 +2224,7 @@ mod tests {
     fn test_spec_low_tier_goal_uses_low_runner() {
         let main_rs = include_str!("main.rs");
         assert!(
-            main_rs.contains("Some(\"low\") => oc_goal_low"),
+            main_rs.contains("\"low\" => oc_goal_low"),
             "lazy spawn must route tier=low goals to oc_goal_low",
         );
         assert!(
@@ -3390,8 +3392,8 @@ mod tests {
     }
 
     // spec (tier-edit): Enter in the goal tree opens the options dialog with the
-    // goal's effective tier pre-populated; absent tier shows as "mid".
-    // The focused field starts on Reason.
+    // goal's effective tier pre-populated; absent tier on a non-behavior goal
+    // shows as "mid". The focused field starts on Reason.
     #[test]
     fn test_spec_options_modal_opens_with_tier_and_reason_field() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -3416,7 +3418,8 @@ mod tests {
         assert_eq!(m.focused_field, ModalField::Reason, "Reason field must be focused initially");
     }
 
-    // spec (tier-edit): absent tier (None) displays as "mid" in the options dialog.
+    // spec (tier-edit): absent tier (None) on a non-behavior goal displays as "mid"
+    // in the options dialog.
     #[test]
     fn test_spec_options_modal_absent_tier_shows_mid() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -3435,8 +3438,71 @@ mod tests {
         app.focus = Focus::Tree;
         handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
         let m = app.modal.as_ref().unwrap();
-        assert_eq!(m.tier, "mid", "absent tier must display as mid");
+        assert_eq!(m.tier, "mid", "absent tier on non-behavior goal must display as mid");
         assert_eq!(m.initial_tier, "mid");
+    }
+
+    // spec (goal-agents / tier-edit): absent tier on a behavior goal displays as
+    // "high" in the options dialog — kind-aware default.
+    #[test]
+    fn test_spec_options_modal_behavior_goal_absent_tier_shows_high() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.goals = vec![goal::Goal {
+            id: "cleanup-hook".into(),
+            summary: String::new(),
+            description: String::new(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: Some("behavior".into()),
+            source_path: None,
+        }];
+        app.focus = Focus::Tree;
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        let m = app.modal.as_ref().unwrap();
+        assert_eq!(m.tier, "high", "behavior goal with absent tier must display as high");
+        assert_eq!(m.initial_tier, "high");
+    }
+
+    // spec (goal-agents): effective_goal_tier resolves kind-aware defaults —
+    // explicit tier wins; absent tier: behavior→high, feature/unknown→mid.
+    #[test]
+    fn test_spec_effective_goal_tier_kind_aware_defaults() {
+        // Explicit tier always wins regardless of kind.
+        assert_eq!(effective_goal_tier(&goal::Goal {
+            id: "g".into(), summary: "".into(), description: "".into(),
+            parent_id: "".into(), children: vec![], related: vec![],
+            tier: Some("low".into()), kind: Some("behavior".into()), source_path: None,
+        }), "low", "explicit low tier wins over behavior kind");
+
+        assert_eq!(effective_goal_tier(&goal::Goal {
+            id: "g".into(), summary: "".into(), description: "".into(),
+            parent_id: "".into(), children: vec![], related: vec![],
+            tier: Some("high".into()), kind: Some("feature".into()), source_path: None,
+        }), "high", "explicit high tier wins over feature kind");
+
+        // Absent tier: behavior → high.
+        assert_eq!(effective_goal_tier(&goal::Goal {
+            id: "g".into(), summary: "".into(), description: "".into(),
+            parent_id: "".into(), children: vec![], related: vec![],
+            tier: None, kind: Some("behavior".into()), source_path: None,
+        }), "high", "behavior goal with absent tier defaults to high");
+
+        // Absent tier: feature → mid.
+        assert_eq!(effective_goal_tier(&goal::Goal {
+            id: "g".into(), summary: "".into(), description: "".into(),
+            parent_id: "".into(), children: vec![], related: vec![],
+            tier: None, kind: Some("feature".into()), source_path: None,
+        }), "mid", "feature goal with absent tier defaults to mid");
+
+        // Absent tier, absent kind → mid.
+        assert_eq!(effective_goal_tier(&goal::Goal {
+            id: "g".into(), summary: "".into(), description: "".into(),
+            parent_id: "".into(), children: vec![], related: vec![],
+            tier: None, kind: None, source_path: None,
+        }), "mid", "absent tier and absent kind defaults to mid");
     }
 
     // spec (tier-edit): Tab in the options dialog switches the focused field between
@@ -4001,24 +4067,25 @@ mod tests {
         // is the authoritative check above.)
     }
 
-    // spec (fresh-agents): fresh sub-sessions inherit the dispatcher's tier —
-    // the spawn path uses `match dispatcher_goal.tier` rather than a hardcoded
-    // oc_goal fallback, so high- and low-tier dispatchers get the correct runner.
+    // spec (fresh-agents): fresh sub-sessions inherit the dispatcher's effective
+    // tier (kind-aware) — the spawn path uses `effective_goal_tier` rather than
+    // a hardcoded oc_goal fallback, so high- and low-tier dispatchers (and
+    // behavior goals with absent tier) get the correct runner.
     #[test]
     fn test_spec_fresh_agents_inherits_dispatcher_tier() {
         let main_rs = include_str!("main.rs");
-        // The fresh sub-session spawn path must use a tier match identical in
-        // structure to the persistent-session path, not a fixed oc_goal.clone().
+        // The fresh sub-session spawn path must resolve tier via the
+        // effective_goal_tier helper, not a fixed oc_goal.clone().
         assert!(
-            main_rs.contains("match dispatcher_goal.tier.as_deref()"),
-            "fresh sub-session spawn must dispatch via tier match on dispatcher_goal.tier",
+            main_rs.contains("effective_goal_tier(&dispatcher_goal)"),
+            "fresh sub-session spawn must resolve tier via effective_goal_tier(&dispatcher_goal)",
         );
-        // Both high and low arms must reference the correct runners.
-        let pos = main_rs.find("match dispatcher_goal.tier.as_deref()").unwrap();
-        let snippet = &main_rs[pos..pos + 300];
-        assert!(snippet.contains("oc_goal_high"), "fresh tier match must wire Some(\"high\") to oc_goal_high");
-        assert!(snippet.contains("oc_goal_low"),  "fresh tier match must wire Some(\"low\") to oc_goal_low");
-        assert!(snippet.contains("oc_goal.clone()"), "fresh tier match must fall back to oc_goal for mid/absent");
+        // The match on the resolved tier must wire high and low correctly.
+        let pos = main_rs.find("effective_goal_tier(&dispatcher_goal)").unwrap();
+        let snippet = &main_rs[pos..pos + 200];
+        assert!(snippet.contains("oc_goal_high"), "fresh tier match must wire \"high\" to oc_goal_high");
+        assert!(snippet.contains("oc_goal_low"),  "fresh tier match must wire \"low\" to oc_goal_low");
+        assert!(snippet.contains("oc_goal.clone()"), "fresh tier match must fall back to oc_goal for mid");
     }
 
     // spec (tui / fresh-agents): a Chunk event containing an opening tag
