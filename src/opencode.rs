@@ -206,7 +206,7 @@ impl OpenCodeRunner for RealOpenCodeRunner {
                         .and_then(|e| e.data.as_ref().and_then(|d| d.message.clone()))
                         .or_else(|| ev.error.as_ref().and_then(|e| e.name.clone()))
                         .unwrap_or_else(|| "unknown error".to_string());
-                    on_chunk(format!("\n\u{2030} error: {}\n", msg));
+                    on_chunk(crate::prompts::stream_error(&msg));
                 }
                 _ => {}
             }
@@ -215,7 +215,7 @@ impl OpenCodeRunner for RealOpenCodeRunner {
         let status = child.wait().await?;
         let stderr_text = stderr_collector.await.unwrap_or_default();
         if !stderr_text.is_empty() {
-            on_chunk(format!("\n\u{2030} stderr: {}\n", stderr_text.trim()));
+            on_chunk(crate::prompts::stderr_prefix(stderr_text.trim()));
         }
 
         // On non-zero exit with stderr output, re-inject the error into the
@@ -228,10 +228,9 @@ impl OpenCodeRunner for RealOpenCodeRunner {
                 session_id
             };
             if let Some(sid) = effective_sid {
-                let error_msg = format!(
-                    "[process error — exit code {}]\n{}\n",
+                let error_msg = crate::prompts::process_error(
                     status.code().unwrap_or(-1),
-                    stderr_text.trim()
+                    stderr_text.trim(),
                 );
                 // Error-reinjection resumes the session — no agent file needed.
                 let mut follow_cmd = opencode_command(self.model.as_deref(), Some(sid), work_dir, None);
@@ -310,9 +309,9 @@ fn format_tool_use(part: &RawPart) -> String {
             .unwrap_or_default();
         let first_line = error.lines().next().unwrap_or(error);
         return if summary.is_empty() {
-            format!("\u{26A0} {}: {}\n", tool, first_line)
+            crate::prompts::tool_error_no_summary(&tool, first_line)
         } else {
-            format!("\u{26A0} {} {}: {}\n", tool, summary, first_line)
+            crate::prompts::tool_error_with_summary(&tool, &summary, first_line)
         };
     }
     // Only emit on completion to avoid duplicate logs as state transitions.
@@ -326,9 +325,9 @@ fn format_tool_use(part: &RawPart) -> String {
         .map(|v| short_tool_summary(&tool, v))
         .unwrap_or_default();
     if summary.is_empty() {
-        format!("\u{2192} {}\n", tool)
+        crate::prompts::tool_completed_no_summary(&tool)
     } else {
-        format!("\u{2192} {} {}\n", tool, summary)
+        crate::prompts::tool_completed_with_summary(&tool, &summary)
     }
 }
 

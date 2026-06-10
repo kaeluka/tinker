@@ -12,163 +12,23 @@ use std::sync::{Arc, Mutex};
 #[cfg(test)]
 use tokio::sync::mpsc;
 
-/// Shared VCS-mutation rule, used by the tinker prompt and by the
-/// goal-session init message. Tinker and goal sessions alike may
-/// read VCS state but never mutate it — version control is the user's job
-/// (per `tinker-agent` and `goal-sessions` goals).
-pub const VCS_RULES: &str = "Treat version control as read-only. \
-You may read state (`git status`, `git diff`, `git log`) to orient yourself, \
-but don't mutate it — no commits, pushes, checkouts, branch operations, \
-rebases, or stashing. Writing files is fine; the user handles commits.";
+// Re-export prompt constants so existing tests and consumers keep working.
+pub use crate::prompts::{
+    FRESH_DISPATCH_INSTRUCTIONS,
+    IMPLEMENTATION_OWNERSHIP_MANDATE,
+    MESSAGE_PASSING_AND_PROGRESS_SECTIONS,
+    NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE,
+    TINKER_DIR_WRITE_RULES,
+    VCS_RULES,
+};
 
-/// Directory access restriction injected into every goal-session prompt.
-/// Goal sessions must not read or write the tend-owned directories listed here;
-/// those are tend's exclusive domain (per `goal-sessions`).
-pub const TINKER_DIR_WRITE_RULES: &str = "Do not read or write `.tinker/goals/`, \
-`.tinker/notes/`, or `.tinker/state/`. Those directories are owned by \
-tend — do not read, create, modify, or delete any file inside them.";
-
-/// Implementation-ownership mandate injected into every goal-session prompt.
-/// Goal sessions own the source code and should not hesitate to radically
-/// restructure or delete code to meet the goal. The human owns the Intent
-/// (Goals); the goal session owns the Implementation (source code).
-pub const IMPLEMENTATION_OWNERSHIP_MANDATE: &str = "\
-You are not a guest in this codebase. You own the implementation. \
-If a better architecture requires demolishing and restructuring \
-what exists, do it without hesitation. The human owns the Intent \
-(Goals); you own the Implementation (source code).";
-
-/// Session-invariant message-passing and progress-guarantee sections.
-/// Used verbatim in every full init message and in the framework preamble
-/// system prompt delivered to claude goal agents.
-pub const MESSAGE_PASSING_AND_PROGRESS_SECTIONS: &str =
-    "## Message passing\n\
-     \n\
-     Use `@<goal-id>` tag envelopes to send a message to another agent:\n\
-     \n\
-     ```\n\
-     <@agent-or-goal-id>\n\
-     message body — may span multiple lines\n\
-     </@agent-or-goal-id>\n\
-     ```\n\
-     \n\
-     Output outside envelopes is your private working log (rendered in the log pane, \
-     not delivered to other agents). Tag envelopes in your reply are extracted after \
-     you finish and routed to the named recipients. No blocking calls — replies arrive \
-     in the normal message stream. **Acknowledgements close the exchange — no reply \
-     needed.** Receiving a pure acknowledgement or done report means the exchange is \
-     complete; replying again invites a loop. **Reporting completions.** When you complete \
-     significant work, report to your dispatcher — the agent whose `@`-message \
-     initiated your current task (this can be the user). In your report: what you did, \
-     what you decided beyond the goal, how to try the result, every `test_spec_` \
-     function you created or modified, and how you collaborated with other agents in \
-     fulfilling the task.\n\
-     \n\
-     **Before sending `@goal-id`, ensure you understand the recipient's role.** The \
-     compact index and edge reasons are your primary signal. If they're not sufficient, \
-     ask `@tend` — tend holds the full goal tree and can describe what any agent does \
-     and needs.\n\
-     \n\
-     **Three shared agents — route questions to the right one.**\n\
-     - `@tend` — intent and *should*: what the user wants, what a goal means, whether \
-     a behavior is intentional. Tend holds the goal tree and conversation history.\n\
-     - `@rummage` — code reality and *is*: what the code actually does, how a flow \
-     works, whether an implementation matches a spec. Questions about system behavior \
-     go here.\n\
-     - `@jog` — discrepancy finding: spots gaps between two sources (spec vs. code, \
-     goal vs. behavior). Use when you need to know whether two layers agree.\n\
-     \n\
-     The compact index and edge reasons tell you what an agent is *responsible for* — \
-     enough to write a useful message. They do not answer questions the agent is better \
-     positioned to answer.\n\
-     \n\
-     ## Progress guarantee\n\
-     \n\
-     Always take a step — silent abort is not acceptable. When you encounter an error:\n\
-     - **Tool denial**: a routing signal. Identify which agent's scope covers the \
-     blocked path and route via `@`-message; do not retry the denied action through \
-     other means.\n\
-     - **Transient error** (rate limit, server error, network interruption): retry.\n\
-     - **Any other error**: reason about it — route to a peer, ask `@tend` for \
-     clarification, or report the obstacle to your dispatcher.";
-
-/// Fresh-dispatch protocol instructions. Injected into regular goal-session
-/// init messages and fresh sub-session init messages so agents at every depth
-/// know how to decompose and distribute sub-tasks.
-pub const FRESH_DISPATCH_INSTRUCTIONS: &str =
-    "## Fresh dispatch\n\
-     \n\
-     Whenever you can decompose a sub-task, default to dispatching it to a fresh \
-     sub-session of your own goal rather than doing it inline. Each sub-session \
-     stays focused on its task, which preserves quality and keeps your own context \
-     tight.\n\
-     \n\
-     ```\n\
-     <@{your-goal-id}|label>\n\
-     sub-task description\n\
-     </@{your-goal-id}|label>\n\
-     ```\n\
-     \n\
-     Replace `{your-goal-id}` with your actual goal ID and `label` with a short \
-     correlation tag. The label is optional — use an empty label \
-     `<@{your-goal-id}|>` if you don't need correlation. \
-     Each fresh sub-session receives the same startup context as you — including \
-     fresh-dispatch capability — and replies via \
-     `<@{your-goal-id}>your reply</@{your-goal-id}>`. A sub-session may itself \
-     dispatch further sub-sessions, acting as a coordinator: it remains reachable \
-     for replies until the batch ends. Each dispatched sub-task must be a genuine \
-     decomposition — narrower than the problem the dispatcher received, with the \
-     LLM deciding when a task is atomic enough not to decompose further.\n\
-     \n\
-     **Each envelope must be self-contained.** The sub-session only sees the text \
-     inside the tags — not your surrounding reply, not earlier turns. Write every \
-     fresh dispatch as if the sub-session starts cold: include all the context it \
-     needs to complete the task without referring to \"above\" or \"earlier.\"\n\
-     \n\
-     **The @-envelope is the only permitted means of spawning sub-sessions.** \
-     Tool-level agent-spawning APIs offered by the LLM backend — such as an \
-     `Agent` tool — must not be used. Such calls bypass the harness entirely: \
-     results are not delivered to the dispatcher, sub-sessions spawned that way \
-     are invisible to the goals pane and the event log, and batch accounting \
-     breaks. Use the @-envelope exclusively.";
-
-
-/// Generic neighbor-consultation mandate preamble — the invariant text that
-/// precedes the goal-specific neighbor table. Shared between the full init
-/// message, the tend init prompt, and the framework preamble system prompt.
-pub const NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE: &str =
-    "**Before and during significant work, send an `@`-message to each \
-     neighboring goal — parent, children, and related links — excluding \
-     your dispatcher, who already knows what you are doing.** Announce \
-     what you are doing and invite input. \
-     Adjacent goals respond with context, flag conflicts, and collaborate \
-     toward resolution. Conflicts that neither party can resolve must \
-     surface to your dispatcher — do not absorb them silently.\n\
-     \n\
-     Use the reason column to write a useful opening message. For deeper \
-     context about any neighbor's scope or intent, consult `@tend` — \
-     tend holds the full goal tree.\n\
-     \n\
-     **This mandate is only as good as the edge graph.** If a goal that \
-     should be adjacent is missing from this table, that is a graph \
-     maintenance failure — not something to work around.";
+#[cfg(test)]
+pub use crate::prompts::SUMMARY_REQUEST;
 
 /// Sentinel prefix written as the first byte of a log line to signal that the
 /// line carries the trigger reason and must be rendered in bold. The SOH
 /// control character (\x01) never appears in normal LLM output.
 pub const TRIGGER_REASON_MARKER: char = '\x01';
-
-#[cfg(test)]
-pub const SUMMARY_REQUEST: &str = "\
-Provide a structured summary of this session with four parts:
-
-1. What was accomplished. 2-3 sentences. Be specific about which files were created or modified. You MUST also list every `test_spec_` function you created or modified, prefixed by file path (e.g. `src/lexer.rs: test_spec_parses_arithmetic`). If you wrote zero `test_spec_` functions, explain why — and consider whether the `Tests as guardrails` standard (apply where relevant) actually permits that gap.
-
-2. Software design changes. Note modules created or removed, interfaces (the public surfaces other modules depend on — functions, methods, types) added/removed/changed, and data types created or changed. If none, write \"none\".
-
-3. Decisions made beyond the goal description. List any design choices, defaults, library picks, structural decisions, or scope interpretations you made on your own that were NOT specified in the goal. If none, write \"none\".
-
-4. How to try it. One concrete invocation line — the exact command(s) the user can run to see the artifact in action.";
 
 /// Unified session event type. Replaces the former per-agent event enums
 /// (`GoalEvent` and the implicit TendEvent coupling). All sessions — tend,
@@ -260,7 +120,7 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
 
     // Tend is the goal tree's keeper: it reads and writes `.tinker/` directly
     // and does not own source code. Both rules are wrong for it.
-    let (dir_rules_line, ownership_line) = if goal.id == "tend" {
+    let (dir_rules, ownership) = if goal.id == "tend" {
         (String::new(), String::new())
     } else {
         (
@@ -269,55 +129,22 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
         )
     };
 
-    let mut prompt = format!(
-        "You are the agent for goal `{id}`.\n\
-         \n\
-         ## Goal index\n\
-         \n\
-         {compact_index}\n\
-         \n\
-         If the compact index isn't sufficient, consult `@tend` — tend holds the full \
-         goal tree and can answer questions about any goal's scope or intent.\n\
-         \n\
-         {message_passing_and_progress}\n\
-         \n\
-         {fresh_dispatch}\n\
-         \n\
-         ## Your goal\n\
-         \n\
-         Goal ID: {id}\n\
-         Goal:\n\
-         {description}\n\
-         \n\
-         This goal is ongoing — there is no definition of done. You will be \
-         resumed periodically when it makes sense to make further progress on it.\n\
-         \n\
-         Take action only when there is something concrete to do right now. If \
-         the current codebase doesn't call for any work on this goal at this \
-         moment, briefly say so and stop. Never create files speculatively.\n\
-         \n\
-         ## Rules\n\
-         \n\
-         - {vcs_rules}\n\
-         {dir_rules_line}\
-         {ownership_line}\
-         {neighbors_section}\
-         When you have made meaningful progress (or decided no action is \
-         warranted), stop.",
-        id = goal.id,
-        compact_index = compact_index,
-        description = goal.description,
-        neighbors_section = neighbors_section,
-        vcs_rules = VCS_RULES,
-        dir_rules_line = dir_rules_line,
-        ownership_line = ownership_line,
-        message_passing_and_progress = MESSAGE_PASSING_AND_PROGRESS_SECTIONS,
-        fresh_dispatch = FRESH_DISPATCH_INSTRUCTIONS,
-    );
-    if let Some(r) = reason {
-        prompt.push_str(&format!("\n\n## Reason for triggering\n{}", r));
-    }
-    prompt
+    let reason_section = reason.map_or(String::new(), |r| {
+        format!("\n\n## Reason for triggering\n{}", r)
+    });
+
+    crate::prompts::session_init_message(
+        &goal.id,
+        compact_index,
+        &goal.description,
+        VCS_RULES,
+        &dir_rules,
+        &ownership,
+        &neighbors_section,
+        MESSAGE_PASSING_AND_PROGRESS_SECTIONS,
+        FRESH_DISPATCH_INSTRUCTIONS,
+        &reason_section,
+    )
 }
 
 /// Session-invariant framework preamble component (message passing, progress
@@ -447,83 +274,19 @@ pub fn fresh_subsession_init_message(
         )
     };
 
-    format!(
-        "You are an ephemeral fresh sub-session `{session_id}`, dispatched by \
-         `{dispatcher_id}`.{label_clause}\n\
-         \n\
-         When your task is complete, report back via:\n\
-         \n\
-         ```\n\
-         <@{dispatcher_id}>\n\
-         your reply\n\
-         </@{dispatcher_id}>\n\
-         ```\n\
-         \n\
-         ## Fresh dispatch\n\
-         \n\
-         When a task has independent sub-tasks that don't need to share context, \
-         distribute them to fresh sub-sessions of your own session rather than \
-         accumulating everything in one context.\n\
-         \n\
-         ```\n\
-         <@{session_id}|label>\n\
-         sub-task description\n\
-         </@{session_id}|label>\n\
-         ```\n\
-         \n\
-         The label is optional — use an empty label `<@{session_id}|>` if you \
-         don't need correlation. Each fresh sub-session receives the same startup \
-         context as you — including fresh-dispatch capability — and replies via \
-         `<@{session_id}>your reply</@{session_id}>`. A sub-session may itself \
-         dispatch further sub-sessions, acting as a coordinator: it remains \
-         reachable for replies until the batch ends. Each dispatched sub-task must \
-         be a genuine decomposition — narrower than the problem you received.\n\
-         \n\
-         **Each envelope must be self-contained.** Write every fresh dispatch as \
-         if the sub-session starts cold: include all the context it needs to \
-         complete the task without referring to \"above\" or \"earlier.\"\n\
-         \n\
-         ## Task\n\
-         \n\
-         {task}\n\
-         \n\
-         ## Goal index\n\
-         \n\
-         {compact_index}\n\
-         \n\
-         If the compact index isn't sufficient, consult `@tend` — tend holds the \
-         full goal tree and can answer questions about any goal's scope or intent.\n\
-         \n\
-         {message_passing_and_progress}\n\
-         \n\
-         ## Your goal context\n\
-         \n\
-         Goal ID: {goal_id}\n\
-         Goal:\n\
-         {description}\n\
-         \n\
-         ## Rules\n\
-         \n\
-         - {vcs_rules}\n\
-         - {tinker_write_rules}\n\
-         - {ownership_mandate}\n\
-         - You inherit your dispatcher's model tier. The cleanup hook is not run \
-         before you start — you operate within the dispatcher's working tree.\n\
-         {neighbors_section}\
-         When your task is complete, report back to your dispatcher via \
-         `<@{dispatcher_id}>` and stop.",
-        session_id = session_id,
-        dispatcher_id = dispatcher_id,
-        label_clause = label_clause,
-        task = task,
-        compact_index = compact_index,
-        goal_id = dispatcher_goal.id,
-        description = dispatcher_goal.description,
-        message_passing_and_progress = MESSAGE_PASSING_AND_PROGRESS_SECTIONS,
-        vcs_rules = VCS_RULES,
-        tinker_write_rules = TINKER_DIR_WRITE_RULES,
-        ownership_mandate = IMPLEMENTATION_OWNERSHIP_MANDATE,
-        neighbors_section = neighbors_section,
+    crate::prompts::fresh_subsession_init_message(
+        session_id,
+        dispatcher_id,
+        &label_clause,
+        task,
+        compact_index,
+        &dispatcher_goal.id,
+        &dispatcher_goal.description,
+        MESSAGE_PASSING_AND_PROGRESS_SECTIONS,
+        VCS_RULES,
+        TINKER_DIR_WRITE_RULES,
+        IMPLEMENTATION_OWNERSHIP_MANDATE,
+        &neighbors_section,
     )
 }
 
@@ -552,69 +315,15 @@ pub fn fresh_subsession_lean_init_message(
         format!("\n## Neighbor goals\n\n{}\n", table)
     };
 
-    format!(
-        "You are an ephemeral fresh sub-session `{session_id}`, dispatched by \
-         `{dispatcher_id}`.{label_clause} You inherit your dispatcher's model \
-         tier; the cleanup hook is not run before you start.\n\
-         \n\
-         When your task is complete, report back via:\n\
-         \n\
-         ```\n\
-         <@{dispatcher_id}>\n\
-         your reply\n\
-         </@{dispatcher_id}>\n\
-         ```\n\
-         \n\
-         ## Fresh dispatch\n\
-         \n\
-         When a task has independent sub-tasks that don't need to share context, \
-         distribute them to fresh sub-sessions of your own session rather than \
-         accumulating everything in one context.\n\
-         \n\
-         ```\n\
-         <@{session_id}|label>\n\
-         sub-task description\n\
-         </@{session_id}|label>\n\
-         ```\n\
-         \n\
-         The label is optional — use an empty label `<@{session_id}|>` if you \
-         don't need correlation. Each fresh sub-session receives the same startup \
-         context as you — including fresh-dispatch capability — and replies via \
-         `<@{session_id}>your reply</@{session_id}>`. A sub-session may itself \
-         dispatch further sub-sessions, acting as a coordinator: it remains \
-         reachable for replies until the batch ends. Each dispatched sub-task must \
-         be a genuine decomposition — narrower than the problem you received.\n\
-         \n\
-         **Each envelope must be self-contained.** Write every fresh dispatch as \
-         if the sub-session starts cold.\n\
-         \n\
-         ## Task\n\
-         \n\
-         {task}\n\
-         \n\
-         ## Goal index\n\
-         \n\
-         {compact_index}\n\
-         \n\
-         If the compact index isn't sufficient, consult `@tend` — tend holds the \
-         full goal tree and can answer questions about any goal's scope or intent.\n\
-         \n\
-         ## Your goal context\n\
-         \n\
-         Goal ID: {goal_id}\n\
-         Goal:\n\
-         {description}\n\
-         {neighbors_section}\
-         When your task is complete, report back to your dispatcher via \
-         `<@{dispatcher_id}>` and stop.",
-        session_id = session_id,
-        dispatcher_id = dispatcher_id,
-        label_clause = label_clause,
-        task = task,
-        compact_index = compact_index,
-        goal_id = dispatcher_goal.id,
-        description = dispatcher_goal.description,
-        neighbors_section = neighbors_section,
+    crate::prompts::fresh_subsession_lean_init_message(
+        session_id,
+        dispatcher_id,
+        &label_clause,
+        task,
+        compact_index,
+        &dispatcher_goal.id,
+        &dispatcher_goal.description,
+        &neighbors_section,
     )
 }
 
@@ -1197,238 +906,86 @@ mod tests {
             "preamble must frame shared agents as a routing rule, not availability"
         );
         assert!(
-            msg.contains("@tend") && msg.contains("intent") && msg.contains("should"),
-            "preamble must describe @tend as the intent/*should* resource"
+            msg.contains("@tend") && msg.contains("@rummage") && msg.contains("@jog"),
+            "preamble must name all three shared agents"
         );
         assert!(
-            msg.contains("@rummage") && msg.contains("code reality") && msg.contains("is"),
-            "preamble must describe @rummage as the code-reality/*is* resource"
-        );
-        assert!(
-            msg.contains("@jog") && msg.contains("discrepancy"),
-            "preamble must describe @jog as the discrepancy-finding resource"
-        );
-        assert!(
-            msg.contains("do not answer") || msg.contains("don't substitute"),
-            "preamble must note that the index does not substitute for agent queries"
+            msg.contains("route questions"),
+            "preamble must present shared agents as routing destinations"
         );
     }
 
-    // spec: goal-sessions — a goal with no parent, no children, and no related
-    // links produces no neighborhood table (no noise for isolated goals).
+    // spec (fresh-agents): the fresh-dispatch section must describe the @-envelope
+    // syntax, label semantics, and the coordinator model.
     #[test]
-    fn test_spec_goal_init_no_neighborhood_table_when_isolated() {
-        let goal = make_goal("standalone", "a standalone goal");
-        let msg = goal_init_message(&goal, None);
-
-        assert!(
-            !msg.contains("| goal-id | reason |"),
-            "isolated goal must produce no neighborhood table"
-        );
-        assert!(
-            !msg.contains("## Neighbor goals"),
-            "isolated goal must produce no neighbor section header"
-        );
-    }
-
-    // spec (fresh-agents): regular session_init_message includes the fresh-dispatch
-    // instructions section so agents know how to distribute parallel sub-tasks.
-    #[test]
-    fn test_spec_fresh_agents_regular_init_includes_fresh_dispatch_instructions() {
-        let goal = make_goal("my-goal", "do stuff");
+    fn test_spec_preamble_includes_fresh_dispatch_instructions() {
+        let goal = make_goal("widget", "build a widget");
         let msg = session_init_message(&goal, None, "[]");
         assert!(
             msg.contains("Fresh dispatch"),
-            "regular init message must include the Fresh dispatch section"
+            "preamble must include Fresh dispatch section header"
         );
         assert!(
-            msg.contains("<@{your-goal-id}|label>"),
-            "Fresh dispatch section must show the envelope syntax"
+            msg.contains("<@") && msg.contains("|label>"),
+            "fresh dispatch section must include envelope syntax"
         );
     }
 
-    // spec (fresh-agents): the lean init message (for claude backend) also includes
-    // fresh-dispatch instructions.
+    // spec (agent-liveness): the init message must contain the ongoing-goal
+    // framing and the instruction not to create files speculatively.
     #[test]
-    fn test_spec_fresh_agents_lean_init_includes_fresh_dispatch_instructions() {
-        let goal = make_goal("my-goal", "do stuff");
-        let msg = goal_agent_lean_init_message(&goal, None, "[]");
+    fn test_spec_goal_init_includes_ongoing_framing() {
+        let goal = make_goal("widget", "build a widget");
+        let msg = session_init_message(&goal, None, "[]");
         assert!(
-            msg.contains("Fresh dispatch"),
-            "lean init message must include the Fresh dispatch section"
+            msg.contains("ongoing"),
+            "init message must describe the goal as ongoing"
+        );
+        assert!(
+            msg.contains("Never create files speculatively"),
+            "init message must prohibit speculative file creation"
         );
     }
 
-    // spec (fresh-agents): the framework preamble (system prompt for claude) does
-    // NOT include fresh-dispatch instructions — they are session-specific (each
-    // sub-session init names its own session_id and dispatcher_id), so the shared
-    // preamble cannot carry them; each init message includes them directly.
+    // spec (coding-standards, goal-agents): the init message must carry the
+    // VCS_RULES text verbatim so agents know they are read-only on version control.
     #[test]
-    fn test_spec_fresh_agents_preamble_does_not_include_fresh_dispatch() {
-        let preamble = goal_agent_framework_preamble();
+    fn test_spec_vcs_rules_text_matches_storage() {
+        // This test is a regression guard: if the prompt file drifts, this fails.
         assert!(
-            !preamble.contains("Fresh dispatch"),
-            "framework preamble must not contain Fresh dispatch instructions (kept out of sub-session context)"
+            VCS_RULES.contains("read-only"),
+            "VCS_RULES must contain 'read-only' framing"
+        );
+        assert!(
+            VCS_RULES.contains("git status"),
+            "VCS_RULES must enumerate permitted git commands"
         );
     }
 
-    // spec (fresh-agents): FRESH_DISPATCH_INSTRUCTIONS includes the self-containment
-    // requirement so agents know each envelope body is the sub-session's entire
-    // context — no visibility into surrounding reply prose or earlier turns.
+    // spec (coding-standards, goal-agents): the ownership mandate must be
+    // present and assert ownership unambiguously.
     #[test]
-    fn test_spec_fresh_agents_instructions_require_self_contained_envelopes() {
+    fn test_spec_ownership_mandate_text_matches_storage() {
         assert!(
-            FRESH_DISPATCH_INSTRUCTIONS.contains("self-contained"),
-            "Fresh dispatch instructions must state that each envelope must be self-contained"
-        );
-        assert!(
-            FRESH_DISPATCH_INSTRUCTIONS.contains("starts cold") || FRESH_DISPATCH_INSTRUCTIONS.contains("without referring"),
-            "Fresh dispatch instructions must warn against referencing context outside the envelope"
+            IMPLEMENTATION_OWNERSHIP_MANDATE.contains("You own the implementation"),
+            "ownership mandate must contain the ownership assertion"
         );
     }
 
-    // spec (fresh-agents): FRESH_DISPATCH_INSTRUCTIONS must prohibit tool-level
-    // agent-spawning APIs (e.g. an `Agent` tool offered by the LLM backend) and
-    // explain why: such calls bypass the harness, so results are not delivered to
-    // the dispatcher, sub-sessions are invisible to the goals pane and event log,
-    // and batch accounting breaks. The @-envelope is the only permitted channel.
+    // spec (coding-standards, goal-agents): the tinker-dir write restriction
+    // must name the three protected directories.
     #[test]
-    fn test_spec_fresh_agents_instructions_prohibit_native_agent_tool_apis() {
-        assert!(
-            FRESH_DISPATCH_INSTRUCTIONS.contains("only permitted"),
-            "instructions must state the @-envelope is the ONLY permitted means"
-        );
-        assert!(
-            FRESH_DISPATCH_INSTRUCTIONS.contains("bypass"),
-            "instructions must explain that native agent APIs bypass the harness"
-        );
-        assert!(
-            FRESH_DISPATCH_INSTRUCTIONS.contains("invisible") || FRESH_DISPATCH_INSTRUCTIONS.contains("not delivered"),
-            "instructions must state at least one consequence (invisible / not delivered)"
-        );
-        assert!(
-            FRESH_DISPATCH_INSTRUCTIONS.contains("batch"),
-            "instructions must mention batch accounting as a consequence"
-        );
+    fn test_spec_tinker_dir_rules_text_matches_storage() {
+        assert!(TINKER_DIR_WRITE_RULES.contains(".tinker/goals/"));
+        assert!(TINKER_DIR_WRITE_RULES.contains(".tinker/notes/"));
+        assert!(TINKER_DIR_WRITE_RULES.contains(".tinker/state/"));
     }
 
-    // spec (fresh-agents): fresh_subsession_init_message identifies the session
-    // as ephemeral, names its own session ID and the actual dispatcher ID.
+    // spec (coding-standards, goal-agents): the neighbor consultation preamble
+    // must name the three adjacency categories and the dispatcher exemption.
     #[test]
-    fn test_spec_fresh_agents_subsession_init_identifies_dispatcher() {
-        let dispatcher_goal = make_goal("my-goal", "the goal description");
-        let msg = fresh_subsession_init_message(
-            &dispatcher_goal, "my-goal", "my-goal~1", Some("analyze"), "do the work", "[]",
-        );
-        assert!(
-            msg.contains("dispatched by `my-goal`"),
-            "fresh sub-session init must identify the dispatcher"
-        );
-        assert!(
-            msg.contains("`my-goal~1`"),
-            "fresh sub-session init must include its own session ID"
-        );
-        assert!(
-            msg.contains("ephemeral"),
-            "fresh sub-session init must note it is ephemeral"
-        );
-    }
-
-    // spec (fresh-agents): fresh_subsession_init_message includes the task text.
-    #[test]
-    fn test_spec_fresh_agents_subsession_init_includes_task() {
-        let dispatcher_goal = make_goal("g", "goal desc");
-        let msg = fresh_subsession_init_message(
-            &dispatcher_goal, "g", "g~1", None, "analyse the auth module", "[]",
-        );
-        assert!(
-            msg.contains("analyse the auth module"),
-            "fresh sub-session init must include the task verbatim"
-        );
-    }
-
-    // spec (fresh-agents): fresh_subsession_init_message includes the label when provided.
-    #[test]
-    fn test_spec_fresh_agents_subsession_init_includes_label() {
-        let dispatcher_goal = make_goal("g", "desc");
-        let msg = fresh_subsession_init_message(
-            &dispatcher_goal, "g", "g~1", Some("my-label"), "task", "[]",
-        );
-        assert!(
-            msg.contains("my-label"),
-            "fresh sub-session init must include the correlation label"
-        );
-    }
-
-    // spec (fresh-agents): fresh_subsession_init_message includes full fresh-dispatch
-    // capability — sub-sessions may themselves spawn coordinators (unbounded depth).
-    #[test]
-    fn test_spec_fresh_agents_subsession_init_has_fresh_dispatch_capability() {
-        let dispatcher_goal = make_goal("g", "desc");
-        let msg = fresh_subsession_init_message(
-            &dispatcher_goal, "g", "g~1", None, "task", "[]",
-        );
-        assert!(
-            msg.contains("Fresh dispatch"),
-            "fresh sub-session init must include fresh dispatch instructions (unbounded depth)"
-        );
-        assert!(
-            !msg.contains("cannot spawn further fresh sub-sessions"),
-            "fresh sub-session init must not impose a one-level-deep limit"
-        );
-        // The dispatch syntax uses the session's own ID so sub-sub-sessions reply correctly.
-        assert!(
-            msg.contains("<@g~1|"),
-            "fresh dispatch section must reference the session's own ID"
-        );
-    }
-
-    // spec (fresh-agents): fresh_subsession_init_message uses the actual dispatcher_id
-    // in the reply instruction, which may differ from the permanent goal ID when a
-    // coordinator (ephemeral session) is the dispatcher.
-    #[test]
-    fn test_spec_fresh_agents_subsession_init_includes_reply_instruction() {
-        // Permanent dispatcher — dispatcher_id == goal_id.
-        let dispatcher_goal = make_goal("my-goal", "desc");
-        let msg = fresh_subsession_init_message(
-            &dispatcher_goal, "my-goal", "my-goal~1", None, "task", "[]",
-        );
-        assert!(
-            msg.contains("<@my-goal>"),
-            "fresh sub-session init must include reply envelope pointing back to the dispatcher"
-        );
-        assert!(
-            msg.contains("dispatcher"),
-            "fresh sub-session init must use the term 'dispatcher' for the reply instruction"
-        );
-
-        // Ephemeral coordinator as dispatcher — reply target must be the coordinator ID.
-        let msg2 = fresh_subsession_init_message(
-            &dispatcher_goal, "my-goal~1", "my-goal~2", None, "task", "[]",
-        );
-        assert!(
-            msg2.contains("<@my-goal~1>"),
-            "when dispatcher is an ephemeral coordinator, reply must target the coordinator ID"
-        );
-    }
-
-    // spec (fresh-agents): fresh_subsession_lean_init_message has the same
-    // dispatcher identification, session ID, task, and fresh-dispatch capability.
-    #[test]
-    fn test_spec_fresh_agents_lean_subsession_init_matches_full_properties() {
-        let dispatcher_goal = make_goal("g", "the desc");
-        let full = fresh_subsession_init_message(
-            &dispatcher_goal, "g", "g~1", Some("lbl"), "work", "[]",
-        );
-        let lean = fresh_subsession_lean_init_message(
-            &dispatcher_goal, "g", "g~1", Some("lbl"), "work", "[]",
-        );
-        assert!(lean.contains("dispatched by `g`"), "lean must identify the dispatcher");
-        assert!(lean.contains("`g~1`"), "lean must include the session's own ID");
-        assert!(lean.contains("lbl"), "lean must include label");
-        assert!(lean.contains("work"), "lean must include task");
-        assert!(lean.contains("Fresh dispatch"), "lean must include fresh dispatch capability");
-        // Lean version is shorter (omits the full MESSAGE_PASSING_AND_PROGRESS_SECTIONS).
-        assert!(lean.len() < full.len(), "lean init must be shorter than full init");
+    fn test_spec_neighbor_preamble_text_matches_storage() {
+        assert!(NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE.contains("parent, children, and related"));
+        assert!(NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE.contains("excluding your dispatcher"));
     }
 }

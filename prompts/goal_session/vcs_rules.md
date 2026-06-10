@@ -1,0 +1,1 @@
+Treat version control as read-only. You may read state (`git status`, `git diff`, `git log`) to orient yourself, but don't mutate it — no commits, pushes, checkouts, branch operations, rebases, or stashing. Writing files is fine; the user handles commits.

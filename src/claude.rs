@@ -156,7 +156,7 @@ impl OpenCodeRunner for ClaudeRunner {
         let status = child.wait().await?;
         let stderr_text = stderr_collector.await.unwrap_or_default();
         if !stderr_text.is_empty() {
-            on_chunk(format!("\n\u{2030} stderr: {}\n", stderr_text.trim()));
+            on_chunk(crate::prompts::stderr_prefix(stderr_text.trim()));
         }
 
         // On non-zero exit with stderr output, re-inject the error into the
@@ -169,10 +169,9 @@ impl OpenCodeRunner for ClaudeRunner {
                 session_id
             };
             if let Some(sid) = effective_sid {
-                let error_msg = format!(
-                    "[process error — exit code {}]\n{}\n",
+                let error_msg = crate::prompts::process_error(
                     status.code().unwrap_or(-1),
-                    stderr_text.trim()
+                    stderr_text.trim(),
                 );
                 // Error-reinjection resumes the session — use the struct-level
                 // system prompt (for tend) or None (for goal agents).
@@ -238,9 +237,9 @@ fn format_tool_use(content: &ClaudeContent) -> String {
         .map(|v| short_tool_summary(&tool, v))
         .unwrap_or_default();
     if summary.is_empty() {
-        format!("\u{2192} {}\n", tool)
+        crate::prompts::tool_completed_no_summary(&tool)
     } else {
-        format!("\u{2192} {} {}\n", tool, summary)
+        crate::prompts::tool_completed_with_summary(&tool, &summary)
     }
 }
 
@@ -264,7 +263,7 @@ fn format_tool_result_error(content: &ClaudeContent) -> String {
         return String::new();
     }
     let first_line = text.lines().next().unwrap_or(&text);
-    format!("\u{26A0} {}\n", first_line)
+    crate::prompts::tool_result_error(first_line)
 }
 
 /// Pull a useful one-liner out of a tool's input args.

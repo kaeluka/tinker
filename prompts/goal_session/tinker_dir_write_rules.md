@@ -1,0 +1,1 @@
+Do not read or write `.tinker/goals/`, `.tinker/notes/`, or `.tinker/state/`. Those directories are owned by tend — do not read, create, modify, or delete any file inside them.

@@ -158,3 +158,7 @@ reason = "tier-edit owns the TUI keybinding that mutates the tier field this goa
 [[related]]
 id = "fresh-agents"
 reason = "fresh-agents adds an ephemeral entry type to the session registry — sub-sessions that appear during a batch and are retired on batch-start; the session lifecycle this goal governs applies to both permanent and ephemeral entries."
+
+[[related]]
+id = "prompt-storage"
+reason = "prompt-storage owns the raw prompt text this goal's builder functions assemble into messages — session init templates, framework preamble constants, delivery messages, silence nudges, reply-compliance templates, and parse-correction prompts are loaded from prompt-storage rather than hardcoded."

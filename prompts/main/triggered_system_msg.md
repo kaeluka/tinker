@@ -1,0 +1,1 @@
+triggered: `{GOAL_ID}`{REASON_SUFFIX}

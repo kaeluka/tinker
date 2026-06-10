@@ -1,0 +1,33 @@
+id = "reply-compliance"
+kind = "feature"
+summary = "This goal owns the guarantee that every reply to a dispatched message arrives at its destination: the prompting strategy that makes the reply format salient, and the recovery mechanism that re-sends the original message when a reply doesn't arrive."
+description = """
+## WHAT
+
+This goal owns the guarantee that every reply to a dispatched message
+arrives at its destination. When an agent receives a message and
+produces a response, that response reaches the dispatcher. The
+guarantee covers both the format requirement (replies must be wrapped
+in the correct envelope) and the recovery mechanism (when a reply
+doesn't arrive, the system re-sends the original message).
+
+## WHY
+
+A dispatched message expects a reply. When the reply doesn't arrive,
+the dispatcher stalls and the chain breaks. The user is the only one
+who can notice — and that is tinker's operational burden leaking onto
+the person it serves. The dispatch was sent for a reason; losing its
+reply loses work the system was asked to do.
+"""
+
+[[related]]
+id = "agent-liveness"
+reason = "reply-compliance closes the silent-abort gap in agent-liveness's progress guarantee — a reply that omits the envelope is a step the dispatcher never receives."
+
+[[related]]
+id = "peer-consult"
+reason = "peer-consult owns the envelope detection and routing protocol; reply-compliance ensures agents produce the envelopes peer-consult needs to route. peer-consult governs the channel; this goal governs compliance with it."
+
+[[related]]
+id = "goal-agents"
+reason = "the reply-format requirement is communicated in the framework preamble that goal-agents constructs; changes to how the requirement is communicated are changes to that preamble."

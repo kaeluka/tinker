@@ -1,0 +1,1 @@
+Goal file invalid; asking tend to fix (attempt {ATTEMPT}/2).

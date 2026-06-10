@@ -83,6 +83,12 @@ CLI argument handling: validates incoming flags against the recognised set, unkn
 
 - `src/main.rs` — `print_help()` and the argument parsing block in `main()`
 
+### prompt-storage
+On-disk prompt storage: LLM-facing prompt strings extracted from inline source literals into the `prompts/` directory, embedded at compile time via `include_str!` and filled by `src/prompts.rs`.
+
+- `src/prompts.rs` — prompt loading and templating module (`include_str!`s each file under `prompts/` and interpolates `{PLACEHOLDER}` variables via `str::replace`)
+- `prompts/` directory — extracted prompt files grouped by consumer module (`goal_session/`, `backends/`, `main/`, `cleanup/`, `config/`), plain text with `{PLACEHOLDER}` interpolation syntax
+
 ---
 
 ## Shared infrastructure (no dedicated goal)

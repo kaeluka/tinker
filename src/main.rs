@@ -7,6 +7,7 @@ mod goal;
 mod goal_session;
 mod logger;
 mod opencode;
+mod prompts;
 mod realfs;
 mod repl_buffer;
 mod tui;
@@ -47,32 +48,15 @@ fn packaged_tend_goal() -> Goal {
 /// by the tend goal description (appended below); the file-scope line is the
 /// prompt-level boundary that stands in for harness enforcement.
 fn tend_system_prompt() -> String {
-    format!(
-        "Read and write files ONLY under .tinker/goals/ — nothing outside that path. \
-         src/ and all other directories are off-limits. VCS is read-only: git status/diff/log only.\n\n\
-         {}",
-        packaged_tend_goal().description
-    )
+    prompts::tend_system_prompt(&packaged_tend_goal().description)
 }
 
 fn tend_init_prompt(goals_summary: &str, neighbor_section: &str) -> String {
-    format!(
-        "## Current goals (compact index — pull full text on demand)\n{goals_summary}\n\n\
-         ---\n\n\
-         {neighbor_section}\
-         **Startup.** This is a regular startup. Wait for the user's first instruction — \
-         produce no output, no greeting, no acknowledgement."
-    )
+    prompts::tend_init_prompt(goals_summary, neighbor_section)
 }
 
 fn tend_init_prompt_full_context(goals_summary: &str, neighbor_section: &str) -> String {
-    format!(
-        "## Current goals (full text)\n{goals_summary}\n\n\
-         ---\n\n\
-         {neighbor_section}\
-         **Startup.** This is a regular startup. Wait for the user's first instruction — \
-         produce no output, no greeting, no acknowledgement."
-    )
+    prompts::tend_init_prompt_full_context(goals_summary, neighbor_section)
 }
 
 /// Configuration for spawning an ephemeral fresh sub-session. Produced when
@@ -911,11 +895,7 @@ async fn run_loop(
                     };
                     if goal_exists {
                         let reason_str = reason.clone().unwrap_or_default();
-                        let sys_msg = format!(
-                            "triggered: `{}`{}",
-                            goal_id,
-                            reason.as_ref().map(|r| format!(": {}", r)).unwrap_or_default(),
-                        );
+                        let sys_msg = prompts::triggered_system_msg(&goal_id, &reason_str);
                         let submission_sets_running = matches!(goal_id.as_str(), "tend" | "rummage" | "jog");
                         {
                             let mut a = app.lock().unwrap();
@@ -1186,10 +1166,7 @@ fn dispatch_peer_consultations(
     log: &logger::LogSender,
 ) {
     for (recipient, msg) in consultations {
-        let formatted = format!(
-            "[from {}] {}\n\nIf you complete work based on this message: once you are done with this, reply via @{}.",
-            sender, msg, sender
-        );
+        let formatted = prompts::delivery_message(sender, msg);
         let sys = format!("<@{}> → <@{}>: {}", sender, recipient, msg);
         app.push_system_message(&sys);
         log.emit(sender, logger::LogEvent::TinkerSystemMessageReceived { content: sys });
@@ -1209,12 +1186,9 @@ fn dispatch_peer_consultations(
             if tx.send(formatted).is_err() {
                 // The recipient's session task has exited and its channel is closed.
                 // Surface this as a system message so the user can see the lost delivery.
-                let warn = format!(
-                    "⚠ <@{}> → @{}: delivery lost — session receiver dropped (agent may have exited)",
-                    sender, recipient
-                );
-                app.push_system_message(&warn);
-                log.emit(sender, logger::LogEvent::TinkerSystemMessageReceived { content: warn });
+                let warn = prompts::delivery_lost_warning(sender, recipient);
+                app.push_system_message(warn.trim_end());
+                log.emit(sender, logger::LogEvent::TinkerSystemMessageReceived { content: warn.trim_end().to_string() });
             }
         } else if app.goals.iter().any(|g| &g.id == recipient) {
             let _ = goal_spawn_tx.send(SpawnGoalRequest {
@@ -1262,14 +1236,14 @@ fn check_and_emit_batch_transition(
     let now_active = !app.running_sessions.is_empty();
     if now_active && !*batch_active {
         *batch_active = true;
-        let msg = "— batch active —";
+        let msg = prompts::batch_active_msg().trim_end();
         app.push_system_message(msg);
         log.emit("harness", logger::LogEvent::BatchTransition {
             direction: "idle_to_active".to_string(),
         });
     } else if !now_active && *batch_active {
         *batch_active = false;
-        let msg = "— batch idle —";
+        let msg = prompts::batch_idle_msg().trim_end();
         app.push_system_message(msg);
         log.emit("harness", logger::LogEvent::BatchTransition {
             direction: "active_to_idle".to_string(),
@@ -1371,20 +1345,9 @@ fn handle_session_event(
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
-                    let msg = format!(
-                        "The goal file you just edited failed to parse:\n\n{}\n\n\
-                         Read the file, identify the structural error (typical causes: \
-                         unclosed `\"\"\"`, a duplicate top-level key, or content placed \
-                         inside the description block instead of after its closing `\"\"\"`), \
-                         and rewrite the full file with the Write tool. The file must have \
-                         these top-level keys in order: {}.",
-                        listing, goal::GOAL_SCHEMA_KEYS_ORDER,
-                    );
+                    let msg = prompts::parse_correction(&listing, goal::GOAL_SCHEMA_KEYS_ORDER);
                     app.correction_attempts += 1;
-                    let correction_msg = format!(
-                        "Goal file invalid; asking tend to fix (attempt {}/2).",
-                        app.correction_attempts
-                    );
+                    let correction_msg = prompts::parse_correction_system_msg(app.correction_attempts);
                     app.push_system_message(&correction_msg);
                     log.emit("correction-injector", logger::LogEvent::TinkerSystemMessageReceived { content: correction_msg });
                     if let Some(tx) = session_senders.get("tend") {
@@ -1392,7 +1355,7 @@ fn handle_session_event(
                     }
                     return;
                 } else if !new_errors.is_empty() {
-                    let still_invalid_msg = "Goal file still invalid after 2 attempts; leaving as-is. Edit manually if needed.";
+                    let still_invalid_msg = prompts::parse_correction_gave_up().trim_end();
                     app.push_system_message(still_invalid_msg);
                     log.emit("correction-injector", logger::LogEvent::TinkerSystemMessageReceived { content: still_invalid_msg.to_string() });
                 }
@@ -1499,8 +1462,7 @@ fn handle_session_event(
             if session_text.trim().is_empty()
                 && let Some(tx) = session_senders.get(&goal_id) {
                     let _ = tx.send(
-                        "You produced no response to the previous message. \
-                         Did you mean to say something?".to_string()
+                        prompts::silence_nudge().trim_end().to_string()
                     );
                 }
         }

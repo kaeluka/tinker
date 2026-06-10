@@ -1,0 +1,1 @@
+Goal file still invalid after 2 attempts; leaving as-is. Edit manually if needed.

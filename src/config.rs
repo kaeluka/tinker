@@ -61,21 +61,7 @@ pub fn write_starter_template(
     if fs.read_to_string(path).is_ok() {
         return Ok(());
     }
-    let template = format!(
-        "# Model configuration for tinker. Uncomment and edit a slot to override\n\
-         # the built-in default for that tier and backend. Commenting a line out\n\
-         # reverts to the built-in default. Unrecognized model names pass through\n\
-         # to the backend CLI as-is.\n\
-         \n\
-         [claude]\n\
-         # high = {:?}  # tinker, rummage, jog — built-in default\n\
-         # mid  = {:?}  # goal sessions — built-in default\n\
-         # low  = {:?}  # cleanup — built-in default\n\
-         \n\
-         [opencode]\n\
-         # high = {:?}  # tinker, rummage, jog — built-in default\n\
-         # mid  = {:?}  # goal sessions — built-in default\n\
-         # low  = {:?}  # cleanup — built-in default\n",
+    let template = crate::prompts::config_starter_template(
         claude_defaults[0],
         claude_defaults[1],
         claude_defaults[2],

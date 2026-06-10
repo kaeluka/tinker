@@ -90,3 +90,7 @@ reason = "goal-agents defines the uniform session registry and unified runner ta
 [[related]]
 id = "peer-consult"
 reason = "peer-consult's envelope extraction and no-drop delivery guarantee operate on the finalized output this goal's backends deliver; when output buffering or delivery changes, the complete-output invariant peer-consult's scanning depends on must be preserved."
+
+[[related]]
+id = "prompt-storage"
+reason = "prompt-storage owns the error reinjection templates this goal re-injects into sessions when a CLI process exits with an error or produces stderr output."

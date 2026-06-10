@@ -1,0 +1,44 @@
+id = "prompt-storage"
+kind = "feature"
+summary = "This goal owns the prompt-text storage layer: the file-based storage of all LLM-facing prompts with visible templating for dynamic parts, consumed by every goal that sends text to the LLM."
+description = """
+## WHAT
+
+All prompts that go into the LLM are held as a reviewable artifact —
+a single location where each prompt can be inspected, compared, and
+iterated on without navigating through source code. Dynamic parts are
+templated, with the template variables visible alongside the text.
+
+This goal owns the storage mechanism: file loading, compile-time
+inclusion, and the templating contract for dynamic interpolation. It
+does not decide which prompts exist, when they are sent, or what they
+contain — consumers own the content and assembly logic. For example,
+goal-agents owns the framework preamble's semantics and structure;
+prompt-storage owns where the raw text lives and how it is loaded.
+
+## WHY
+
+Prompt optimization requires seeing what the LLM actually receives as
+a whole. When prompt strings are scattered across source files with no
+single view, iteration is slow and review is difficult — you cannot
+compare two prompts side by side or read the full prompt surface
+without navigating through code.
+
+"""
+parent_id = ""
+
+[[related]]
+id = "goal-agents"
+reason = "goal-agents is the primary consumer: session init templates, framework preamble constants, delivery messages, silence nudges, reply-compliance templates, and parse-correction prompts are all assembled by goal-agents' builder functions."
+
+[[related]]
+id = "backends"
+reason = "backends consumes error reinjection templates — the strings re-injected into sessions when a CLI process exits with an error or produces stderr output."
+
+[[related]]
+id = "cleanup-hook"
+reason = "cleanup-hook consumes the cleanup agent prompt — the instructions dispatched to a cheap agent to remove tinker-test-case markers."
+
+[[related]]
+id = "coding-standards"
+reason = "This goal produces code, which follows coding-standards (capability-based DI, the polymorphism ladder, test_spec_/test_security_ marking, security.md, and the tinker-test-case: convention). Asymmetric: coding-standards is a packaged ancestor-scope standard and carries no back-link."
