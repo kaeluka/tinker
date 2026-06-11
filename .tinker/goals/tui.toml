@@ -1,6 +1,6 @@
 id = "tui"
 kind = "feature"
-summary = "This goal owns the terminal interface rendering: the two-column layout, goal-list row format including ephemeral sub-sessions accurately nested under their immediate dispatcher at all depths, the goal-detail header, goal-ID visual consistency, per-session conversation views, active-session switching, session log access for both permanent and ephemeral sessions, the options dialog, queue and trigger-reason display, goals-pane label normalization for ephemeral sessions, and scroll behavior."
+summary = "This goal owns the terminal interface rendering: the two-column layout, goal-list row format including ephemeral sub-sessions accurately nested under their immediate dispatcher at all depths with label-first display when a label is provided and pane-label normalization to the root permanent goal name, the goal-detail header, goal-ID visual consistency, per-session conversation views, active-session switching, session log access for both permanent and ephemeral sessions, the options dialog, queue and trigger-reason display, and scroll behavior."
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left
@@ -73,7 +73,7 @@ invocation for that goal in queue order — running first, then queued
 — each line carrying its glyph or index and trigger reason. The queue
 surface is read-only.
 
-**Ephemeral sub-sessions.** Ephemeral sub-sessions appear in the goal list as soon as they are dispatched — not deferred until the dispatching turn completes. If the dispatching turn ends without a complete envelope for a pre-announced entry, that entry is removed. Sub-sessions nest visually under their immediate dispatcher at all depths: `jog~1~3` appears indented beneath `jog~1`, which appears beneath `jog`. The pane label normalizes to the root permanent goal name.
+**Ephemeral sub-sessions.** Ephemeral sub-sessions appear in the goal list as soon as they are dispatched — not deferred until the dispatching turn completes. If the dispatching turn ends without a complete envelope for a pre-announced entry, that entry is removed. Sub-sessions nest visually under their immediate dispatcher at all depths: `jog~1~3` appears indented beneath `jog~1`, which appears beneath `jog`. The pane label normalizes to the root permanent goal name. When a sub-session was dispatched with an explicit label, the goal-list row displays the label instead of the auto-generated `root~N` index; unlabeled sub-sessions continue to display as `root~N`.
 
 **Options dialog.** Pressing Enter on a goal in the goal list opens
 an options dialog with two fields: a trigger reason and the goal's
@@ -123,7 +123,7 @@ deliberate choice: the user wanted to see what is running without
 being able to cancel or reorder it. Queue control is a separate
 concern, deferred until there is a real need.
 
-Ephemeral sub-sessions appear at dispatch time, not at turn completion, for the same reason the system is meant to be watched while it works: the user needs to see that work is forming, not just that it landed. A burst of entries appearing alongside a finished result gives no signal about what happened in between. Nesting at accurate depth reflects the actual work hierarchy — a sub-session shown flat under the root misrepresents which coordinator owns it and obscures the structure of the running task.
+Ephemeral sub-sessions appear at dispatch time, not at turn completion, for the same reason the system is meant to be watched while it works: the user needs to see that work is forming, not just that it landed. A burst of entries appearing alongside a finished result gives no signal about what happened in between. Nesting at accurate depth reflects the actual work hierarchy — a sub-session shown flat under the root misrepresents which coordinator owns it and obscures the structure of the running task. Label-first display extends the same reasoning to the row itself: if the dispatcher encoded what the sub-session is doing in the label, rendering an opaque index discards that signal.
 
 Goal IDs render bold and state-colored everywhere they appear — list
 rows, the pane label, and any future surface. A goal ID is a stable
@@ -174,4 +174,4 @@ reason = "tend-introspection's introspection substrate captures this goal's stru
 
 [[related]]
 id = "fresh-agents"
-reason = "fresh sub-sessions are visible in the session view while active, appearing at dispatch time rather than at turn completion and nested under their immediate dispatcher at all depths; tui governs how they are rendered, when they appear, and how they are distinguished from permanent sessions."
+reason = "fresh sub-sessions are visible in the session view while active, appearing at dispatch time rather than at turn completion, nested under their immediate dispatcher at all depths, with the pane label normalized to the root permanent goal name and label-first row display when an explicit label is provided; tui governs all rendering details, appearance timing, and distinguishing ephemeral from permanent sessions."

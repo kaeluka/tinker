@@ -31,7 +31,7 @@ reason = "fresh sub-sessions run in the shared main working directory alongside 
 
 [[related]]
 id = "tui"
-reason = "tui governs fresh sub-session display: accurate nesting under the immediate dispatcher at all depths, appearance at dispatch time rather than at turn completion, log access via selection, and pane-label normalization to the root permanent goal name."
+reason = "tui governs fresh sub-session display: accurate nesting under the immediate dispatcher at all depths, appearance at dispatch time rather than at turn completion, log access via selection, pane-label normalization to the root permanent goal name, and label-first row display when an explicit label is provided."
 
 [[related]]
 id = "tend-introspection"

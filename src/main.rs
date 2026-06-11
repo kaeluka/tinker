@@ -1302,6 +1302,7 @@ fn handle_session_event(
                     app.running_sessions.insert(session_id.clone(), None);
                     app.ephemeral_sessions.insert(session_id.clone());
                     app.ephemeral_sessions_ordered.push(session_id.clone());
+                    app.ephemeral_labels.insert(session_id.clone(), label.clone());
                     app.goal_list_scroll.last_total = app.flat_items().len();
                     app.pending_fresh_announcements
                         .entry(goal_id.clone())
@@ -1417,13 +1418,18 @@ fn handle_session_event(
                         app.running_sessions.insert(id.clone(), Some(first_line));
                         app.ephemeral_sessions.insert(id.clone());
                         app.ephemeral_sessions_ordered.push(id.clone());
+                        app.ephemeral_labels.insert(id.clone(), label.clone());
                         app.goal_list_scroll.last_total = app.flat_items().len();
                         id
                     };
                     let first_line = task.lines().next().unwrap_or("").to_string();
+                    let label_clause = match label {
+                        Some(l) if !l.is_empty() => format!(" ({})", l),
+                        _ => String::new(),
+                    };
                     let sys = format!(
-                        "<@{}> → fresh sub-session `{}`: {}",
-                        goal_id, session_id, first_line
+                        "<@{}> → fresh sub-session `{}`{}: {}",
+                        goal_id, session_id, label_clause, first_line
                     );
                     app.push_system_message(&sys);
                     log.emit(
@@ -1450,6 +1456,7 @@ fn handle_session_event(
                         app.ephemeral_sessions.remove(pre_id);
                         app.running_sessions.remove(pre_id);
                         app.ephemeral_sessions_ordered.retain(|id| id != pre_id);
+                        app.ephemeral_labels.remove(pre_id);
                     }
                 }
                 if !pre_announced.is_empty() {

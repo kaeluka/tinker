@@ -9,8 +9,9 @@ use std::time::Instant;
 #[derive(Clone, Debug)]
 pub enum GoalListItem {
     Goal(Goal),
-    /// A fresh sub-session: its full session ID (e.g. `"coding-standards~1"`).
-    Ephemeral(String),
+    /// A fresh sub-session: its full session ID (e.g. `"coding-standards~1"`)
+    /// and an optional correlation label from the dispatcher (the part after `|`).
+    Ephemeral(String, Option<String>),
 }
 
 impl GoalListItem {
@@ -18,7 +19,7 @@ impl GoalListItem {
     pub fn id(&self) -> &str {
         match self {
             Self::Goal(g) => &g.id,
-            Self::Ephemeral(id) => id,
+            Self::Ephemeral(id, _) => id,
         }
     }
 
@@ -208,6 +209,11 @@ pub struct App {
     /// in insertion order so sub-sessions appear in the order they were spawned.
     /// Entries stay until `retire_completed_ephemeral_sessions` removes them.
     pub ephemeral_sessions_ordered: Vec<String>,
+    /// Correlation labels for ephemeral sessions, keyed by session ID.
+    /// Populated when a fresh dispatch is pre-announced or registered at Done
+    /// time; cleaned up when the session is retired. The TUI goal-list renders
+    /// this label instead of the raw session ID when present.
+    pub ephemeral_labels: HashMap<String, Option<String>>,
     /// Monotone counter used to assign unique IDs to fresh sub-sessions.
     pub fresh_session_counter: u64,
     /// Pre-announced ephemeral sessions indexed by their base goal ID.
@@ -258,6 +264,7 @@ impl App {
             agent_msg_idx: HashMap::new(),
             ephemeral_sessions: HashSet::new(),
             ephemeral_sessions_ordered: Vec::new(),
+            ephemeral_labels: HashMap::new(),
             fresh_session_counter: 0,
             pending_fresh_announcements: HashMap::new(),
             werkeln_verb_idx: 0,
@@ -322,6 +329,7 @@ impl App {
             .collect();
         for id in &completed {
             self.ephemeral_sessions.remove(id);
+            self.ephemeral_labels.remove(id);
         }
         self.ephemeral_sessions_ordered.retain(|id| self.ephemeral_sessions.contains(id));
         // Clamp selection in case ephemerals that were selected got retired.
@@ -355,7 +363,8 @@ impl App {
                 .cloned()
                 .collect();
             for (j, child_id) in children.into_iter().enumerate() {
-                items.insert(i + 1 + j, GoalListItem::Ephemeral(child_id));
+                let label = self.ephemeral_labels.get(&child_id).cloned().flatten();
+                items.insert(i + 1 + j, GoalListItem::Ephemeral(child_id, label));
             }
             i += 1;
         }
@@ -373,7 +382,7 @@ impl App {
     pub fn selected_goal(&self) -> Option<Goal> {
         match self.flat_items().into_iter().nth(self.selected_goal)? {
             GoalListItem::Goal(g) => Some(g),
-            GoalListItem::Ephemeral(_) => None,
+            GoalListItem::Ephemeral(_, _) => None,
         }
     }
 

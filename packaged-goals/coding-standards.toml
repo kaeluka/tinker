@@ -22,10 +22,13 @@ Three checks against the recent batch:
 
 1. **Compiler warnings and linters.** Build or check the changed code
    using the project's standard build tool. Treat every compiler warning
-   as a finding: fix actionable warnings; for intentional ones, add the
-   language's suppression directive with a one-line reason. If a dedicated
-   linter is configured for the project, run it too and apply the same
-   fix-or-suppress discipline.
+   as a finding: fix actionable warnings — unused functions, dead imports,
+   and unreachable code are removed, not suppressed. For warnings that
+   cannot be fixed without breaking a legitimate use case, add the
+   language's suppression directive with a justified reason (not just
+   "intentional" — explain why the warning is acceptable here). If a
+   dedicated linter is configured for the project, run it too and apply
+   the same fix-or-suppress discipline.
 
 2. **Style conformance.** Read each modified source file and verify
    it conforms to sections 1–5 below. Fix violations, or surface

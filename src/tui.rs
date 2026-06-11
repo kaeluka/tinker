@@ -470,7 +470,7 @@ fn draw_goal_tree(
     // ephemeral's parent is already in depth_by_id when we reach it.
     let items_for_depth = app.flat_items();
     for item in &items_for_depth {
-        if let GoalListItem::Ephemeral(eph_id) = item {
+        if let GoalListItem::Ephemeral(eph_id, _) = item {
             let parent_id = session_parent_id(eph_id.as_str());
             let parent_depth = depth_by_id.get(parent_id).copied().unwrap_or(0);
             depth_by_id.insert(eph_id.clone(), parent_depth + 1);
@@ -522,7 +522,7 @@ fn draw_goal_tree(
                     }
                     Line::from(spans)
                 }
-                GoalListItem::Ephemeral(session_id) => {
+                GoalListItem::Ephemeral(session_id, label) => {
                     let depth = depth_by_id.get(session_id.as_str()).copied().unwrap_or(1);
                     let is_active = app.running_sessions.contains_key(session_id.as_str());
 
@@ -536,9 +536,13 @@ fn draw_goal_tree(
                     let marker_style = Style::default().fg(Color::DarkGray);
                     let marker_str = if is_active { "▶ " } else { "◉ " };
                     let indent = "  ".repeat(depth);
+                    let display_text = match label {
+                        Some(l) if !l.is_empty() => l.clone(),
+                        _ => session_id.clone(),
+                    };
                     Line::from(vec![
                         Span::styled(format!("{}{}", indent, marker_str), marker_style),
-                        Span::styled(session_id.clone(), id_style),
+                        Span::styled(display_text, id_style),
                     ])
                 }
             }
@@ -583,16 +587,27 @@ fn draw_goal_tree(
             }
             lines
         }
-        Some(GoalListItem::Ephemeral(session_id)) => {
+        Some(GoalListItem::Ephemeral(session_id, label)) => {
             let parent_id = session_parent_id(&session_id);
             let is_active = app.running_sessions.contains_key(session_id.as_str());
+            let label_line = match &label {
+                Some(l) if !l.is_empty() => Some(Line::from(vec![
+                    Span::styled(l.clone(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                ])),
+                _ => None,
+            };
             let header = Line::from(vec![
                 Span::styled(
                     format!("↳ sub-session of {}", parent_id),
                     Style::default().fg(Color::DarkGray),
                 ),
             ]);
-            let mut lines = vec![header, Line::from("")];
+            let mut lines = vec![];
+            if let Some(ll) = label_line {
+                lines.push(ll);
+            }
+            lines.push(header);
+            lines.push(Line::from(""));
             if is_active {
                 let reason = app.running_sessions.get(session_id.as_str())
                     .and_then(|r| r.as_ref())
