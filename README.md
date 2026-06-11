@@ -275,9 +275,14 @@ currently running. The prompt line in the conversation pane shows which
 agent is active. All text areas scroll with the mouse wheel. New content
 follows the bottom of the view unless you scroll up.
 
-Two backends are available:
+Three backends are available:
 - **Default** — uses opencode with configurable models.
 - **Claude** — pass `--claude` to use the Claude CLI directly.
+- **Native** — pass `--native` to talk to OpenRouter directly, with no CLI
+  in between (requires `OPENROUTER_API_KEY`). The agent tool loop runs
+  in-process, which lets tinker enforce per-role capability boundaries in
+  code (tend cannot run bash and writes only under `.tinker/goals/`).
+  Experimental; intended to replace both CLI backends.
 
 ---
 

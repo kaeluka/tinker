@@ -15,6 +15,7 @@ pub struct BackendModelConfig {
 pub struct ModelConfig {
     pub claude: Option<BackendModelConfig>,
     pub opencode: Option<BackendModelConfig>,
+    pub native: Option<BackendModelConfig>,
 }
 
 impl ModelConfig {
@@ -41,6 +42,18 @@ impl ModelConfig {
     pub fn opencode_low<'a>(&'a self, default: &'a str) -> &'a str {
         self.opencode.as_ref().and_then(|c| c.low.as_deref()).unwrap_or(default)
     }
+
+    pub fn native_high<'a>(&'a self, default: &'a str) -> &'a str {
+        self.native.as_ref().and_then(|c| c.high.as_deref()).unwrap_or(default)
+    }
+
+    pub fn native_mid<'a>(&'a self, default: &'a str) -> &'a str {
+        self.native.as_ref().and_then(|c| c.mid.as_deref()).unwrap_or(default)
+    }
+
+    pub fn native_low<'a>(&'a self, default: &'a str) -> &'a str {
+        self.native.as_ref().and_then(|c| c.low.as_deref()).unwrap_or(default)
+    }
 }
 
 // Returns ModelConfig::default() silently when the file is absent or unparseable.
@@ -57,6 +70,7 @@ pub fn write_starter_template(
     path: &Path,
     claude_defaults: [&str; 3],
     opencode_defaults: [&str; 3],
+    native_defaults: [&str; 3],
 ) -> Result<()> {
     if fs.read_to_string(path).is_ok() {
         return Ok(());
@@ -68,6 +82,9 @@ pub fn write_starter_template(
         opencode_defaults[0],
         opencode_defaults[1],
         opencode_defaults[2],
+        native_defaults[0],
+        native_defaults[1],
+        native_defaults[2],
     );
     fs.write(path, &template)
 }
@@ -155,6 +172,7 @@ mod tests {
             &config_path(),
             ["opus", "sonnet", "haiku"],
             ["oc-h", "oc-m", "oc-l"],
+            ["nat-h", "nat-m", "nat-l"],
         )
         .unwrap();
         assert_eq!(fs.read_to_string(&config_path()).unwrap(), "existing content");
@@ -170,11 +188,28 @@ mod tests {
             &config_path(),
             ["opus", "sonnet", "haiku"],
             ["openrouter/h", "openrouter/m", "openrouter/l"],
+            ["nat-h", "nat-m", "nat-l"],
         )
         .unwrap();
         let content = fs.read_to_string(&config_path()).unwrap();
         assert!(content.contains("[claude]"), "must contain [claude] section");
         assert!(content.contains("[opencode]"), "must contain [opencode] section");
+        assert!(content.contains("[native]"), "must contain [native] section");
+    }
+
+    // spec (model-config): the [native] section parses like the other two —
+    // present slots override, absent slots fall back.
+    #[test]
+    fn test_spec_load_model_config_parses_native_slots() {
+        let fs = MockFs::new();
+        fs.add_file(
+            &config_path(),
+            "[native]\nhigh = \"google/gemini-x\"\n",
+        );
+        let cfg = load_model_config(&fs, &config_path());
+        assert_eq!(cfg.native_high("default-h"), "google/gemini-x");
+        assert_eq!(cfg.native_mid("default-m"), "default-m");
+        assert_eq!(cfg.native_low("default-l"), "default-l");
     }
 
     // spec (model-config): the starter template lists all six slot keys.
@@ -186,6 +221,7 @@ mod tests {
             &config_path(),
             ["a", "b", "c"],
             ["x", "y", "z"],
+            ["n1", "n2", "n3"],
         )
         .unwrap();
         let content = fs.read_to_string(&config_path()).unwrap();
@@ -206,6 +242,7 @@ mod tests {
             &config_path(),
             ["opus", "sonnet", "haiku"],
             ["oc-h", "oc-m", "oc-l"],
+            ["nat-h", "nat-m", "nat-l"],
         )
         .unwrap();
         let content = fs.read_to_string(&config_path()).unwrap();
@@ -233,6 +270,7 @@ mod tests {
             &config_path(),
             ["opus", "sonnet", "haiku"],
             ["openrouter/google/gemini", "openrouter/deepseek/flash", "openrouter/google/lite"],
+            ["google/gemini-native", "deepseek/flash-native", "google/lite-native"],
         )
         .unwrap();
         let content = fs.read_to_string(&config_path()).unwrap();
@@ -254,6 +292,7 @@ mod tests {
             &config_path(),
             ["opus", "sonnet", "haiku"],
             ["oc-h", "oc-m", "oc-l"],
+            ["nat-h", "nat-m", "nat-l"],
         )
         .unwrap();
         let content = fs.read_to_string(&config_path()).unwrap();

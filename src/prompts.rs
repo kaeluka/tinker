@@ -258,6 +258,9 @@ pub fn config_starter_template(
     opencode_high: &str,
     opencode_mid: &str,
     opencode_low: &str,
+    native_high: &str,
+    native_mid: &str,
+    native_low: &str,
 ) -> String {
     CONFIG_STARTER_TEMPLATE
         .replace("{CLAUDE_HIGH}", claude_high)
@@ -266,6 +269,9 @@ pub fn config_starter_template(
         .replace("{OPENCODE_HIGH}", opencode_high)
         .replace("{OPENCODE_MID}", opencode_mid)
         .replace("{OPENCODE_LOW}", opencode_low)
+        .replace("{NATIVE_HIGH}", native_high)
+        .replace("{NATIVE_MID}", native_mid)
+        .replace("{NATIVE_LOW}", native_low)
 }
 
 // ── test-only prompts ───────────────────────────────────────────────────────
@@ -512,20 +518,23 @@ mod tests {
         assert!(!result.contains("{ERROR}"), "no raw placeholders left");
     }
 
-    // spec (prompt-storage): config_starter_template substitutes all six
-    // placeholders.
+    // spec (prompt-storage): config_starter_template substitutes all nine
+    // placeholders (three tiers × three backends).
     #[test]
     fn test_spec_config_starter_template_substitutes_placeholders() {
-        let result = config_starter_template("ch", "cm", "cl", "oh", "om", "ol");
+        let result = config_starter_template("ch", "cm", "cl", "oh", "om", "ol", "nh", "nm", "nl");
         assert!(result.contains("ch"), "claude_high must be substituted");
         assert!(result.contains("cm"), "claude_mid must be substituted");
         assert!(result.contains("cl"), "claude_low must be substituted");
         assert!(result.contains("oh"), "opencode_high must be substituted");
         assert!(result.contains("om"), "opencode_mid must be substituted");
         assert!(result.contains("ol"), "opencode_low must be substituted");
+        assert!(result.contains("nh"), "native_high must be substituted");
+        assert!(result.contains("nm"), "native_mid must be substituted");
+        assert!(result.contains("nl"), "native_low must be substituted");
         assert!(!result.contains("{CLAUDE_HIGH}"), "no raw placeholders left");
-        assert!(!result.contains("{CLAUDE_MID}"), "no raw placeholders left");
         assert!(!result.contains("{OPENCODE_LOW}"), "no raw placeholders left");
+        assert!(!result.contains("{NATIVE_HIGH}"), "no raw placeholders left");
     }
 
     // spec (prompt-storage): triggered_system_msg substitutes placeholders

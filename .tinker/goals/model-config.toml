@@ -1,22 +1,23 @@
 id = "model-config"
 kind = "feature"
-summary = "This goal owns the .tinker/config.toml model-override file: six optional per-backend tier slots (high/mid/low for claude and opencode) that fall back to built-in defaults, plus the self-documenting starter template written only when no config file exists."
+summary = "This goal owns the .tinker/config.toml model-override file: nine optional per-backend tier slots (high/mid/low for claude, opencode, and native) that fall back to built-in defaults, plus the self-documenting starter template written only when no config file exists."
 description = """
 ## WHAT
 A `.tinker/config.toml` file that overrides which model each tier
-uses, independently per backend. There are six slots: the three model
+uses, independently per backend. There are nine slots: the three model
 tiers — `high` (the smartest tier, used by `tend`, `rummage`, and
 `jog`), `mid` (the tier goal sessions run on), and `low` (the cheapest
-tier, used by cleanup) — each settable separately under a `[claude]`
-and an `[opencode]` section. The file is TOML, so commented lines
-hold inactive alternates the user toggles in and out.
+tier, used by cleanup) — each settable separately under a `[claude]`,
+an `[opencode]`, and a `[native]` section (native slots are OpenRouter
+model ids). The file is TOML, so commented lines hold inactive
+alternates the user toggles in and out.
 
 Every slot is optional. An absent or commented-out slot falls back to
 the model compiled in as that tier's built-in default, so an empty or
 missing config file changes nothing about how tinker runs.
 
 When no config file exists, tinker writes a self-documenting starter
-template: both backend sections present, every slot listed but
+template: all three backend sections present, every slot listed but
 commented out, each annotated with its consuming agents and showing
 the current built-in default value on the commented line. The user
 uncomments and edits rather than looking up model names or slot
@@ -37,9 +38,9 @@ Slots are named by capability, not role, because the top tier is
 shared by three agents — a role name would mislead.
 
 The config governs model choice only: it does not persist the backend
-selection itself (`--claude` stays a startup flag, owned by
+selection itself (`--claude`/`--native` stay startup flags, owned by
 `backends`), and it does not validate model names — an unrecognized
-name surfaces as whatever the backend CLI does with it.
+name surfaces as whatever the backend does with it.
 
 """
 parent_id = "backends"

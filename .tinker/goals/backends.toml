@@ -1,14 +1,19 @@
 id = "backends"
 kind = "feature"
-summary = "This goal owns the pluggable LLM backend abstraction — two implementations (opencode via ephemeral agents/-directory file, and claude via its system-prompt mechanism) that deliver identical system prompt content (the goal's spec plus the framework preamble defined by goal-agents) with the trigger reason as the first turn message, per-backend model-tier defaults, the claude high-tier pin to claude-opus-4-8, and re-injection of CLI error output into the session."
+summary = "This goal owns the pluggable LLM backend abstraction — three implementations (opencode via ephemeral agents/-directory file, claude via its system-prompt mechanism, and native via direct OpenRouter API calls with an in-process tool loop) that deliver identical system prompt content (the goal's spec plus the framework preamble defined by goal-agents) with the trigger reason as the first turn message, per-backend model-tier defaults, the claude high-tier pin to claude-opus-4-8, re-injection of CLI error output into the session, and the native backend's in-process ToolPolicy enforcement."
 description = """
 ## WHAT
-Tinker runs against a pluggable backend — the LLM CLI it shells out to
-— chosen at startup. Two backends exist today: **opencode** (the
-default) and **claude** (selected with `--claude`). Both are
-co-equal implementations of the same backend abstraction, wired at the
-application entry point; business logic depends on the abstraction,
-not on any vendor's CLI.
+Tinker runs against a pluggable backend chosen at startup. Three
+backends exist today: **opencode** (the default), **claude** (selected
+with `--claude`) — both CLIs tinker shells out to — and **native**
+(selected with `--native`), which talks to the OpenRouter API directly
+with no CLI in between. All are implementations of the same backend
+abstraction, wired at the application entry point; business logic
+depends on the abstraction, not on any vendor's CLI or API.
+
+The native backend is the designated successor: once `--native` works
+well, both CLI backends are slated for removal and native becomes the
+sole backend.
 
 **System prompt.** Both backends deliver an identical system prompt to
 every goal agent session — the framework preamble (owned by
@@ -31,9 +36,22 @@ unvalidated version. It delivers the system prompt via claude's
 system-prompt flag, resumes sessions by session ID, and parses
 streaming output.
 
-Both backends rely on prompt-level compliance with the file-access
-boundaries their personas state; mechanical guardrails are slated to
-be reintroduced through the prompts.
+**native** runs the agent loop in-process: it calls OpenRouter's
+chat-completions API (key from `OPENROUTER_API_KEY`, never stored in
+config) and executes tool calls itself — exactly six tools: bash,
+read, write, edit, glob, grep. Because tinker owns the tool executor,
+file-access boundaries are enforced in code via a per-role
+`ToolPolicy`: tend gets no bash and may write only under
+`.tinker/goals/`; goal sessions (including cleanup — a goal session,
+not a special case) get the full unrestricted tool set. A policy
+denial is returned to the model as a tool error it can adapt to.
+Sessions are in-memory only — a restart starts all sessions fresh.
+Context overflow fails visibly: the session is dropped and the next
+dispatch starts fresh.
+
+The CLI backends rely on prompt-level compliance with the file-access
+boundaries their personas state; the native backend replaces that with
+mechanical in-process enforcement.
 
 Which model fills each tier is overridable at runtime through
 `model-config`; the per-backend mappings above are the built-in
@@ -43,9 +61,14 @@ defaults.
 captures its output and re-injects it as a message into the active
 session, so the agent can read and respond — route to a peer, retry a
 transient failure, or report the obstacle rather than dying silently.
+The native backend needs no re-injection: tool errors flow back to the
+model in-loop as tool results, and API errors surface as ⚠ chunks.
 
 Startup argument handling is governed by `startup-args`. Recognised
-flags: `--claude` (select the claude backend) and
+flags: `--claude` (select the claude backend), `--native` (select the
+native backend; requires `OPENROUTER_API_KEY` and is mutually
+exclusive with `--claude` — both misconfigurations fail fast before
+the TUI starts), `--default-model` (opencode only), and
 `--tend-full-goal-context` (restore full goal text in tend's context
 instead of the compact index).
 
@@ -64,16 +87,24 @@ Re-injecting errors closes the loop — a CLI failure becomes a signal
 the agent can hear and course-correct from, rather than silent process
 death.
 
+The native backend exists because controlling what agents can do
+through CLI permission systems was a constant hassle: those systems
+are built for interactive approval, so tinker had to bypass them
+(`--dangerously-skip-permissions`) and re-enforce boundaries through
+prompts. Owning the tool loop makes the boundary a code path instead.
+It also removes the external CLI dependency and reduces setup to one
+environment variable.
+
 """
 parent_id = ""
 
 [[children]]
 id = "model-config"
-reason = "user-editable .tinker/config.toml overriding model tier assignments per backend — six slots, absent slots fall back to built-in defaults"
+reason = "user-editable .tinker/config.toml overriding model tier assignments per backend — nine slots (three tiers × three backends), absent slots fall back to built-in defaults"
 
 [[related]]
 id = "startup-args"
-reason = "`startup-args` owns unknown-arg detection, help text, and exit behaviour. The flag set it validates against is defined by this goal (--claude, --tend-full-goal-context, --default-model); when a new flag is added here it must also be registered in `startup-args`."
+reason = "`startup-args` owns unknown-arg detection, help text, and exit behaviour. The flag set it validates against is defined by this goal (--claude, --native, --tend-full-goal-context, --default-model); when a new flag is added here it must also be registered in `startup-args`."
 
 [[related]]
 id = "coding-standards"

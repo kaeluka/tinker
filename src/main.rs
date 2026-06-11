@@ -6,6 +6,7 @@ mod config;
 mod goal;
 mod goal_session;
 mod logger;
+mod native;
 mod opencode;
 mod prompts;
 mod realfs;
@@ -30,6 +31,7 @@ use goal::{discover_tinker_dirs, load_all_goals, Goal};
 use goal_session::SessionEvent;
 use opencode::{RealOpenCodeRunner, GOAL_MODEL as OPENCODE_GOAL_MODEL, TINKER_MODEL as OPENCODE_TINKER_MODEL, SCHEDULER_MODEL as OPENCODE_SCHEDULER_MODEL};
 use claude::{ClaudeRunner, GOAL_MODEL as CLAUDE_GOAL_MODEL, TINKER_MODEL as CLAUDE_TINKER_MODEL, SCHEDULER_MODEL as CLAUDE_SCHEDULER_MODEL};
+use native::{NativeRunner, ToolPolicy, GOAL_MODEL as NATIVE_GOAL_MODEL, TINKER_MODEL as NATIVE_TINKER_MODEL, SCHEDULER_MODEL as NATIVE_SCHEDULER_MODEL};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{io, path::PathBuf, sync::{Arc, Mutex}, time::Duration};
 use std::collections::HashMap;
@@ -288,8 +290,9 @@ fn print_help() {
     println!("    tinker [OPTIONS]\n");
     println!("OPTIONS:");
     println!("    --claude                    Use the Claude backend (default: opencode)");
+    println!("    --native                    Use the native OpenRouter backend (needs OPENROUTER_API_KEY)");
     println!("    --tend-full-goal-context    Inject full goal text instead of compact index");
-    println!("    --default-model             Use the backend's default model for all tiers");
+    println!("    --default-model             Use the backend's default model for all tiers (opencode only)");
     println!("    -h, --help                  Print this help and exit");
     println!("\nhttps://github.com/kaeluka/tinker");
 }
@@ -307,10 +310,12 @@ async fn main() -> Result<()> {
 
     let use_default_model = args.iter().any(|a| a == "--default-model");
     let use_claude = args.iter().any(|a| a == "--claude");
+    let use_native = args.iter().any(|a| a == "--native");
     let use_full_goal_context = args.iter().any(|a| a == "--tend-full-goal-context");
 
     const KNOWN_ARGS: &[&str] = &[
         "--claude",
+        "--native",
         "--tend-full-goal-context",
         "--default-model",
         "--help",
@@ -319,6 +324,16 @@ async fn main() -> Result<()> {
     if let Some(bad) = args.iter().skip(1).find(|a| !KNOWN_ARGS.contains(&a.as_str())) {
         println!("error: unrecognized argument '{bad}'\n");
         print_help();
+        std::process::exit(1);
+    }
+
+    if use_claude && use_native {
+        println!("error: --claude and --native are mutually exclusive\n");
+        print_help();
+        std::process::exit(1);
+    }
+    if use_native && std::env::var(native::API_KEY_ENV).is_err() {
+        println!("error: --native requires the {} environment variable", native::API_KEY_ENV);
         std::process::exit(1);
     }
 
@@ -338,6 +353,7 @@ async fn main() -> Result<()> {
         &config_path,
         [CLAUDE_TINKER_MODEL, CLAUDE_GOAL_MODEL, CLAUDE_SCHEDULER_MODEL],
         [OPENCODE_TINKER_MODEL, OPENCODE_GOAL_MODEL, OPENCODE_SCHEDULER_MODEL],
+        [NATIVE_TINKER_MODEL, NATIVE_GOAL_MODEL, NATIVE_SCHEDULER_MODEL],
     )?;
     let model_config = config::load_model_config(fs.as_ref(), &config_path);
 
@@ -351,7 +367,21 @@ async fn main() -> Result<()> {
     //   oc_goal        — mid-tier (default goal sessions)
     //   oc_goal_low    — low-tier goal sessions
     //   oc_cleanup_runner — cleanup / scheduler (cheapest model)
-    let (oc_tend, oc_goal_high, oc_goal, oc_goal_low, oc_cleanup_runner): RunnerSet = if use_claude {
+    let (oc_tend, oc_goal_high, oc_goal, oc_goal_low, oc_cleanup_runner): RunnerSet = if use_native {
+        let tinker_m = model_config.native_high(NATIVE_TINKER_MODEL);
+        let goal_m = model_config.native_mid(NATIVE_GOAL_MODEL);
+        let cleanup_m = model_config.native_low(NATIVE_SCHEDULER_MODEL);
+        (
+            // tend: struct-level prompt + TendScope policy — no bash, writes
+            // only under .tinker/goals/, enforced in-process.
+            Arc::new(NativeRunner::with_system_prompt(tinker_m, tend_system_prompt(), ToolPolicy::TendScope)),
+            // goal agents (all tiers, incl. cleanup): full tool set, unrestricted.
+            Arc::new(NativeRunner::new(tinker_m, ToolPolicy::Unrestricted)),
+            Arc::new(NativeRunner::new(goal_m, ToolPolicy::Unrestricted)),
+            Arc::new(NativeRunner::new(cleanup_m, ToolPolicy::Unrestricted)),
+            Arc::new(NativeRunner::new(cleanup_m, ToolPolicy::Unrestricted)),
+        )
+    } else if use_claude {
         let tinker_m = model_config.claude_high(CLAUDE_TINKER_MODEL);
         let goal_m = model_config.claude_mid(CLAUDE_GOAL_MODEL);
         let cleanup_m = model_config.claude_low(CLAUDE_SCHEDULER_MODEL);
@@ -381,7 +411,7 @@ async fn main() -> Result<()> {
         )
     };
 
-    let backend_name = if use_claude { "claude" } else { "opencode" };
+    let backend_name = if use_native { "native" } else if use_claude { "claude" } else { "opencode" };
     let log = logger::start_logger(
         primary_tinker_dir.join("logs").join("runtime.jsonl"),
         primary_tinker_dir.join("state").join("runtime.json"),
@@ -1899,9 +1929,12 @@ mod tests {
         // own the subprocess builders (Real OpenCode and Claude runners);
         // `opencode.rs` also creates ephemeral agent files (std::fs::) for
         // system-prompt delivery — a subprocess-management concern that belongs
-        // alongside its Command::new usage; `realfs.rs` owns the Filesystem cap.
-        let cmd_allowed = ["opencode.rs", "claude.rs"];
-        let fs_allowed = ["realfs.rs", "opencode.rs"];
+        // alongside its Command::new usage; `native.rs` owns the in-process
+        // tool executor (bash/grep subprocesses, read/write/edit file effects)
+        // — that executor IS the native runner's capability implementation;
+        // `realfs.rs` owns the Filesystem cap.
+        let cmd_allowed = ["opencode.rs", "claude.rs", "native.rs"];
+        let fs_allowed = ["realfs.rs", "opencode.rs", "native.rs"];
 
         for entry in std::fs::read_dir(&src).unwrap() {
             let entry = entry.unwrap();
@@ -2822,6 +2855,72 @@ mod tests {
             prompt.contains("src/"),
             "tend system prompt must explicitly name src/ as off-limits"
         );
+    }
+
+    // spec (native-backend): in the native branch, tend's runner must carry
+    // both the struct-level system prompt AND the TendScope policy — the
+    // capability boundary is enforced in-process, not just via the prompt.
+    // All other native runners must be Unrestricted (goal sessions including
+    // cleanup get full tools — cleanup is a goal session, not a special case).
+    #[test]
+    fn test_spec_native_tend_runner_wired_with_tend_scope_policy() {
+        let main_rs = include_str!("main.rs");
+        let tend_line = main_rs
+            .lines()
+            .find(|l| l.contains("Arc::new(NativeRunner") && l.contains("tinker_m") && l.contains("with_system_prompt"))
+            .expect("must find NativeRunner::with_system_prompt construction for tend in the native branch");
+        assert!(
+            tend_line.contains("ToolPolicy::TendScope"),
+            "tend's native runner must use ToolPolicy::TendScope — got: {tend_line}"
+        );
+        // Needles split so this test's own source lines don't self-match in
+        // the include_str! scan.
+        let ctor_needle = format!("Arc::new({}Runner::new(", "Native");
+        let policy_needle = format!("ToolPolicy::{}", "Unrestricted");
+        let unrestricted_count = main_rs
+            .lines()
+            .filter(|l| l.contains(&ctor_needle) && l.contains(&policy_needle))
+            .count();
+        assert_eq!(
+            unrestricted_count, 4,
+            "the four non-tend native runner slots must all be Unrestricted"
+        );
+    }
+
+    // spec (native-backend): the native branch wires tier defaults from the
+    // [native] config section with built-in NATIVE_* fallbacks, mirroring the
+    // claude and opencode branches.
+    #[test]
+    fn test_spec_native_tier_defaults_wired() {
+        let main_rs = include_str!("main.rs");
+        assert!(
+            main_rs.contains("model_config.native_high(NATIVE_TINKER_MODEL)"),
+            "native high-tier must fall back to NATIVE_TINKER_MODEL"
+        );
+        assert!(
+            main_rs.contains("model_config.native_mid(NATIVE_GOAL_MODEL)"),
+            "native mid-tier must fall back to NATIVE_GOAL_MODEL"
+        );
+        assert!(
+            main_rs.contains("model_config.native_low(NATIVE_SCHEDULER_MODEL)"),
+            "native low-tier must fall back to NATIVE_SCHEDULER_MODEL"
+        );
+    }
+
+    // spec (startup-args): --native and --claude are mutually exclusive, and
+    // --native without OPENROUTER_API_KEY exits with a clear error before the
+    // TUI starts (easier-setup driver: misconfiguration fails fast and loud).
+    #[test]
+    fn test_spec_native_startup_guards() {
+        let main_rs = include_str!("main.rs");
+        assert!(
+            main_rs.contains("mutually exclusive"),
+            "--claude/--native conflict must be rejected"
+        );
+        let guard_pos = main_rs.find("use_native && std::env::var(native::API_KEY_ENV).is_err()")
+            .expect("API key guard must exist");
+        let tui_pos = main_rs.find("enable_raw_mode()?").expect("enable_raw_mode must exist");
+        assert!(guard_pos < tui_pos, "API key guard must run before the TUI starts");
     }
 
     // spec (backends): oc_tend's claude runner must be constructed with a system prompt so the

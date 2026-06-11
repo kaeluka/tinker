@@ -33,7 +33,7 @@ reason = "goal-agents is the primary consumer: session init templates, framework
 
 [[related]]
 id = "backends"
-reason = "backends consumes error reinjection templates — the strings re-injected into sessions when a CLI process exits with an error or produces stderr output."
+reason = "backends consumes error reinjection templates — the strings re-injected into sessions when a CLI process exits with an error or produces stderr output — and the shared tool/stream formatting templates (→/⚠ lines) all three backends, including native, render chunks with."
 
 [[related]]
 id = "cleanup-hook"
