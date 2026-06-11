@@ -886,6 +886,88 @@ mod tests {
         assert!(!TINKER_MODEL.starts_with("openrouter/"));
     }
 
+    // Live integration test — talks to the real OpenRouter API, so it is
+    // #[ignore]d in normal runs. Run explicitly with:
+    //   OPENROUTER_API_KEY=$(cat <keyfile>) cargo test test_live_native -- --ignored --nocapture
+    // For each default tier model it forces a real tool call (bash writing a
+    // marker file) and asserts the file exists — proving the model's
+    // tool-call JSON parses and the in-process executor actually ran, not
+    // just that the model produced plausible text.
+    #[tokio::test]
+    #[ignore]
+    async fn test_live_native_tool_loop_all_default_models() {
+        assert!(
+            std::env::var(API_KEY_ENV).is_ok(),
+            "{API_KEY_ENV} must be set for the live test"
+        );
+        for model in [SCHEDULER_MODEL, GOAL_MODEL, TINKER_MODEL] {
+            let dir = tempfile::tempdir().unwrap();
+            let runner = NativeRunner::new(model, ToolPolicy::Unrestricted);
+            let chunks: std::sync::Arc<Mutex<String>> = Default::default();
+            let chunks_c = chunks.clone();
+            let result = runner
+                .run(
+                    "Use the bash tool to run exactly this command: touch proof.txt — then reply with the single word done.",
+                    None,
+                    dir.path(),
+                    None,
+                    Box::new(|_sid| {}),
+                    Box::new(move |c| chunks_c.lock().unwrap().push_str(&c)),
+                )
+                .await;
+            let output = chunks.lock().unwrap().clone();
+            let sid = result.unwrap_or_else(|e| panic!("[{model}] run failed: {e:#}\noutput so far:\n{output}"));
+            assert!(sid.starts_with("nat_"), "[{model}] session id must be self-issued");
+            assert!(
+                dir.path().join("proof.txt").exists(),
+                "[{model}] bash tool call must actually execute (marker file missing)\noutput:\n{output}"
+            );
+            println!("[{model}] OK — tool loop round-tripped, marker file written");
+        }
+    }
+
+    // Live integration test (#[ignore]d, see above for how to run): the
+    // TendScope policy must hold against a real model that is explicitly
+    // instructed to write outside its scope. The hard guarantee is that the
+    // out-of-scope file does not exist afterwards — regardless of how the
+    // model reacts to the denial. The in-scope goal write must succeed.
+    #[tokio::test]
+    #[ignore]
+    async fn test_live_native_tend_scope_enforced_against_real_model() {
+        assert!(
+            std::env::var(API_KEY_ENV).is_ok(),
+            "{API_KEY_ENV} must be set for the live test"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let runner = NativeRunner::new(GOAL_MODEL, ToolPolicy::TendScope);
+        let chunks: std::sync::Arc<Mutex<String>> = Default::default();
+        let chunks_c = chunks.clone();
+        let result = runner
+            .run(
+                "First call the write tool with path src/evil.txt and content 'x'. \
+                 Then call the write tool with path .tinker/goals/probe.toml and content 'id = \"probe\"'. \
+                 Then reply done.",
+                None,
+                dir.path(),
+                None,
+                Box::new(|_sid| {}),
+                Box::new(move |c| chunks_c.lock().unwrap().push_str(&c)),
+            )
+            .await;
+        let output = chunks.lock().unwrap().clone();
+        result.unwrap_or_else(|e| panic!("run failed: {e:#}\noutput:\n{output}"));
+        assert!(
+            !dir.path().join("src/evil.txt").exists(),
+            "policy must block the out-of-scope write\noutput:\n{output}"
+        );
+        assert!(
+            dir.path().join(".tinker/goals/probe.toml").exists(),
+            "in-scope goal write must succeed\noutput:\n{output}"
+        );
+        println!("OK — out-of-scope write blocked, in-scope write succeeded");
+        println!("--- session chunks ---\n{output}");
+    }
+
     // security: → security.md T5 analog — the native backend never spawns a
     // CLI for the LLM call, so there is no subprocess stderr to leak into the
     // TUI. Tool subprocesses (bash, grep) capture output via .output(), which
