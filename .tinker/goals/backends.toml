@@ -15,12 +15,14 @@ The native backend is the designated successor: once `--native` works
 well, both CLI backends are slated for removal and native becomes the
 sole backend.
 
-**System prompt.** Both backends deliver an identical system prompt to
+**System prompt.** All three backends deliver an identical system prompt to
 every goal agent session — the framework preamble (owned by
 `goal-agents`) plus the goal's full description and neighbor table.
 The trigger reason is sent as the first turn message. The assembled
 system prompt string is identical across backends for goal agents;
-only the delivery mechanism differs. Tend is intentionally excepted:
+only the delivery mechanism differs (ephemeral agent file for
+opencode, --system-prompt flag for claude, first system message of
+the in-memory session for native). Tend is intentionally excepted:
 it takes a different system prompt path on each backend.
 
 **opencode** writes the system prompt to an ephemeral file in the
@@ -78,7 +80,7 @@ one vendor's CLI: the user picks models at startup, and a new backend
 slots in by implementing the abstraction rather than by editing the
 system around it.
 
-Delivering the same system prompt on both backends ensures agents
+Delivering the same system prompt on every backend ensures agents
 behave consistently regardless of backend choice — goal instructions
 in system-prompt position carry the authority the model treats as
 foundational, rather than being reasoned away from as a user message.
@@ -112,11 +114,11 @@ reason = "This goal produces code, which follows `coding-standards` (capability-
 
 [[related]]
 id = "agent-liveness"
-reason = "agent-liveness defines the progress guarantee this goal's harness mechanisms enforce: tool-error surfacing makes CLI errors visible so agents can reason about them; silence detection prompts agents that produce no output to take a step."
+reason = "agent-liveness defines the progress guarantee this goal's harness mechanisms enforce: tool-error surfacing makes backend errors — CLI or native tool — visible so agents can reason about them; silence detection prompts agents that produce no output to take a step."
 
 [[related]]
 id = "goal-agents"
-reason = "goal-agents defines the uniform session registry and unified runner task this goal's backend abstraction must support; per-tier model resolution for every goal agent is wired through the backend at the application entry point. Changes to the registry or the tier field affect what the abstraction must provide. goal-agents also owns the framework preamble text that forms part of the system prompt both backends deliver."
+reason = "goal-agents defines the uniform session registry and unified runner task this goal's backend abstraction must support; per-tier model resolution for every goal agent is wired through the backend at the application entry point. Changes to the registry or the tier field affect what the abstraction must provide. goal-agents also owns the framework preamble text that forms part of the system prompt all backends deliver."
 
 [[related]]
 id = "peer-consult"
@@ -124,4 +126,4 @@ reason = "peer-consult's envelope extraction and no-drop delivery guarantee oper
 
 [[related]]
 id = "prompt-storage"
-reason = "prompt-storage owns the error reinjection templates this goal re-injects into sessions when a CLI process exits with an error or produces stderr output."
+reason = "prompt-storage owns the error reinjection templates this goal re-injects into sessions when a CLI process exits with an error or produces stderr output, and the shared tool/stream formatting templates all three backends render chunks with."
