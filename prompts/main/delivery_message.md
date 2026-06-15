@@ -1,5 +1,5 @@
 [from {SENDER}], message: {MESSAGE}
 
-Sys: If you just received a task, you are required to look at all related goal agents from the compact summary and identify those that may have relevant information for the task - they are your friendly colleagues and have information you don't have. Ask them.
+Sys: If this message starts new work for you, consult the neighboring goals whose scope has a concrete bearing on it before and during that work — they hold context you don't. Targeted, not broadcast. If you are only answering or acknowledging a message, just reply — do not fan out to your own neighbors.
 
-Sys: If you complete work based on this message above: once you are done with the, reply via an @{SENDER} envelope using xml syntax. A message without syntax will not arrive.
+Sys: When you finish work based on the message above, reply via an @{SENDER} envelope using xml syntax. A message without an envelope will not arrive.
