@@ -282,8 +282,11 @@ tinker
 You get a three-pane terminal: a conversation pane where you talk to the
 active agent (tend, rummage, or jog), a list of your goals with the full
 text of the selected goal below it, and a log of whatever goal session is
-currently running. The prompt line in the conversation pane shows which
-agent is active. All text areas scroll with the mouse wheel. New content
+currently running. In the goal list, packaged goals — tinker's internal
+goals like coding standards and structural rules — appear greyed out and
+italic to distinguish them from your project's own goals.
+
+The prompt line in the conversation pane shows which agent is active. All text areas scroll with the mouse wheel. New content
 follows the bottom of the view unless you scroll up.
 
 ---

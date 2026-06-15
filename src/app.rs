@@ -400,6 +400,22 @@ impl App {
         out
     }
 
+    /// True when the goal was loaded from a non-primary (ancestor) `.tinker/goals/`
+    /// directory — i.e., it is a packaged goal shipped with tinker, not a goal
+    /// the user authored for this project. A goal is packaged iff its
+    /// `source_path` is set and does NOT sit under the cwd-most (primary)
+    /// `tinker_dirs[0]/goals/`. Goals with no `source_path` (only the test
+    /// path) or with no `tinker_dirs` configured default to project-local.
+    ///
+    /// This consumes the on-disk distinction that `goal-placement` writes
+    /// and produces the render-time predicate the de-emphasis rule needs.
+    pub fn is_packaged(&self, g: &Goal) -> bool {
+        match (&g.source_path, self.tinker_dirs.first()) {
+            (Some(p), Some(primary)) => !p.starts_with(primary.join("goals")),
+            _ => false,
+        }
+    }
+
     pub fn select_next_goal(&mut self) {
         let n = self.flat_items().len();
         if n > 0 {
@@ -485,6 +501,77 @@ mod tests {
 
     fn item_ids(items: &[GoalListItem]) -> Vec<&str> {
         items.iter().map(|i| i.id()).collect()
+    }
+
+    // --- is_packaged ---
+
+    fn make_goal_with_path(id: &str, path: Option<PathBuf>) -> crate::goal::Goal {
+        crate::goal::Goal {
+            id: id.to_string(),
+            summary: String::new(),
+            description: String::new(),
+            source_path: path,
+            kind: None,
+            tier: None,
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+        }
+    }
+
+    // spec: packaged-goals-style — a goal whose source_path sits under the
+    // primary (cwd-most) `.tinker/goals/` is project-local, not packaged.
+    #[test]
+    fn test_spec_is_packaged_source_in_primary_tinker_dir_returns_false() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![PathBuf::from("/proj/.tinker")];
+        let g = make_goal_with_path(
+            "local",
+            Some(PathBuf::from("/proj/.tinker/goals/local.toml")),
+        );
+        assert!(!app.is_packaged(&g),
+            "goal under primary tinker dir must not be packaged");
+    }
+
+    // spec: packaged-goals-style — a goal loaded from an ancestor `.tinker/goals/`
+    // is packaged (universal content shipped with tinker, not project-specific).
+    #[test]
+    fn test_spec_is_packaged_source_in_ancestor_tinker_dir_returns_true() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![
+            PathBuf::from("/proj/.tinker"),
+            PathBuf::from("/home/.tinker"),
+        ];
+        let g = make_goal_with_path(
+            "shared",
+            Some(PathBuf::from("/home/.tinker/goals/shared.toml")),
+        );
+        assert!(app.is_packaged(&g),
+            "goal under ancestor tinker dir must be packaged");
+    }
+
+    // spec: packaged-goals-style — a goal with no `source_path` (test-only
+    // construction) must default to project-local, not packaged.
+    #[test]
+    fn test_spec_is_packaged_no_source_path_returns_false() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![PathBuf::from("/proj/.tinker")];
+        let g = make_goal_with_path("x", None);
+        assert!(!app.is_packaged(&g),
+            "goal without source_path must not be packaged");
+    }
+
+    // spec: packaged-goals-style — without any `tinker_dirs` configured
+    // (e.g. before the load completes) no goal can be classified as packaged.
+    #[test]
+    fn test_spec_is_packaged_no_tinker_dirs_returns_false() {
+        let app = App::new();
+        let g = make_goal_with_path(
+            "x",
+            Some(PathBuf::from("/home/.tinker/goals/x.toml")),
+        );
+        assert!(!app.is_packaged(&g),
+            "without tinker_dirs, no goal can be classified as packaged");
     }
 
     #[test]

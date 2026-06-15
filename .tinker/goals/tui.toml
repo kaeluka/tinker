@@ -152,6 +152,10 @@ reason = "owns the options dialog — trigger reason, goal tier, session-reset w
 id = "werkeln"
 reason = "owns the goals-pane label animation — cycling German dialect verbs when any goal session is running"
 
+[[children]]
+id = "packaged-goals-style"
+reason = "owns the visual de-emphasis of packaged goals in the goal list and detail-pane header — grey and italic to signal tinker plumbing, not user intent"
+
 [[related]]
 id = "goal-agents"
 reason = "goal-agents defines the session registry (making /<goal-id> switching universal), the tier field and its session-start resolution, and the startup-silence exception for tend. TUI suppression of tend's startup output and the detail-pane tier/kind tag display are governed here."

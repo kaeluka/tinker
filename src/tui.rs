@@ -485,67 +485,13 @@ fn draw_goal_tree(
     let list_lines: Vec<Line> = items
         .iter()
         .map(|item| {
-            let id = item.id();
-            let is_selected = selected_id.as_deref() == Some(id);
-
-            match item {
-                GoalListItem::Goal(g) => {
-                    let depth = depth_by_id.get(g.id.as_str()).copied().unwrap_or(0);
-                    let is_active = running_base_ids.contains(g.id.as_str());
-
-                    let name_style = if is_selected {
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                    };
-                    let id_style = if is_selected {
-                        name_style
-                    } else if is_active {
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)
-                    };
-                    let marker_style = if is_active {
-                        Style::default().fg(Color::DarkGray)
-                    } else {
-                        name_style
-                    };
-                    let marker_str = if is_active { "▶ " } else { "◉ " };
-                    let indent = "  ".repeat(depth);
-                    let preview = truncate_with_ellipsis(&g.summary, 60);
-                    let mut spans = vec![
-                        Span::styled(format!("{}{}", indent, marker_str), marker_style),
-                        Span::styled(g.id.clone(), id_style),
-                    ];
-                    if !preview.is_empty() {
-                        spans.push(Span::styled(format!(" — {}", preview), name_style));
-                    }
-                    Line::from(spans)
-                }
-                GoalListItem::Ephemeral(session_id, label) => {
-                    let depth = depth_by_id.get(session_id.as_str()).copied().unwrap_or(1);
-                    let is_active = app.running_sessions.contains_key(session_id.as_str());
-
-                    let id_style = if is_selected {
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-                    } else if is_active {
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)
-                    };
-                    let marker_style = Style::default().fg(Color::DarkGray);
-                    let marker_str = if is_active { "▶ " } else { "◉ " };
-                    let indent = "  ".repeat(depth);
-                    let display_text = match label {
-                        Some(l) if !l.is_empty() => l.clone(),
-                        _ => session_id.clone(),
-                    };
-                    Line::from(vec![
-                        Span::styled(format!("{}{}", indent, marker_str), marker_style),
-                        Span::styled(display_text, id_style),
-                    ])
-                }
-            }
+            goal_list_row_line(
+                item,
+                &depth_by_id,
+                selected_id.as_deref(),
+                &running_base_ids,
+                app,
+            )
         })
         .collect();
 
@@ -567,7 +513,7 @@ fn draw_goal_tree(
             Style::default().fg(Color::DarkGray),
         ))],
         Some(GoalListItem::Goal(g)) => {
-            let header = goal_detail_header_line(&g);
+            let header = goal_detail_header_line(&g, app.is_packaged(&g));
             let mut lines: Vec<Line> = vec![header, Line::from("")];
             lines.extend(
                 g.description
@@ -712,15 +658,107 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
     }
 }
 
-fn goal_detail_header_line(g: &crate::goal::Goal) -> Line<'static> {
+fn goal_list_row_line(
+    item: &GoalListItem,
+    depth_by_id: &std::collections::HashMap<String, usize>,
+    selected_id: Option<&str>,
+    running_base_ids: &std::collections::HashSet<&str>,
+    app: &App,
+) -> Line<'static> {
+    let id = item.id();
+    let is_selected = selected_id == Some(id);
+
+    match item {
+        GoalListItem::Goal(g) => {
+            let depth = depth_by_id.get(g.id.as_str()).copied().unwrap_or(0);
+            let is_active = running_base_ids.contains(g.id.as_str());
+            let is_packaged = app.is_packaged(g);
+
+            // Cascade for the row's text styles:
+            //   1. Selection wins over everything — selection is user focus.
+            //      Italic is added on the id when the goal is packaged, so the
+            //      ambient packaged cue remains legible on the selected row.
+            //   2. Packaged de-emphasis (grey + italic) applies when not selected,
+            //      even if active — ambient packaging yields to nothing here.
+            //   3. Active (running) cue applies to non-packaged, non-selected.
+            //   4. Default: darkgray bold id, plain summary.
+            let (name_style, id_style) = if is_selected {
+                let base = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+                let id_s = if is_packaged { base.add_modifier(Modifier::ITALIC) } else { base };
+                (base, id_s)
+            } else if is_packaged {
+                let s = Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC);
+                (s, s.add_modifier(Modifier::BOLD))
+            } else if is_active {
+                (
+                    Style::default(),
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                )
+            } else {
+                (
+                    Style::default(),
+                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+                )
+            };
+            let marker_style = if is_active {
+                Style::default().fg(Color::DarkGray)
+            } else {
+                name_style
+            };
+            let marker_str = if is_active { "▶ " } else { "◉ " };
+            let indent = "  ".repeat(depth);
+            let preview = truncate_with_ellipsis(&g.summary, 60);
+            let mut spans = vec![
+                Span::styled(format!("{}{}", indent, marker_str), marker_style),
+                Span::styled(g.id.clone(), id_style),
+            ];
+            if !preview.is_empty() {
+                spans.push(Span::styled(format!(" — {}", preview), name_style));
+            }
+            Line::from(spans)
+        }
+        GoalListItem::Ephemeral(session_id, label) => {
+            let depth = depth_by_id.get(session_id.as_str()).copied().unwrap_or(1);
+            let is_active = app.running_sessions.contains_key(session_id.as_str());
+
+            let id_style = if is_selected {
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            } else if is_active {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)
+            };
+            let marker_style = Style::default().fg(Color::DarkGray);
+            let marker_str = if is_active { "▶ " } else { "◉ " };
+            let indent = "  ".repeat(depth);
+            let display_text = match label {
+                Some(l) if !l.is_empty() => l.clone(),
+                _ => session_id.clone(),
+            };
+            Line::from(vec![
+                Span::styled(format!("{}{}", indent, marker_str), marker_style),
+                Span::styled(display_text, id_style),
+            ])
+        }
+    }
+}
+
+fn goal_detail_header_line(g: &crate::goal::Goal, is_packaged: bool) -> Line<'static> {
     let kind_str = g.kind.as_deref().unwrap_or("feature");
     let tier_str = g.tier.as_deref().unwrap_or("mid");
     let tag = format!("[{} · {}]", kind_str, tier_str);
-    let muted = Style::default().fg(Color::DarkGray);
+    // Packaged goals add ITALIC to the de-emphasized dark-grey header so the
+    // detail pane reads the same way the goal-list row did when the goal was
+    // selected.
+    let style = Style::default()
+        .fg(Color::DarkGray)
+        .add_modifier(if is_packaged { Modifier::ITALIC } else { Modifier::empty() });
     Line::from(vec![
-        Span::styled(g.summary.clone(), muted),
+        Span::styled(g.summary.clone(), style),
         Span::raw("  "),
-        Span::styled(tag, muted),
+        Span::styled(tag, style),
     ])
 }
 
@@ -748,6 +786,7 @@ mod tests {
     use super::*;
     use crate::app::{App, ScrollState};
     use crate::goal::Goal;
+    use std::path::PathBuf;
 
     fn mk_goal(id: &str) -> Goal {
         Goal {
@@ -1281,6 +1320,141 @@ mod tests {
         );
     }
 
+    /// Spec (packaged-goals-style — goal list row, non-selected): a packaged
+    /// goal that is NOT currently selected must render DarkGray + ITALIC on
+    /// both the id and the summary — the ambient de-emphasis applies in full.
+    #[test]
+    fn test_spec_goal_list_row_packaged_non_selected_uses_grey_and_italic() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![PathBuf::from("/proj/.tinker")];
+        let packaged = Goal {
+            id: "tui".to_string(),
+            summary: "owns the TUI rendering".to_string(),
+            description: "".to_string(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: Some(PathBuf::from("/home/.tinker/goals/tui.toml")),
+        };
+        app.goals = vec![packaged];
+
+        let mut depth_by_id = std::collections::HashMap::new();
+        depth_by_id.insert("tui".to_string(), 0usize);
+        let running = std::collections::HashSet::new();
+        let item = GoalListItem::Goal(app.goals[0].clone());
+        // Selection is on a different goal — packaged goal is NOT selected.
+        let line = goal_list_row_line(&item, &depth_by_id, Some("other"), &running, &app);
+
+        // The id span must be DarkGray + ITALIC + BOLD.
+        let id_span = line.spans.iter().find(|s| s.content.as_ref() == "tui")
+            .expect("row must contain id span 'tui'");
+        assert_eq!(id_span.style.fg, Some(Color::DarkGray),
+            "non-selected packaged id span must be DarkGray");
+        assert!(id_span.style.add_modifier.contains(Modifier::ITALIC),
+            "non-selected packaged id span must be italic");
+        assert!(id_span.style.add_modifier.contains(Modifier::BOLD),
+            "non-selected packaged id span must remain bold for hierarchy");
+
+        // The summary preview must be DarkGray + ITALIC.
+        let preview_span = line.spans.iter()
+            .find(|s| s.content.as_ref().contains("owns the TUI rendering"))
+            .expect("row must contain summary preview span");
+        assert_eq!(preview_span.style.fg, Some(Color::DarkGray),
+            "non-selected packaged summary span must be DarkGray");
+        assert!(preview_span.style.add_modifier.contains(Modifier::ITALIC),
+            "non-selected packaged summary span must be italic");
+    }
+
+    /// Spec (packaged-goals-style — goal list row, selected): when a packaged
+    /// goal is selected, the selection color (Cyan + Bold) takes precedence
+    /// over the de-emphasis on the row surface. The id retains ITALIC so the
+    /// packaged distinction stays legible. The detail-pane header still uses
+    /// the de-emphasized style (covered separately by the header test).
+    #[test]
+    fn test_spec_goal_list_row_selected_packaged_uses_selection_color_with_italic_id() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![PathBuf::from("/proj/.tinker")];
+        let packaged = Goal {
+            id: "tui".to_string(),
+            summary: "owns the TUI rendering".to_string(),
+            description: "".to_string(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: Some(PathBuf::from("/home/.tinker/goals/tui.toml")),
+        };
+        app.goals = vec![packaged];
+
+        let mut depth_by_id = std::collections::HashMap::new();
+        depth_by_id.insert("tui".to_string(), 0usize);
+        let running = std::collections::HashSet::new();
+        let item = GoalListItem::Goal(app.goals[0].clone());
+        // The packaged goal IS the selected one.
+        let line = goal_list_row_line(&item, &depth_by_id, Some("tui"), &running, &app);
+
+        // The id span must be the selection color (Cyan) + BOLD + ITALIC.
+        let id_span = line.spans.iter().find(|s| s.content.as_ref() == "tui")
+            .expect("row must contain id span 'tui'");
+        assert_eq!(id_span.style.fg, Some(Color::Cyan),
+            "selected packaged id span must use selection color (Cyan)");
+        assert!(id_span.style.add_modifier.contains(Modifier::BOLD),
+            "selected packaged id span must remain bold");
+        assert!(id_span.style.add_modifier.contains(Modifier::ITALIC),
+            "selected packaged id span must retain italic for packaged cue");
+
+        // The summary preview uses the selection color without italic.
+        let preview_span = line.spans.iter()
+            .find(|s| s.content.as_ref().contains("owns the TUI rendering"))
+            .expect("row must contain summary preview span");
+        assert_eq!(preview_span.style.fg, Some(Color::Cyan),
+            "selected packaged summary span must use selection color (Cyan)");
+        assert!(!preview_span.style.add_modifier.contains(Modifier::ITALIC),
+            "selected packaged summary span must NOT be italic — italic is reserved for the id");
+    }
+
+    /// Spec (packaged-goals-style — goal list row): a project-local goal must
+    /// keep the existing visual rules (Bold id in DarkGray when not selected
+    /// or active, no ITALIC) — the packaged de-emphasis rule does not apply
+    /// to local goals.
+    #[test]
+    fn test_spec_goal_list_row_project_local_does_not_get_italic() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![PathBuf::from("/proj/.tinker")];
+        let local = Goal {
+            id: "backends".to_string(),
+            summary: "owns backend abstraction".to_string(),
+            description: "".to_string(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: Some(PathBuf::from("/proj/.tinker/goals/backends.toml")),
+        };
+        app.goals = vec![local];
+
+        let mut depth_by_id = std::collections::HashMap::new();
+        depth_by_id.insert("backends".to_string(), 0usize);
+        let running = std::collections::HashSet::new();
+        let item = GoalListItem::Goal(app.goals[0].clone());
+        let line = goal_list_row_line(&item, &depth_by_id, None, &running, &app);
+
+        let id_span = line.spans.iter().find(|s| s.content.as_ref() == "backends")
+            .expect("row must contain id span 'backends'");
+        assert!(!id_span.style.add_modifier.contains(Modifier::ITALIC),
+            "project-local id span must not be italic");
+
+        let preview_span = line.spans.iter()
+            .find(|s| s.content.as_ref().contains("owns backend abstraction"))
+            .expect("row must contain summary preview span");
+        assert!(!preview_span.style.add_modifier.contains(Modifier::ITALIC),
+            "project-local summary span must not be italic");
+    }
+
     /// Spec: "When navigating the goal list with the keyboard, the list
     /// view automatically scrolls to ensure the currently selected goal
     /// is always visible (standard edge scrolling)."
@@ -1463,7 +1637,7 @@ mod tests {
             kind: Some("behavior".to_string()),
             source_path: None,
         };
-        let line = goal_detail_header_line(&goal);
+        let line = goal_detail_header_line(&goal, false);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(text.contains("does the thing"), "header must contain summary");
         assert!(text.contains("[behavior · high]"), "header must contain [kind · tier] tag");
@@ -1473,6 +1647,47 @@ mod tests {
                     span.style.fg,
                     Some(Color::DarkGray),
                     "header span {:?} must be DarkGray",
+                    span.content,
+                );
+                assert!(
+                    !span.style.add_modifier.contains(Modifier::ITALIC),
+                    "non-packaged header span {:?} must not be italic",
+                    span.content,
+                );
+            }
+        }
+    }
+
+    /// Spec (tui — goal-detail header / packaged): when a packaged goal is
+    /// selected, both the summary and the `[kind · tier]` tag render DarkGray
+    /// and ITALIC so the detail pane reads the same as the goal-list row.
+    #[test]
+    fn test_spec_goal_detail_header_packaged_uses_italic() {
+        let goal = Goal {
+            id: "tui".to_string(),
+            summary: "owns the TUI rendering".to_string(),
+            description: String::new(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        };
+        let line = goal_detail_header_line(&goal, true);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("owns the TUI rendering"), "header must contain summary");
+        for span in &line.spans {
+            if !span.content.is_empty() && span.content.as_ref() != "  " {
+                assert_eq!(
+                    span.style.fg,
+                    Some(Color::DarkGray),
+                    "packaged header span {:?} must be DarkGray",
+                    span.content,
+                );
+                assert!(
+                    span.style.add_modifier.contains(Modifier::ITALIC),
+                    "packaged header span {:?} must be italic",
                     span.content,
                 );
             }
@@ -1494,7 +1709,7 @@ mod tests {
             kind: None,
             source_path: None,
         };
-        let line = goal_detail_header_line(&goal);
+        let line = goal_detail_header_line(&goal, false);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(
             text.contains("[feature · mid]"),
@@ -1644,5 +1859,5 @@ mod tests {
             "log lookup by ephemeral session ID must find the sub-session output");
     }
 
-}
 
+}

@@ -58,3 +58,7 @@ reason = "goal-structure-standard owns write-time structural validation and is a
 [[related]]
 id = "tend"
 reason = "tend creates and edits goals; this goal runs at both moments to enforce placement scope. Asymmetric: tend is a packaged goal and cannot carry a back-link to this project-local goal."
+
+[[related]]
+id = "packaged-goals-style"
+reason = "packaged-goals-style owns the visual de-emphasis rule for packaged goals in the TUI (grey and italic); this goal owns the packaged vs project-local distinction that rule relies on to decide which goals to de-emphasize. Symmetric: goal-placement carries a back-link here, and packaged-goals-style carries one back."

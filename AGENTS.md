@@ -71,6 +71,11 @@ TUI tier-change interaction: `t` on a focused goal cycles its tier (absent/mid �
 
 - `src/main.rs` — `effective_goal_tier()` (single source of truth for kind-aware tier resolution: explicit tier wins, absent tier: behavior→high, feature/unknown→mid), `cycle_tier()` (three-value cycle logic), `KeyAction::CycleTier(goal_id)` variant, key-event dispatch (`t` in the goal-tree returns `CycleTier` for any goal with a `source_path`), and the `CycleTier` event-loop handler that mutates `app.goals` in-place, serializes via `toml::to_string_pretty()`, and writes via `fs.write()`
 
+### packaged-goals-style
+Visual de-emphasis rule for packaged goals: they render grey and italic in the goal-list rows and detail-pane header to signal that they are tinker's internal machinery, not the user's stated intent.
+
+- No dedicated source file — rendering rule consumed by `tui`'s goal-list and detail-pane drawing code in `src/tui.rs`.
+
 ### goal-placement
 Placement reviewer: when tend creates or edits a goal, checks that it lives in the directory matching its scope — packaged (`~/.tinker/goals/`) for content valid across any tinker project, project-local (`.tinker/goals/`) for content specific to this project — and flags drift when edits make a packaged goal project-specific.
 

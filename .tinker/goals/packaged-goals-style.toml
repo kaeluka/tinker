@@ -1,0 +1,32 @@
+id = "packaged-goals-style"
+kind = "feature"
+summary = "This goal owns the visual de-emphasis rule for packaged goals: they render grey and italic in the goal list rows and detail-pane header to signal that they are tinker's internal machinery, not the user's stated intent."
+description = """
+## WHAT
+In the goal list, packaged goals render in grey and italic — both the
+id and the summary. When a packaged goal is selected, the selection
+color takes precedence over the packaged de-emphasis on the list-row
+surface: the row renders with the selection color, retaining italic on
+the id so the packaged distinction is still legible.
+
+The detail-pane header still renders in the de-emphasized style when
+a packaged goal is selected — the header is description, not focus,
+and the packaged signal stays visible there.
+
+Selection is user focus. Ambient packaging information yields to it.
+
+## WHY
+Packaged goals represent tinker's own behavior — coding-standards,
+goal-structure-standard, the content standards, and the other packaged
+goals that run transparently, requiring no user attention. Visual
+de-emphasis makes the plumbing recede so the user's goals stay
+foregrounded. Packaged goals are ambient: the context in which the
+user's goals run, not goals themselves. Following the parent goal's
+visual-hierarchy principle, ambient information yields visual priority
+to what the user focuses on.
+"""
+parent_id = "tui"
+
+[[related]]
+id = "goal-placement"
+reason = "goal-placement owns the packaged vs project-local distinction in the on-disk layout; this goal consumes that same distinction to decide which goals to render with reduced visual weight. Symmetric: packaged-goals-style carries a back-link here, and goal-placement carries one back."
