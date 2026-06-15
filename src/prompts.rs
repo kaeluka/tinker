@@ -197,24 +197,11 @@ pub fn build_cleanup_prompt(listing: &str) -> String {
 
 // ── backend formatting strings ──────────────────────────────────────────────
 
-const PROCESS_ERROR_TEMPLATE: &str = include_str!("../prompts/backends/process_error.md");
-const STDERR_PREFIX_TEMPLATE: &str = include_str!("../prompts/backends/stderr_prefix.md");
 const TOOL_ERROR_NO_SUMMARY_TEMPLATE: &str = include_str!("../prompts/backends/tool_error_no_summary.md");
 const TOOL_ERROR_WITH_SUMMARY_TEMPLATE: &str = include_str!("../prompts/backends/tool_error_with_summary.md");
 const TOOL_COMPLETED_NO_SUMMARY: &str = include_str!("../prompts/backends/tool_completed_no_summary.md");
 const TOOL_COMPLETED_WITH_SUMMARY_TEMPLATE: &str = include_str!("../prompts/backends/tool_completed_with_summary.md");
-const TOOL_RESULT_ERROR_TEMPLATE: &str = include_str!("../prompts/backends/tool_result_error.md");
 const STREAM_ERROR_TEMPLATE: &str = include_str!("../prompts/backends/stream_error.md");
-
-pub fn process_error(exit_code: i32, stderr: &str) -> String {
-    PROCESS_ERROR_TEMPLATE
-        .replace("{EXIT_CODE}", &exit_code.to_string())
-        .replace("{STDERR}", stderr)
-}
-
-pub fn stderr_prefix(stderr: &str) -> String {
-    STDERR_PREFIX_TEMPLATE.replace("{STDERR}", stderr)
-}
 
 pub fn tool_error_no_summary(tool: &str, error: &str) -> String {
     TOOL_ERROR_NO_SUMMARY_TEMPLATE
@@ -239,10 +226,6 @@ pub fn tool_completed_with_summary(tool: &str, summary: &str) -> String {
         .replace("{SUMMARY}", summary)
 }
 
-pub fn tool_result_error(first_line: &str) -> String {
-    TOOL_RESULT_ERROR_TEMPLATE.replace("{ERROR}", first_line)
-}
-
 pub fn stream_error(msg: &str) -> String {
     STREAM_ERROR_TEMPLATE.replace("{ERROR}", msg)
 }
@@ -252,23 +235,11 @@ pub fn stream_error(msg: &str) -> String {
 const CONFIG_STARTER_TEMPLATE: &str = include_str!("../prompts/config/starter_template.md");
 
 pub fn config_starter_template(
-    claude_high: &str,
-    claude_mid: &str,
-    claude_low: &str,
-    opencode_high: &str,
-    opencode_mid: &str,
-    opencode_low: &str,
     native_high: &str,
     native_mid: &str,
     native_low: &str,
 ) -> String {
     CONFIG_STARTER_TEMPLATE
-        .replace("{CLAUDE_HIGH}", claude_high)
-        .replace("{CLAUDE_MID}", claude_mid)
-        .replace("{CLAUDE_LOW}", claude_low)
-        .replace("{OPENCODE_HIGH}", opencode_high)
-        .replace("{OPENCODE_MID}", opencode_mid)
-        .replace("{OPENCODE_LOW}", opencode_low)
         .replace("{NATIVE_HIGH}", native_high)
         .replace("{NATIVE_MID}", native_mid)
         .replace("{NATIVE_LOW}", native_low)
@@ -315,14 +286,11 @@ mod tests {
 
         assert!(!CLEANUP_PROMPT_TEMPLATE.is_empty());
 
-        assert!(!PROCESS_ERROR_TEMPLATE.is_empty());
-        assert!(!STDERR_PREFIX_TEMPLATE.is_empty());
         assert!(!TOOL_ERROR_NO_SUMMARY_TEMPLATE.is_empty());
         assert!(!TOOL_ERROR_WITH_SUMMARY_TEMPLATE.is_empty());
         assert!(!TOOL_COMPLETED_NO_SUMMARY.is_empty());
         assert!(!TOOL_COMPLETED_WITH_SUMMARY_TEMPLATE.is_empty());
 
-        assert!(!TOOL_RESULT_ERROR_TEMPLATE.is_empty());
         assert!(!STREAM_ERROR_TEMPLATE.is_empty());
 
         assert!(!CONFIG_STARTER_TEMPLATE.is_empty());
@@ -450,22 +418,17 @@ mod tests {
         assert!(!result.contains("{NEIGHBOR_SECTION}"), "no raw placeholders left");
     }
 
-    // spec (prompt-storage): backend formatting functions substitute placeholders
-    // and leave no raw tokens.
+    // spec (prompt-storage): config_starter_template substitutes all three
+    // placeholders (three tiers, one [native] section).
     #[test]
-    fn test_spec_process_error_substitutes_placeholders() {
-        let result = process_error(42, "oops");
-        assert!(result.contains("42"), "exit_code must be substituted");
-        assert!(result.contains("oops"), "stderr must be substituted");
-        assert!(!result.contains("{EXIT_CODE}"), "no raw placeholders left");
-        assert!(!result.contains("{STDERR}"), "no raw placeholders left");
-    }
-
-    #[test]
-    fn test_spec_stderr_prefix_substitutes_placeholders() {
-        let result = stderr_prefix("err text");
-        assert!(result.contains("err text"), "stderr must be substituted");
-        assert!(!result.contains("{STDERR}"), "no raw placeholders left");
+    fn test_spec_config_starter_template_substitutes_placeholders() {
+        let result = config_starter_template("nh", "nm", "nl");
+        assert!(result.contains("nh"), "native_high must be substituted");
+        assert!(result.contains("nm"), "native_mid must be substituted");
+        assert!(result.contains("nl"), "native_low must be substituted");
+        assert!(!result.contains("{NATIVE_HIGH}"), "no raw placeholders left");
+        assert!(!result.contains("{NATIVE_MID}"), "no raw placeholders left");
+        assert!(!result.contains("{NATIVE_LOW}"), "no raw placeholders left");
     }
 
     #[test]
@@ -505,36 +468,10 @@ mod tests {
     }
 
     #[test]
-    fn test_spec_tool_result_error_substitutes_placeholders() {
-        let result = tool_result_error("bad arg");
-        assert!(result.contains("bad arg"), "error must be substituted");
-        assert!(!result.contains("{ERROR}"), "no raw placeholders left");
-    }
-
-    #[test]
     fn test_spec_stream_error_substitutes_placeholders() {
         let result = stream_error("timed out");
         assert!(result.contains("timed out"), "msg must be substituted");
         assert!(!result.contains("{ERROR}"), "no raw placeholders left");
-    }
-
-    // spec (prompt-storage): config_starter_template substitutes all nine
-    // placeholders (three tiers × three backends).
-    #[test]
-    fn test_spec_config_starter_template_substitutes_placeholders() {
-        let result = config_starter_template("ch", "cm", "cl", "oh", "om", "ol", "nh", "nm", "nl");
-        assert!(result.contains("ch"), "claude_high must be substituted");
-        assert!(result.contains("cm"), "claude_mid must be substituted");
-        assert!(result.contains("cl"), "claude_low must be substituted");
-        assert!(result.contains("oh"), "opencode_high must be substituted");
-        assert!(result.contains("om"), "opencode_mid must be substituted");
-        assert!(result.contains("ol"), "opencode_low must be substituted");
-        assert!(result.contains("nh"), "native_high must be substituted");
-        assert!(result.contains("nm"), "native_mid must be substituted");
-        assert!(result.contains("nl"), "native_low must be substituted");
-        assert!(!result.contains("{CLAUDE_HIGH}"), "no raw placeholders left");
-        assert!(!result.contains("{OPENCODE_LOW}"), "no raw placeholders left");
-        assert!(!result.contains("{NATIVE_HIGH}"), "no raw placeholders left");
     }
 
     // spec (prompt-storage): triggered_system_msg substitutes placeholders

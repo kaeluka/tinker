@@ -338,7 +338,8 @@ pub fn count_tool_calls(output: &str) -> usize {
 }
 
 /// Extract file paths from Write/Edit tool-call lines in streamed output.
-/// This is an approximation based on the tool-call format from claude.rs.
+/// This matches the `→ Write <path>` / `→ Edit <path>` format the native
+/// backend emits via `prompts::tool_completed_with_summary`.
 pub fn extract_modified_files(output: &str) -> Vec<String> {
     let mut files = std::collections::BTreeSet::new();
     for line in output.lines() {

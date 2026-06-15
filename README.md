@@ -207,6 +207,10 @@ resolves without you brokering it.
 This is an actor model applied to specification documents. The goals are not
 passive files waiting for a human to notice conflicts. They are live sessions
 that can enforce their own constraints and consult peers to resolve ambiguity.
+Because the agent tool loop runs in-process, those constraints are enforced in
+code — tend is restricted to a narrow write scope and cannot run shell
+commands, while goal sessions get the full tool set. A goal that oversteps its
+boundary hits a code barrier, not a guideline.
 
 The consequence for you: you stay informed through tend's reports and the
 session logs, without ever having to read the code behind them. Cognitive debt
@@ -237,6 +241,13 @@ variables. Everything behind that is Tinker's job to keep straight.
 ---
 
 ## Installation
+
+Tinker talks to the OpenRouter API directly, with no CLI dependency.
+Set your API key before running:
+
+```
+export OPENROUTER_API_KEY="your-key-here"
+```
 
 Build from source:
 
@@ -274,15 +285,6 @@ text of the selected goal below it, and a log of whatever goal session is
 currently running. The prompt line in the conversation pane shows which
 agent is active. All text areas scroll with the mouse wheel. New content
 follows the bottom of the view unless you scroll up.
-
-Three backends are available:
-- **Default** — uses opencode with configurable models.
-- **Claude** — pass `--claude` to use the Claude CLI directly.
-- **Native** — pass `--native` to talk to OpenRouter directly, with no CLI
-  in between (requires `OPENROUTER_API_KEY`). The agent tool loop runs
-  in-process, which lets tinker enforce per-role capability boundaries in
-  code (tend cannot run bash and writes only under `.tinker/goals/`).
-  Experimental; intended to replace both CLI backends.
 
 ---
 

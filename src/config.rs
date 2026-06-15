@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::cap::Filesystem;
 
 #[derive(Debug, Default, Deserialize)]
-pub struct BackendModelConfig {
+pub struct NativeModelConfig {
     pub high: Option<String>,
     pub mid: Option<String>,
     pub low: Option<String>,
@@ -13,46 +13,20 @@ pub struct BackendModelConfig {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ModelConfig {
-    pub claude: Option<BackendModelConfig>,
-    pub opencode: Option<BackendModelConfig>,
-    pub native: Option<BackendModelConfig>,
+    pub native: Option<NativeModelConfig>,
 }
 
 impl ModelConfig {
-    pub fn claude_high<'a>(&'a self, default: &'a str) -> &'a str {
-        self.claude.as_ref().and_then(|c| c.high.as_deref()).unwrap_or(default)
-    }
-
-    pub fn claude_mid<'a>(&'a self, default: &'a str) -> &'a str {
-        self.claude.as_ref().and_then(|c| c.mid.as_deref()).unwrap_or(default)
-    }
-
-    pub fn claude_low<'a>(&'a self, default: &'a str) -> &'a str {
-        self.claude.as_ref().and_then(|c| c.low.as_deref()).unwrap_or(default)
-    }
-
-    pub fn opencode_high<'a>(&'a self, default: &'a str) -> &'a str {
-        self.opencode.as_ref().and_then(|c| c.high.as_deref()).unwrap_or(default)
-    }
-
-    pub fn opencode_mid<'a>(&'a self, default: &'a str) -> &'a str {
-        self.opencode.as_ref().and_then(|c| c.mid.as_deref()).unwrap_or(default)
-    }
-
-    pub fn opencode_low<'a>(&'a self, default: &'a str) -> &'a str {
-        self.opencode.as_ref().and_then(|c| c.low.as_deref()).unwrap_or(default)
-    }
-
     pub fn native_high<'a>(&'a self, default: &'a str) -> &'a str {
-        self.native.as_ref().and_then(|c| c.high.as_deref()).unwrap_or(default)
+        self.native.as_ref().and_then(|n| n.high.as_deref()).unwrap_or(default)
     }
 
     pub fn native_mid<'a>(&'a self, default: &'a str) -> &'a str {
-        self.native.as_ref().and_then(|c| c.mid.as_deref()).unwrap_or(default)
+        self.native.as_ref().and_then(|n| n.mid.as_deref()).unwrap_or(default)
     }
 
     pub fn native_low<'a>(&'a self, default: &'a str) -> &'a str {
-        self.native.as_ref().and_then(|c| c.low.as_deref()).unwrap_or(default)
+        self.native.as_ref().and_then(|n| n.low.as_deref()).unwrap_or(default)
     }
 }
 
@@ -68,20 +42,12 @@ pub fn load_model_config(fs: &dyn Filesystem, path: &Path) -> ModelConfig {
 pub fn write_starter_template(
     fs: &dyn Filesystem,
     path: &Path,
-    claude_defaults: [&str; 3],
-    opencode_defaults: [&str; 3],
     native_defaults: [&str; 3],
 ) -> Result<()> {
     if fs.read_to_string(path).is_ok() {
         return Ok(());
     }
     let template = crate::prompts::config_starter_template(
-        claude_defaults[0],
-        claude_defaults[1],
-        claude_defaults[2],
-        opencode_defaults[0],
-        opencode_defaults[1],
-        opencode_defaults[2],
         native_defaults[0],
         native_defaults[1],
         native_defaults[2],
@@ -105,8 +71,8 @@ mod tests {
     fn test_spec_load_model_config_returns_default_when_file_absent() {
         let fs = MockFs::new();
         let cfg = load_model_config(&fs, &config_path());
-        assert_eq!(cfg.claude_high("opus"), "opus");
-        assert_eq!(cfg.opencode_mid("mid-model"), "mid-model");
+        assert_eq!(cfg.native_high("opus"), "opus");
+        assert_eq!(cfg.native_mid("sonnet"), "sonnet");
     }
 
     // spec (model-config): when TOML is invalid, load returns default rather
@@ -116,49 +82,39 @@ mod tests {
         let fs = MockFs::new();
         fs.add_file(&config_path(), "not = valid [ toml garbage");
         let cfg = load_model_config(&fs, &config_path());
-        assert_eq!(cfg.claude_high("opus"), "opus");
+        assert_eq!(cfg.native_high("opus"), "opus");
     }
 
-    // spec (model-config): slots present in the config override the built-in
-    // default; absent slots still fall back to the default.
+    // spec (model-config): slots present in the [native] config override the
+    // built-in default; absent slots still fall back to the default.
     #[test]
     fn test_spec_load_model_config_overrides_present_slots_and_falls_back_for_absent() {
         let fs = MockFs::new();
         fs.add_file(
             &config_path(),
-            "[claude]\nhigh = \"claude-opus-4-7\"\n",
+            "[native]\nhigh = \"google/gemini-x\"\n",
         );
         let cfg = load_model_config(&fs, &config_path());
-        assert_eq!(cfg.claude_high("opus"), "claude-opus-4-7");
+        assert_eq!(cfg.native_high("opus"), "google/gemini-x");
         // absent slot falls back to default
-        assert_eq!(cfg.claude_mid("sonnet"), "sonnet");
-        // entirely absent backend section falls back to default
-        assert_eq!(cfg.opencode_high("openrouter/foo"), "openrouter/foo");
+        assert_eq!(cfg.native_mid("sonnet"), "sonnet");
     }
 
-    // spec (model-config): all six slots round-trip correctly when all are set.
+    // spec (model-config): all three slots round-trip correctly when all are set.
     #[test]
-    fn test_spec_load_model_config_parses_all_six_slots() {
+    fn test_spec_load_model_config_parses_all_three_slots() {
         let fs = MockFs::new();
         fs.add_file(
             &config_path(),
-            "[claude]\n\
-             high = \"ch\"\n\
-             mid  = \"cm\"\n\
-             low  = \"cl\"\n\
-             \n\
-             [opencode]\n\
-             high = \"oh\"\n\
-             mid  = \"om\"\n\
-             low  = \"ol\"\n",
+            "[native]\n\
+             high = \"nh\"\n\
+             mid  = \"nm\"\n\
+             low  = \"nl\"\n",
         );
         let cfg = load_model_config(&fs, &config_path());
-        assert_eq!(cfg.claude_high("x"), "ch");
-        assert_eq!(cfg.claude_mid("x"), "cm");
-        assert_eq!(cfg.claude_low("x"), "cl");
-        assert_eq!(cfg.opencode_high("x"), "oh");
-        assert_eq!(cfg.opencode_mid("x"), "om");
-        assert_eq!(cfg.opencode_low("x"), "ol");
+        assert_eq!(cfg.native_high("x"), "nh");
+        assert_eq!(cfg.native_mid("x"), "nm");
+        assert_eq!(cfg.native_low("x"), "nl");
     }
 
     // spec (model-config): write_starter_template does not overwrite an
@@ -170,8 +126,6 @@ mod tests {
         write_starter_template(
             &fs,
             &config_path(),
-            ["opus", "sonnet", "haiku"],
-            ["oc-h", "oc-m", "oc-l"],
             ["nat-h", "nat-m", "nat-l"],
         )
         .unwrap();
@@ -179,57 +133,40 @@ mod tests {
     }
 
     // spec (model-config): the starter template is written when no config file
-    // exists, and it contains both [claude] and [opencode] section headers.
+    // exists, and it contains the [native] section header.
     #[test]
     fn test_spec_write_starter_template_written_when_absent() {
         let fs = MockFs::new();
         write_starter_template(
             &fs,
             &config_path(),
-            ["opus", "sonnet", "haiku"],
-            ["openrouter/h", "openrouter/m", "openrouter/l"],
             ["nat-h", "nat-m", "nat-l"],
         )
         .unwrap();
         let content = fs.read_to_string(&config_path()).unwrap();
-        assert!(content.contains("[claude]"), "must contain [claude] section");
-        assert!(content.contains("[opencode]"), "must contain [opencode] section");
         assert!(content.contains("[native]"), "must contain [native] section");
+        // No per-backend sections outside [native] — the config governs the
+        // native backend only.
+        assert!(!content.contains("[claude]"), "must not contain [claude] section");
+        assert!(!content.contains("[opencode]"), "must not contain [opencode] section");
     }
 
-    // spec (model-config): the [native] section parses like the other two —
-    // present slots override, absent slots fall back.
+    // spec (model-config): the starter template lists all three slot keys
+    // (high, mid, low) under the [native] section.
     #[test]
-    fn test_spec_load_model_config_parses_native_slots() {
-        let fs = MockFs::new();
-        fs.add_file(
-            &config_path(),
-            "[native]\nhigh = \"google/gemini-x\"\n",
-        );
-        let cfg = load_model_config(&fs, &config_path());
-        assert_eq!(cfg.native_high("default-h"), "google/gemini-x");
-        assert_eq!(cfg.native_mid("default-m"), "default-m");
-        assert_eq!(cfg.native_low("default-l"), "default-l");
-    }
-
-    // spec (model-config): the starter template lists all six slot keys.
-    #[test]
-    fn test_spec_write_starter_template_contains_all_six_slot_keys() {
+    fn test_spec_write_starter_template_contains_all_three_slot_keys() {
         let fs = MockFs::new();
         write_starter_template(
             &fs,
             &config_path(),
             ["a", "b", "c"],
-            ["x", "y", "z"],
-            ["n1", "n2", "n3"],
         )
         .unwrap();
         let content = fs.read_to_string(&config_path()).unwrap();
-        // Each slot key must appear at least twice (once per backend section)
-        let occurrences = |key: &str| content.matches(key).count();
-        assert!(occurrences("high") >= 2, "high must appear for both backends");
-        assert!(occurrences("mid") >= 2, "mid must appear for both backends");
-        assert!(occurrences("low") >= 2, "low must appear for both backends");
+        // Each slot key must appear at least once (in the [native] section).
+        assert!(content.contains("high"), "high must appear");
+        assert!(content.contains("mid"), "mid must appear");
+        assert!(content.contains("low"), "low must appear");
     }
 
     // spec (model-config): every slot line in the starter template is commented
@@ -241,8 +178,6 @@ mod tests {
             &fs,
             &config_path(),
             ["opus", "sonnet", "haiku"],
-            ["oc-h", "oc-m", "oc-l"],
-            ["nat-h", "nat-m", "nat-l"],
         )
         .unwrap();
         let content = fs.read_to_string(&config_path()).unwrap();
@@ -268,18 +203,13 @@ mod tests {
         write_starter_template(
             &fs,
             &config_path(),
-            ["opus", "sonnet", "haiku"],
-            ["openrouter/google/gemini", "openrouter/deepseek/flash", "openrouter/google/lite"],
             ["google/gemini-native", "deepseek/flash-native", "google/lite-native"],
         )
         .unwrap();
         let content = fs.read_to_string(&config_path()).unwrap();
-        assert!(content.contains("opus"), "claude high default must appear");
-        assert!(content.contains("sonnet"), "claude mid default must appear");
-        assert!(content.contains("haiku"), "claude low default must appear");
-        assert!(content.contains("openrouter/google/gemini"), "opencode high default must appear");
-        assert!(content.contains("openrouter/deepseek/flash"), "opencode mid default must appear");
-        assert!(content.contains("openrouter/google/lite"), "opencode low default must appear");
+        assert!(content.contains("google/gemini-native"), "native high default must appear");
+        assert!(content.contains("deepseek/flash-native"), "native mid default must appear");
+        assert!(content.contains("google/lite-native"), "native low default must appear");
     }
 
     // spec (model-config): the starter template annotates each slot with the
@@ -290,14 +220,12 @@ mod tests {
         write_starter_template(
             &fs,
             &config_path(),
-            ["opus", "sonnet", "haiku"],
-            ["oc-h", "oc-m", "oc-l"],
             ["nat-h", "nat-m", "nat-l"],
         )
         .unwrap();
         let content = fs.read_to_string(&config_path()).unwrap();
-        assert!(content.contains("tinker") && content.contains("rummage") && content.contains("jog"),
-            "high tier annotation must name tinker, rummage, and jog");
+        assert!(content.contains("tend") && content.contains("rummage") && content.contains("jog"),
+            "high tier annotation must name tend, rummage, and jog");
         assert!(content.contains("goal sessions"),
             "mid tier annotation must name goal sessions");
         assert!(content.contains("cleanup"),

@@ -1,14 +1,13 @@
 id = "model-config"
 kind = "feature"
-summary = "This goal owns the .tinker/config.toml model-override file: nine optional per-backend tier slots (high/mid/low for claude, opencode, and native) that fall back to built-in defaults, plus the self-documenting starter template written only when no config file exists."
+summary = "This goal owns the .tinker/config.toml model-override file: three optional tier slots (high/mid/low) that fall back to built-in defaults, plus the self-documenting starter template written only when no config file exists."
 description = """
 ## WHAT
 A `.tinker/config.toml` file that overrides which model each tier
-uses, independently per backend. There are nine slots: the three model
-tiers — `high` (the smartest tier, used by `tend`, `rummage`, and
-`jog`), `mid` (the tier goal sessions run on), and `low` (the cheapest
-tier, used by cleanup) — each settable separately under a `[claude]`,
-an `[opencode]`, and a `[native]` section (native slots are OpenRouter
+uses. There are three slots: the three model tiers — `high` (the
+smartest tier, used by `tend`, `rummage`, and `jog`), `mid` (the tier
+goal sessions run on), and `low` (the cheapest tier, used by cleanup) —
+each settable under a `[native]` section (native slots are OpenRouter
 model ids). The file is TOML, so commented lines hold inactive
 alternates the user toggles in and out.
 
@@ -17,18 +16,17 @@ the model compiled in as that tier's built-in default, so an empty or
 missing config file changes nothing about how tinker runs.
 
 When no config file exists, tinker writes a self-documenting starter
-template: all three backend sections present, every slot listed but
-commented out, each annotated with its consuming agents and showing
-the current built-in default value on the commented line. The user
-uncomments and edits rather than looking up model names or slot
-identifiers.
+template: the native section present, every slot listed but commented
+out, each annotated with its consuming agents and showing the current
+built-in default value on the commented line. The user uncomments and
+edits rather than looking up model names or slot identifiers.
 
 ## WHY
 The user wants to choose the model for each tier — to experiment and
 to control cost — without editing source code or memorizing model
 identifiers. Comments are the switching mechanism: keeping several
 candidate models in the file and toggling which is active is faster
-than rewriting a value each time. Per-tier rather than per-backend
+than rewriting a value each time. Per-tier rather than per-role
 granularity is the point, because mixing tiers — a strong model for
 `high`, a cheap one for `mid` — is exactly the kind of experiment the
 user runs. Optional slots keep the file as sparse as the user wants — they
@@ -37,10 +35,8 @@ write only the slots they currently care about.
 Slots are named by capability, not role, because the top tier is
 shared by three agents — a role name would mislead.
 
-The config governs model choice only: it does not persist the backend
-selection itself (`--claude`/`--native` stay startup flags, owned by
-`backends`), and it does not validate model names — an unrecognized
-name surfaces as whatever the backend does with it.
+The config governs model choice only: it does not validate model names
+— an unrecognized name surfaces as whatever the backend does with it.
 
 """
 parent_id = "backends"
@@ -48,4 +44,4 @@ children = []
 
 [[related]]
 id = "coding-standards"
-reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
+reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
