@@ -1,0 +1,21 @@
+id = "tend-write-restriction"
+kind = "feature"
+summary = "Tend's write-permission check evaluates equivalent filesystem paths identically."
+description = """
+## WHAT
+Tend can only write to goal files within the `.tinker/goals/` directory, a constraint enforced by `backends`'s ToolPolicy layer. This goal ensures that the permission check correctly recognizes equivalent path expressions: an absolute path, a relative path with parent-directory references, and a symlink-resolved variant all referring to the same file on disk must produce the same permission outcome.
+
+## WHY
+When the same file can be addressed through different textual path representations, the permission check must resolve them to their canonical form before comparison. Literal string matching would incorrectly deny valid writes (e.g., absolute paths or paths containing `/../`) while the restriction's intent is simply to limit tend to the goals directory.
+
+The implementation preserves prior behavior when canonical resolution isn't possible — if the check cannot determine equivalence, it falls back to the original string comparison rather than introducing new denial cases.
+"""
+parent = "goal-agents"
+
+[[related]]
+id = "backends"
+reason = "backends owns the ToolPolicy layer where this restriction is enforced; the correctness principle this goal owns must be implemented in backends' write-permission check"
+
+[[related]]
+id = "no-peek"
+reason = "no-peek established that agents access peer context through @-messages rather than direct file reads; this write restriction is the complementary constraint on tend's own file access scope"
