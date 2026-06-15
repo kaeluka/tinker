@@ -312,6 +312,19 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
+    // The native backend (the sole backend) needs an OpenRouter API key from the
+    // environment. Validate it up front so a missing key fails fast and loud
+    // here — before the TUI starts — rather than letting every session crash
+    // into a silent, unbounded silence-nudge cascade once tinker is running.
+    if std::env::var(native::API_KEY_ENV).map(|k| k.trim().is_empty()).unwrap_or(true) {
+        println!(
+            "error: {env} is not set — tinker needs an OpenRouter API key to run.\n\
+             Set it and retry, e.g.:\n\n    export {env}=sk-or-...\n",
+            env = native::API_KEY_ENV,
+        );
+        std::process::exit(1);
+    }
+
     let work_dir = std::env::current_dir()?;
     let primary_tinker_dir = work_dir.join(".tinker");
     fs.mkdir_all(&primary_tinker_dir.join("goals"))?;
@@ -2838,10 +2851,32 @@ mod tests {
         );
     }
 
-    // spec (startup-args): --native and --claude are mutually exclusive, and
-    // --native without OPENROUTER_API_KEY exits with a clear error before the
-    // TUI starts (easier-setup driver: misconfiguration fails fast and loud).
+    // spec (backends): the native backend's required env var (OPENROUTER_API_KEY)
+    // is validated at startup — a missing/empty key prints a clear error and exits
+    // before the TUI starts (enable_raw_mode), rather than letting every session
+    // crash into a silent, unbounded silence-nudge cascade. Misconfiguration fails
+    // fast and loud.
     #[test]
+    fn test_spec_missing_api_key_exits_before_tui() {
+        let main_rs = include_str!("main.rs");
+        // The check reads the key env var; its first occurrence is the production
+        // guard, which must precede TUI acquisition (enable_raw_mode call).
+        let key_pos = main_rs
+            .find("native::API_KEY_ENV")
+            .expect("startup API-key check must reference native::API_KEY_ENV in main.rs");
+        let tui_pos = main_rs
+            .find("enable_raw_mode()?")
+            .expect("enable_raw_mode() call must exist in main.rs");
+        assert!(
+            key_pos < tui_pos,
+            "API-key check (pos {key_pos}) must appear before enable_raw_mode() call (pos {tui_pos})",
+        );
+        assert!(
+            main_rs.contains("tinker needs an OpenRouter API key to run"),
+            "the missing-key error must explain that a key is required to run",
+        );
+    }
+
     // spec (backends): oc_tend's native runner must be constructed with a system prompt so the
     // file-access boundary arrives as a persistent system message, not a user-turn instruction.
     // NativeRunner::new must not be used for the oc_tend slot — without the struct-level

@@ -7,6 +7,8 @@ Tinker runs against a single backend: the native implementation, which talks to 
 
 **System prompt.** Native delivers an identical system prompt to every goal agent session — the framework preamble (owned by `goal-agents`) plus the goal's full description and neighbor table — as the first system message of the in-memory session. The trigger reason is sent as the first turn message. Tend receives a different system prompt.
 
+**Startup precondition.** The OpenRouter API key is required: tinker validates it at startup and, if it is unset or empty, prints a clear error and exits before the TUI starts. Failing fast here avoids the alternative — every session crashing on the missing key, producing empty output that the silence-detection re-nudges into an unbounded cascade.
+
 **Tool loop.** Native runs the agent loop in-process: it calls OpenRouter's chat-completions API (key from the environment, never stored in config) and executes tool calls itself — exactly six tools: bash, read, write, edit, glob, grep. Because tinker owns the tool executor, file-access boundaries are enforced in code via a per-role tool policy: tend gets restricted tool access and a narrowed write scope (the goals directory); goal sessions — including cleanup, which runs as a goal session like any other — get the full unrestricted tool set. A policy denial is returned to the model as a tool error it can adapt to. Sessions are in-memory only — a restart starts all sessions fresh. Context overflow fails visibly: the session is dropped and the next dispatch starts fresh.
 
 Which model fills each tier is overridable at runtime through `model-config`; the native defaults are the built-in fallback.
