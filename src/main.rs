@@ -2999,21 +2999,24 @@ mod tests {
         );
     }
 
-    // spec (tend, goal-agents): the startup-silence init prompt must instruct
-    // tend to produce no output on startup. Both compact and full-context variants
-    // must carry this instruction so the TUI suppression is paired with a
-    // corresponding model instruction, not just a rendering gate.
+    // spec (tend, goal-agents): the tend init prompt must NOT instruct silence.
+    // The sole mechanism for hiding tend's startup response is the TUI's
+    // `user_has_interacted` gate (tested below). The init prompt was previously
+    // paired with a "produce no output" instruction, and the redundancy
+    // combined with the silence-detection follow-up to create an infinite
+    // batch-cycling loop on startup. Asserting the prompt's silence-instruction
+    // absence is a regression guard against re-introducing that pairing.
     #[test]
-    fn test_spec_tend_startup_silence_prompt_instructs_no_output() {
+    fn test_spec_tend_init_prompt_does_not_instruct_silence() {
         let compact = tend_init_prompt("[]", "");
         assert!(
-            compact.contains("no output") || compact.contains("produce no"),
-            "compact startup prompt must instruct tend to produce no output",
+            !compact.contains("produce no output") && !compact.contains("no greeting"),
+            "compact startup prompt must not carry a silence instruction (TUI is the sole suppression)",
         );
         let full = tend_init_prompt_full_context("[]", "");
         assert!(
-            full.contains("no output") || full.contains("produce no"),
-            "full-context startup prompt must instruct tend to produce no output",
+            !full.contains("produce no output") && !full.contains("no greeting"),
+            "full-context startup prompt must not carry a silence instruction (TUI is the sole suppression)",
         );
     }
 

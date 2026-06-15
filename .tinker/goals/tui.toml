@@ -25,10 +25,10 @@ session with `/<goal-id>` immediately loads that session's full
 accumulated conversation into the pane, then streams new output from
 that session going forward.
 
-Tend's startup output — produced in response to its startup-silence
-init message, before the user has typed anything — is not rendered
-in the conversation pane. The first entry the user sees is their own
-first message.
+Tend's startup output is not rendered in the conversation pane — the
+TUI suppresses it. The model produces output eagerly on startup but
+the user sees canned startup text instead. All other sessions start
+lazily on first `@goal-id` message.
 
 In the goal list, each row shows the goal id in bold followed by the
 goal's summary. Only the list is selectable — the text beneath is
@@ -158,7 +158,7 @@ reason = "owns the visual de-emphasis of packaged goals in the goal list and det
 
 [[related]]
 id = "goal-agents"
-reason = "goal-agents defines the session registry (making /<goal-id> switching universal), the tier field and its session-start resolution, and the startup-silence exception for tend. TUI suppression of tend's startup output and the detail-pane tier/kind tag display are governed here."
+reason = "goal-agents defines the session registry (making /<goal-id> switching universal), the tier field and its session-start resolution, and the eager-start exception for tend. TUI suppression of tend's startup output (the sole suppression mechanism) and the detail-pane tier/kind tag display are governed here."
 
 [[related]]
 id = "coding-standards"
