@@ -64,16 +64,16 @@ reason = "This stack is the layered form of `user-system-interaction`'s should/i
 
 [[related]]
 id = "goal-complementarity"
-reason = "The complementarity principle governs how goal domains are assigned and kept distinct across the cycle. `goal-complementarity` is the design constraint that makes the four-goal structure non-arbitrary. Asymmetric: `goal-complementarity` is a global goal and cannot carry a back-link to this project-local goal."
+reason = "The complementarity principle governs how goal domains are assigned and kept distinct across the cycle. `goal-complementarity` is the design constraint that makes the four-goal structure non-arbitrary. Asymmetric: `goal-complementarity` is a packaged goal and cannot carry a back-link to this project-local goal."
 
 [[related]]
 id = "tend"
-reason = "Tend owns the intent↔spec forward adjacency — builds the spec from the user's intent. Asymmetric: `tend` is a global goal and cannot carry a back-link to this project-local goal."
+reason = "Tend owns the intent↔spec forward adjacency — builds the spec from the user's intent. Asymmetric: `tend` is a packaged goal and cannot carry a back-link to this project-local goal."
 
 [[related]]
 id = "rummage"
-reason = "Rummage owns the spec↔code backward adjacency — audits whether the code satisfies the spec. Asymmetric: `rummage` is a global goal and cannot carry a back-link to this project-local goal."
+reason = "Rummage owns the spec↔code backward adjacency — audits whether the code satisfies the spec. Asymmetric: `rummage` is a packaged goal and cannot carry a back-link to this project-local goal."
 
 [[related]]
 id = "jog"
-reason = "Jog owns the intent↔spec backward adjacency — audits whether the spec still reflects the user's intent. Asymmetric: `jog` is a global goal and cannot carry a back-link to this project-local goal."
+reason = "Jog owns the intent↔spec backward adjacency — audits whether the spec still reflects the user's intent. Asymmetric: `jog` is a packaged goal and cannot carry a back-link to this project-local goal."

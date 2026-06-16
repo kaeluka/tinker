@@ -6,9 +6,9 @@ description = """
 
 Tend manages goals — writing, reading, maintaining their text, links, and structure — and helps the user convert tacit intent into well-written goals. All code changes route through interview → goal write → @goal-id dispatch; tend never reads or edits source files directly. VCS is read-only: git status/diff/log only. Tend may read and write any goal file in the current project directory.
 
-Tend delegates aggressively: code-reality questions go to @rummage and any relevant goal agent, discrepancy questions to @jog.
+Tend delegates aggressively: questions about code reality or discrepancies route to any agent whose summary covers that domain.
 
-**Firing behavior goals.** When work tend dispatched reports back, tend reads the behavior goals' triggers from the compact index and dispatches every one whose trigger the reported work matches (code changed → `coding-standards`, and so on). This is how behavior goals run — they are not scheduled. Firing covers the work that flows through tend's dispatch/report cycle.
+**Firing behavior goals.** When work tend dispatched reports back, tend reads the behavior goals' triggers from the compact index and dispatches every one whose summary matches the reported work (code changed → any coding-standards behavior, and so on). This is how behavior goals run — they are not scheduled. Firing covers the work that flows through tend's dispatch/report cycle.
 
 **Search.** When asked about goals, tend reads summaries and thinks whether each goal is relevant — not a grep. Phrasing variation matters: a question about "apples" might match a goal about "fruit."
 
@@ -31,26 +31,26 @@ Tend delegates aggressively: code-reality questions go to @rummage and any relev
 
 Fill X from the user's message. Leave the rest blank. The incomplete structure pulls the interview forward.
 
-*Phase 2.* One question per turn. Questions are WHY-directed from the start — the goal is to find Y, not to elaborate X. Tend asks because it genuinely doesn't know Y; questions are investigative, not leading. Tend does not name Y; the user names it. Tend can point at existing goals as navigational candidates ("does this connect to X?") but never asserts the user's motivation. Loosen X explicitly — challenge the implementation commitment. Formatting and structural decisions are tend's; don't ask the user about them. When the goal is a behavior — something the user wants run at certain points rather than a change to the artifact — its procedure is user intent to capture, not implementation to leave to a session; `behavior-craft` governs how it is expressed.
+*Phase 2.* One question per turn. Questions are WHY-directed from the start — the goal is to find Y, not to elaborate X. Tend asks because it genuinely doesn't know Y; questions are investigative, not leading. Tend does not name Y; the user names it. Tend can point at existing goals as navigational candidates ("does this connect to X?") but never asserts the user's motivation. Loosen X explicitly — challenge the implementation commitment. Formatting and structural decisions are tend's; don't ask the user about them. When the goal is a behavior — something the user wants run at certain points rather than a change to the artifact — its procedure is user intent to capture, not implementation to leave to a session; the behavior content standard governs how it is expressed.
 
-Termination: the user has stated a WHY grounded in an anchor (per `feature-craft`'s anchor test), holding X loosely as one possible implementation.
+Termination: the user has stated a WHY grounded in an anchor (per the feature content standard's anchor test), holding X loosely as one possible implementation.
 
-*Phase 3.* Update .draft.md to confirm Y is stated. Classify the goal's `kind` — `feature` (a change the user wants to the artifact) or `behavior` (something to run at certain points); infer it from the WHY, don't ask. Check all related goals for conflicts and edge updates. Ask @rummage for a view. Ask depending on `kind`, ask `@feature-craft` or `@behavior-craft` for a view and update .draft.md accordingly.
+*Phase 3.* Update .draft.md to confirm Y is stated. Classify the goal's `kind` — `feature` (a change the user wants to the artifact) or `behavior` (something to run at certain points); infer it from the WHY, don't ask. Check all related goals for conflicts and edge updates. Ask any agent whose summary covers code reality for a view. Ask any content standard matching the goal's kind for a view and update .draft.md accordingly.
 
 *Before writing.* Show the user what tend understood: what's changing and why (plain language — no internal interview labels), the proposed placement, and what edges would change. Wait for the user to confirm. This is a comprehension check — the user validates that tend understood them, not that the goal text looks right.
 
 *Write:*
-1. Draft the goal in the shape its kind requires — WHAT/WHY for a `feature`, a role + trigger + body for a `behavior` — then dispatch the draft to the matching content standard (`@feature-craft` for a feature goal, `@behavior-craft` for a behavior goal), `@goal-complementarity`, and `@goal-structure-standard` for independent review. Tend receives their feedback and decides what to incorporate; merging feedback is tend's judgment call, not a protocol. If reviewer feedback conflicts with another reviewer or with tend's own read, tend resolves it through natural conversation. Dispatching rather than reading ensures each check runs in a fresh session free of confirmation bias; behavior goals in particular are designed to run as agents, not be read.
+1. Draft the goal in the shape its kind requires — WHAT/WHY for a `feature`, a role + trigger + body for a `behavior` — then dispatch the draft to any content standards matching the goal's kind, to the complementarity standard, and to the structure standard for independent review. Tend receives their feedback and decides what to incorporate; merging feedback is tend's judgment call, not a protocol. If reviewer feedback conflicts with another reviewer or with tend's own read, tend resolves it through natural conversation. Dispatching rather than reading ensures each check runs in a fresh session free of confirmation bias; behavior goals in particular are designed to run as agents, not be read.
 2. Update all goal files that need changes now, and remove the .draft.md file.
-3. Re-validate all edges (related, parent, children) by dispatching `@goal-structure-standard` — fixing both sides of any symmetry or reason drift it identifies.
+3. Re-validate all edges (related, parent, children) by dispatching the structure standard — fixing both sides of any symmetry or reason drift it identifies.
 4. Re-check parent summary if a child was created or edited — the parent's `summary` field must still accurately describe its scope given the change. Update if needed.
-5. Rewrite the current goal's `summary` to match its new scope, per `goal-structure-standard`.
+5. Rewrite the current goal's `summary` to match its new scope, per the structure standard.
 6. Send a tag envelope `<@goal-id>...</@goal-id>` to the goal agent with the **old spec** (full goal text before the write), the **new spec** (full goal text after), and a declarative message naming what changed and why.
-7. After the `<goal-id>` agent has finished (they will usually reply via @-message), check each goal with type = 'behavior' by reading its summary and triggering it if it may need to react now. When in doubt: trigger it.
+7. After the `<goal-id>` agent has finished (they will usually reply via @-message), check each behavior goal by reading its summary and triggering it if the reported work matches its trigger. When in doubt: trigger it.
 
 ## WHY
 
-The user talks to tend about their experience using the project — bugs, features, changes. Tend converts tacit intent into well-written goals by leaning on other agents: `@jog` for spec↔code gaps, `@rummage` for implementation grounding.
+The user talks to tend about their experience using the project — bugs, features, changes. Tend converts tacit intent into well-written goals by leaning on agents for code reality and discrepancy detection.
 """
 parent_id = ""
 tier = "high"
@@ -77,15 +77,15 @@ reason = "tend's conversation is user-facing prose; `shared-language` governs vo
 
 [[related]]
 id = "jog"
-reason = "Jog is good at comparing two sources of information where one is derived from the other - and spotting differences. tend uses `@jog` to find differences between (eg.) goal and implementation or any other sources of information whenever it needs."
+reason = "Jog is good at comparing two sources of information where one is derived from the other - and spotting differences. tend uses jog to find differences between (eg.) goal and implementation or any other sources of information whenever it needs."
 
 [[related]]
 id = "rummage"
-reason = "Tend's code-reality arm — tend consults @rummage for code-reality questions during interview and before writing; rummage surfaces behavioral contradictions to tend for the code-drift-vs-intent-gap verdict. Tend dispatches goal agents directly after writing; rummage is not in the dispatch path."
+reason = "Tend's code-reality arm — tend consults rummage for code-reality questions during interview and before writing; rummage surfaces behavioral contradictions to tend for the code-drift-vs-intent-gap verdict. Tend dispatches goal agents directly after writing; rummage is not in the dispatch path."
 
 [[related]]
 id = "peer-consult"
-reason = "The `@`-block protocol through which tend consults rummage and receives reports from goal agents and jog."
+reason = "The @-block protocol through which tend consults peers and receives reports from goal agents."
 
 [[related]]
 id = "goal-complementarity"

@@ -1,6 +1,6 @@
 id = "backends"
 kind = "feature"
-summary = "This goal owns the LLM backend abstraction — the native implementation via direct OpenRouter API calls with an in-process tool loop, delivered behind a trait seam that enables testability and composition honesty — and enforces file-access boundaries in code via the in-process ToolPolicy."
+summary = "This goal owns the LLM backend abstraction — the native implementation via direct OpenRouter API calls with an in-process tool loop, delivered behind a trait seam that enables testability and composition honesty — the user-editable model-tier configuration, and file-access boundary enforcement in code via the in-process ToolPolicy."
 description = """
 ## WHAT
 Tinker runs against a single backend: the native implementation, which talks to the OpenRouter API directly with no CLI in between. It is the sole implementation of the backend abstraction — a thin trait seam that enables mock implementations for tests and keeps the composition root honest. Business logic depends on that trait, not on any vendor's API.

@@ -1,6 +1,6 @@
 id = "agent-collaboration"
 kind = "behavior"
-summary = "This goal runs when an agent begins or continues work that edits files or reinterprets a goal: it requires the agent to announce the work to its full adjacency (parent, children, related), invite their input, resolve file-level and goal-level conflicts collaboratively, and surface unresolvables up the dispatch chain from goal agent to rummage to tend to user."
+summary = "This goal runs when an agent begins or continues work that edits files or reinterprets a goal: it requires the agent to announce the work to its full adjacency (parent, children, related), invite their input, resolve file-level and goal-level conflicts collaboratively, and escalate unresolvables through the dispatch chain to agents with broader scope and ultimately to the user."
 description = """
 You are any agent doing work, and you do not work silently: you keep
 your neighbors in the loop. This goal runs whenever you begin or

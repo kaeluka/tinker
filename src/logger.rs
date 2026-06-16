@@ -141,6 +141,32 @@ pub enum LogEvent {
         success: bool,
         error: Option<String>,
     },
+    /// Emitted at session-registry population when a goal id is found at
+    /// multiple `.tinker` discovery tiers. `goal_id` is the colliding id;
+    /// `contributors` is the ordered list of `(tier_label, path)` pairs
+    /// (the first entry is the winning copy; subsequent entries are
+    /// duplicates that were ignored).
+    ///
+    /// Each contributor is `(tier_label, path)`. Tier labels are
+    /// `goal`-side strings — `"project-local"`, `"ancestor global"`,
+    /// `"packaged"`, `"binary-relative-packaged"` today — but the set
+    /// is open: any new tier added by `goal::tier_label` (or a new
+    /// `*_TIER` constant) flows through verbatim. The test at lines
+    /// 1031-1033 pins this openness — the example list above is
+    /// illustrative, not a closed universe.
+    ///
+    /// This event parallels the user-visible system message emitted by
+    /// `goal-agents`'s startup diagnostic — both surface the same
+    /// structural fact so silent overrides never go unnoticed, and both
+    /// are emitted only when the contributing set actually changes
+    /// (the watcher diffs against the last-seen set, so an unchanged
+    /// collision produces no event and no system message on a re-cycle).
+    /// The structured event carries the same data the system message
+    /// renders, so a `jq` query can recover it without parsing prose.
+    GoalCollision {
+        goal_id: String,
+        contributors: Vec<(String, String)>,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -1002,4 +1028,93 @@ mod tests {
         );
     }
 
+    // spec (tend-introspection / goal-agents): cross-tier goal collisions are
+    // captured as a structured `goal_collision` event paralleling the
+    // user-visible system message that `goal-agents`'s startup diagnostic
+    // emits. The event carries the colliding `goal_id` and an ordered
+    // `contributors` list of `(tier_label, path)` pairs, where the first
+    // entry is the winning copy and subsequent entries are duplicates that
+    // were ignored. Tier labels are open: `"project-local"`,
+    // `"ancestor global"`, `"packaged"` are the current set; new tiers may
+    // be added by `goal::tier_label` without changing this event's shape.
+    //
+    // The event is not state-changing — apply_to_state must return false,
+    // so it never triggers a state-snapshot write. The collision is a
+    // historical record, not a live UI fact.
+    #[test]
+    fn test_spec_goal_collision_event_serializes_with_contributors() {
+        let event = LogEvent::GoalCollision {
+            goal_id: "shared".to_string(),
+            contributors: vec![
+                (
+                    "project-local".to_string(),
+                    "/proj/.tinker/goals/shared.toml".to_string(),
+                ),
+                (
+                    "ancestor global".to_string(),
+                    "/home/.tinker/goals/shared.toml".to_string(),
+                ),
+            ],
+        };
+        let entry = LogEntry {
+            ts: "2026-07-15T00:00:00Z".to_string(),
+            source: "goal-agents".to_string(),
+            event,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        // kind discriminator — snake_case, like every other event.
+        assert_eq!(val["kind"], "goal_collision", "kind must be snake_case goal_collision");
+        // ts + source pass through unchanged.
+        assert_eq!(val["ts"], "2026-07-15T00:00:00Z");
+        assert_eq!(val["source"], "goal-agents", "source names the emitting component");
+        // goal_id round-trips.
+        assert_eq!(val["goal_id"], "shared");
+        // contributors is an array of [tier, path] pairs, in load order.
+        // Tuples serialize as JSON arrays in serde_json.
+        let contribs = val["contributors"].as_array()
+            .expect("contributors must serialize as a JSON array");
+        assert_eq!(contribs.len(), 2, "both contributing tiers must be present");
+        assert_eq!(contribs[0][0], "project-local", "first contributor is the winner");
+        assert_eq!(contribs[0][1], "/proj/.tinker/goals/shared.toml");
+        assert_eq!(contribs[1][0], "ancestor global", "later entries are duplicates");
+        assert_eq!(contribs[1][1], "/home/.tinker/goals/shared.toml");
+
+        // Single-contributor edge case: a single-contributor collision is
+        // structurally possible (a future tier-label consolidation could
+        // produce one) — the array must serialize as a length-1 vec, not
+        // be dropped. The "no collision" case (empty vec) cannot happen
+        // because `load_all_goals` only emits GoalCollision entries when
+        // there is at least one duplicate, but the event must still
+        // round-trip cleanly if it ever does.
+        let single = LogEvent::GoalCollision {
+            goal_id: "only".to_string(),
+            contributors: vec![(
+                "project-local".to_string(),
+                "/proj/.tinker/goals/only.toml".to_string(),
+            )],
+        };
+        let entry_single = LogEntry {
+            ts: "2026-07-15T00:00:00Z".to_string(),
+            source: "goal-agents".to_string(),
+            event: single,
+        };
+        let json_single = serde_json::to_string(&entry_single).unwrap();
+        let val_single: serde_json::Value = serde_json::from_str(&json_single).unwrap();
+        assert_eq!(val_single["kind"], "goal_collision");
+        assert_eq!(val_single["goal_id"], "only");
+        assert_eq!(val_single["contributors"].as_array().unwrap().len(), 1);
+
+        // The event is not state-changing — apply_to_state returns false,
+        // so emitting it never causes a state-snapshot write. The state
+        // file only mirrors live UI facts; a goal-collision is a historical
+        // record, not a UI fact.
+        let mut state = StateSnapshot::default();
+        let changed = apply_to_state(&entry, &mut state);
+        assert!(
+            !changed,
+            "GoalCollision must not mark state dirty"
+        );
+    }
 }

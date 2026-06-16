@@ -1319,7 +1319,7 @@ mod tests {
             related: vec![],
             tier: None,
             kind: None,
-            source_path: Some(PathBuf::from("/home/.tinker/goals/tui.toml")),
+            source_path: Some(PathBuf::from("/home/.tinker/goals/packaged-goals/tui.toml")),
         };
         app.goals = vec![packaged];
 
@@ -1513,7 +1513,7 @@ mod tests {
             related: vec![],
             tier: None,
             kind: None,
-            source_path: Some(PathBuf::from("/home/.tinker/goals/tui.toml")),
+            source_path: Some(PathBuf::from("/home/.tinker/goals/packaged-goals/tui.toml")),
         };
         app.goals = vec![packaged];
 
@@ -1562,7 +1562,7 @@ mod tests {
             related: vec![],
             tier: None,
             kind: None,
-            source_path: Some(PathBuf::from("/home/.tinker/goals/tui.toml")),
+            source_path: Some(PathBuf::from("/home/.tinker/goals/packaged-goals/tui.toml")),
         };
         app.goals = vec![packaged];
 

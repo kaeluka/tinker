@@ -268,17 +268,27 @@ Add the binary to your PATH:
 export PATH="$PATH:/path/to/tinker/target/release"
 ```
 
-Tinker ships with a set of packaged goals — built-in goals that apply to
-every project. To make them available, symlink the `packaged-goals/`
-directory into `~/.tinker`:
+**Goal discovery** works across three tiers, from most to least specific:
 
-```
-ln -s /path/to/tinker/packaged-goals ~/.tinker/packaged-goals
-```
+1. **Project-local** — Goals in `.tinker/goals/` within your project. These
+   are where you record project-specific intent, and they override everything
+   else.
 
-Tinker merges goal directories from your home directory down to your project.
-The symlink puts the packaged goals in the ancestor position, so any project
-inherits them without copying files.
+2. **Ancestor-global** — Goals in `.tinker/goals/` directories found by
+   walking up from the project root (for example, `~/.tinker/goals/` for
+   goals that apply to all your projects). Use this when you want a goal to
+   follow you across work.
+
+3. **Packaged goals** — Goals that ship with tinker itself. These provide
+   sensible defaults and apply to every project. Tinker looks for them at
+   `<binary>/../../.tinker/goals/packaged-goals/`, relative to the binary
+   location. The discovery mechanism is implemented, but the deployment
+   step that populates this directory during build or install is not yet
+   wired up — you'll need to place the packaged-goals there manually for
+   now.
+
+When the same goal exists in multiple tiers, the most specific one wins:
+project-local overrides ancestor-global, which overrides packaged.
 
 Run tinker from your project directory:
 

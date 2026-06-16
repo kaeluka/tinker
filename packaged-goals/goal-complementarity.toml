@@ -46,11 +46,11 @@ reason = "Tend dispatches the draft to this goal before every write for independ
 
 [[related]]
 id = "rummage"
-reason = "Rummage's domain (behavioral execution oracle — establishes what the running system actually does by executing it) is named here as one of the anchor boundaries. Pull `rummage` when auditing whether the behavior-oracle role is correctly scoped."
+reason = "Rummage's domain (behavioral execution oracle — establishes what the running system actually does by executing it) is named here as one of the anchor boundaries; this goal is where the behavior-oracle role gets scoped."
 
 [[related]]
 id = "jog"
-reason = "Jog's domain (bidirectional discrepancy finding, read-only delegation to peer goals) is named here as one of the anchor boundaries. Pull `jog` when auditing whether the discrepancy-finding role is correctly scoped."
+reason = "Jog's domain (bidirectional discrepancy finding, read-only delegation to peer goals) is named here as one of the anchor boundaries; this goal is where the discrepancy-finding role gets scoped."
 
 [[related]]
 id = "goal-structure-standard"

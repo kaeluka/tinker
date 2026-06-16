@@ -25,7 +25,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use goal::{discover_tinker_dirs, load_all_goals, Goal};
+use goal::{discover_tinker_dirs, load_all_goals};
 use goal_session::SessionEvent;
 use native::{NativeRunner, ToolPolicy, GOAL_MODEL as NATIVE_GOAL_MODEL, TINKER_MODEL as NATIVE_TINKER_MODEL, SCHEDULER_MODEL as NATIVE_SCHEDULER_MODEL};
 use ratatui::{backend::CrosstermBackend, Terminal};
@@ -35,18 +35,15 @@ use tokio::sync::mpsc;
 
 type RunnerSet = (Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>, Arc<dyn OpenCodeRunner>);
 
-fn packaged_tend_goal() -> Goal {
-    const TOML: &str = include_str!("../packaged-goals/tend.toml");
-    toml::from_str(TOML).expect("packaged tend.toml must be valid Goal TOML")
-}
-
 /// System prompt for tend under the native backend. Leads with the
 /// file-scope boundary so it arrives as a system-level constraint, not a
 /// buried instruction in a user-turn message. tend's behaviour is governed
-/// by the tend goal description (appended below); the file-scope line is the
-/// prompt-level boundary that stands in for harness enforcement.
-fn tend_system_prompt() -> String {
-    prompts::tend_system_prompt(&packaged_tend_goal().description)
+/// by the tend goal description (passed in by the caller, loaded from
+/// `goal-storage`'s registry — never embedded at compile time); the
+/// file-scope line is the prompt-level boundary that stands in for harness
+/// enforcement.
+fn tend_system_prompt(tend_description: &str) -> String {
+    prompts::tend_system_prompt(tend_description)
 }
 
 fn tend_init_prompt(goals_summary: &str, neighbor_section: &str) -> String {
@@ -356,10 +353,35 @@ async fn main() -> Result<()> {
     )?;
     let model_config = config::load_model_config(fs.as_ref(), &config_path);
 
+    // Discover all .tinker dirs from cwd up. Nearest first. Must run before
+    // goal loading so the runner construction below can pull tend's
+    // description from the loaded goals — there is no compile-time embed of
+    // the tend TOML anymore (single source of truth: the on-disk file).
+    let tinker_dirs = discover_tinker_dirs(fs.as_ref(), &work_dir);
+    let initial_load = load_all_goals(fs.as_ref(), &tinker_dirs)?;
+
+    // Resolve tend's description from the loaded goals. The packaged-goals/
+    // subdir is the loader's "fill in the default" pass, so a tend goal
+    // must be present after the load — its absence means the binary's
+    // packaged-goals/ is missing or unreadable, which is a deployment
+    // error we want to surface loudly here, not via a later silent failure
+    // when tend's first turn produces an empty system prompt.
+    let tend_description = initial_load
+        .goals
+        .iter()
+        .find(|g| g.id == "tend")
+        .map(|g| g.description.clone())
+        .expect(
+            "tend goal not found in loaded goals — the binary's \
+             .tinker/goals/packaged-goals/tend.toml must be present and parseable",
+        );
+
     // Five native runner instances:
-    //   oc_tend        — exclusive to tend; carries tend_system_prompt() as a persistent
-    //                    struct-level fallback so tend's file-scope boundary is enforced
-    //                    on every turn (including turn 2+ where no per-call prompt is set).
+    //   oc_tend        — exclusive to tend; carries tend_system_prompt(tend_description)
+    //                    as a persistent struct-level fallback so tend's file-scope
+    //                    boundary is enforced on every turn (including turn 2+ where
+    //                    no per-call prompt is set). The description is the runtime-
+    //                    discovered one (no compile-time embed).
     //                    ToolPolicy::TendScope strips bash and narrows writes to
     //                    .tinker/goals/ — enforced in-process.
     //   oc_goal_high   — high-tier non-tend goal agents (rummage, jog, …)
@@ -370,7 +392,7 @@ async fn main() -> Result<()> {
     let goal_m = model_config.native_mid(NATIVE_GOAL_MODEL);
     let cleanup_m = model_config.native_low(NATIVE_SCHEDULER_MODEL);
     let (oc_tend, oc_goal_high, oc_goal, oc_goal_low, oc_cleanup_runner): RunnerSet = (
-        Arc::new(NativeRunner::with_system_prompt(tinker_m, tend_system_prompt(), ToolPolicy::TendScope)),
+        Arc::new(NativeRunner::with_system_prompt(tinker_m, tend_system_prompt(&tend_description), ToolPolicy::TendScope)),
         Arc::new(NativeRunner::new(tinker_m, ToolPolicy::Unrestricted)),
         Arc::new(NativeRunner::new(goal_m, ToolPolicy::Unrestricted)),
         Arc::new(NativeRunner::new(cleanup_m, ToolPolicy::Unrestricted)),
@@ -383,26 +405,40 @@ async fn main() -> Result<()> {
         primary_tinker_dir.join("state").join("runtime.json"),
     );
 
-    // Discover all .tinker dirs from cwd up. Nearest first.
-    let tinker_dirs = discover_tinker_dirs(fs.as_ref(), &work_dir);
-
     let app = Arc::new(Mutex::new(App::new()));
 
     {
-        let load = load_all_goals(fs.as_ref(), &tinker_dirs)?;
         let mut a = app.lock().unwrap();
-        a.goals = load.goals;
+        a.goals = initial_load.goals;
         a.tinker_dirs = tinker_dirs.clone();
         a.push_system_message("Starting tend…");
         log.emit("harness", logger::LogEvent::TinkerSystemMessageReceived { content: "Starting tend…".to_string() });
-        a.update_parse_errors(load.errors);
+        a.update_parse_errors(initial_load.errors);
+        // Cross-tier goal-id collisions: emit the user-visible system
+        // message via `update_goal_id_collisions`, then mirror each new
+        // collision as a structured `GoalCollision` log event so the
+        // runtime event log records the same fact in a `jq`-queryable
+        // form. This is the tend-introspection side of the parallel
+        // capture (see the tend-introspection goal for the substrate
+        // contract). Diff is structural: an unchanged contributing set
+        // produces no new events.
+        let new_collisions = a.update_goal_id_collisions(initial_load.collisions);
+        drop(a);
+        for collision in &new_collisions {
+            log.emit("goal-agents", logger::LogEvent::GoalCollision {
+                goal_id: collision.goal_id.clone(),
+                contributors: collision.contributors.iter()
+                    .map(|(tier, path)| (tier.clone(), path.display().to_string()))
+                    .collect(),
+            });
+        }
         if tinker_dirs.len() > 1 {
             let merged_msg = format!(
                 "Merged {} .tinker dirs (cwd + {} ancestor).",
                 tinker_dirs.len(),
                 tinker_dirs.len() - 1,
             );
-            a.push_system_message(&merged_msg);
+            app.lock().unwrap().push_system_message(&merged_msg);
             log.emit("harness", logger::LogEvent::TinkerSystemMessageReceived { content: merged_msg });
         }
     }
@@ -438,8 +474,23 @@ async fn main() -> Result<()> {
                     let mut a = app_ref.lock().unwrap();
                     a.goals = load.goals;
                     a.update_parse_errors(load.errors);
+                    // Collision diff is structural — see startup block for
+                    // the rationale. Emit a `GoalCollision` log event for
+                    // each new collision so the runtime event log
+                    // captures the cross-tier overlap, paralleling the
+                    // user-visible system message.
+                    let new_collisions = a.update_goal_id_collisions(load.collisions);
                     if a.selected_goal >= a.flat_items().len().max(1) {
                         a.selected_goal = 0;
+                    }
+                    drop(a);
+                    for collision in &new_collisions {
+                        log_watcher.emit("goal-agents", logger::LogEvent::GoalCollision {
+                            goal_id: collision.goal_id.clone(),
+                            contributors: collision.contributors.iter()
+                                .map(|(tier, path)| (tier.clone(), path.display().to_string()))
+                                .collect(),
+                        });
                     }
                 }
             }
@@ -512,10 +563,12 @@ async fn run_loop(
     // for BatchTransition event emission.
     let mut batch_active = false;
 
-    // Eager-start tend: find its goal, spawn goal_agent_loop, send the initial trigger.
+    // Eager-start tend: find its goal in the registry (populated by
+    // `load_all_goals` before runner construction above — there is no
+    // compile-time fallback), spawn goal_agent_loop, send the initial trigger.
     {
         let tend_goal = app.lock().unwrap().goals.iter().find(|g| g.id == "tend").cloned()
-            .unwrap_or_else(packaged_tend_goal);
+            .expect("tend goal not found in app.goals — initial load should have guaranteed it");
         let goals_index = {
             let a = app.lock().unwrap();
             if a.goals.is_empty() {
@@ -1803,6 +1856,21 @@ fn handle_session_event(
             if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
                 app.goals = load.goals;
                 app.update_parse_errors(load.errors);
+                // Same diff-and-emit as the startup and watcher paths:
+                // the user-visible system message is pushed via
+                // `update_goal_id_collisions`; the structured
+                // `GoalCollision` log event captures the same fact in a
+                // `jq`-queryable form so cross-tier overlaps that appear
+                // after a session write are not lost.
+                let new_collisions = app.update_goal_id_collisions(load.collisions);
+                for collision in &new_collisions {
+                    log.emit("goal-agents", logger::LogEvent::GoalCollision {
+                        goal_id: collision.goal_id.clone(),
+                        contributors: collision.contributors.iter()
+                            .map(|(tier, path)| (tier.clone(), path.display().to_string()))
+                            .collect(),
+                    });
+                }
             }
             // Tend-specific: parse-error correction loop and phase gate.
             if goal_id == "tend" {
@@ -1810,6 +1878,19 @@ fn handle_session_event(
                 if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
                     app.goals = load.goals;
                     app.update_parse_errors(load.errors);
+                    // Same collision capture as above — tend's correction
+                    // loop also re-loads, so any cross-tier overlap
+                    // introduced or resolved by a tend write must surface
+                    // in the runtime event log.
+                    let new_collisions = app.update_goal_id_collisions(load.collisions);
+                    for collision in &new_collisions {
+                        log.emit("goal-agents", logger::LogEvent::GoalCollision {
+                            goal_id: collision.goal_id.clone(),
+                            contributors: collision.contributors.iter()
+                                .map(|(tier, path)| (tier.clone(), path.display().to_string()))
+                                .collect(),
+                        });
+                    }
                 }
                 let new_errors: Vec<(std::path::PathBuf, String)> = app
                     .parse_errors
@@ -2263,6 +2344,19 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
 mod tests {
     use super::*;
     use crate::app::ModalField;
+
+    /// Test fixture: loads the tend goal description from the test fixture
+    /// file. Production code never reads from this path; the runtime
+    /// discovers tend.toml via `goal::load_all_goals` from the project's
+    /// `.tinker/goals/packaged-goals/`. This helper exists so the persona-
+    /// text tests below have a stable fixture to assert against without
+    /// coupling to runtime discovery.
+    fn test_tend_description() -> String {
+        const TOML: &str = include_str!("../packaged-goals/tend.toml");
+        toml::from_str::<crate::goal::Goal>(TOML)
+            .expect("test fixture tend.toml must be valid Goal TOML")
+            .description
+    }
 
     fn make_test_session_senders(
         msg_tx: &mpsc::UnboundedSender<String>,
@@ -3907,7 +4001,7 @@ mod tests {
 
     #[test]
     fn test_spec_tinker_static_persona_in_description_dynamic_goals_in_init() {
-        let content = packaged_tend_goal().description;
+        let content = test_tend_description();
         let init = tend_init_prompt("- demo-goal-id: a demo description", "");
         assert!(init.contains("Current goals"), "init prompt must label the dynamic goals section");
         assert!(init.contains("demo-goal-id"), "init prompt must carry the dynamic goals summary verbatim");
@@ -3916,7 +4010,7 @@ mod tests {
 
     #[test]
     fn test_spec_tinker_proves_by_execution_not_reading_source() {
-        let content = packaged_tend_goal().description;
+        let content = test_tend_description();
         assert!(content.contains("code-reality questions to @rummage") || content.contains("delegates aggressively"),
             "tend prompt must require delegating code-reality questions to rummage rather than reading source directly");
     }
@@ -3926,7 +4020,7 @@ mod tests {
     // must lead with the scope constraint so it reads as a system-level rule, not buried text.
     #[test]
     fn test_spec_tend_system_prompt_leads_with_scope_constraint() {
-        let prompt = tend_system_prompt();
+        let prompt = tend_system_prompt(&test_tend_description());
         assert!(
             prompt.starts_with("Read and write files ONLY"),
             "tend system prompt must open with the file-scope boundary statement"
@@ -4094,14 +4188,14 @@ mod tests {
 
     #[test]
     fn test_spec_shared_language_form_norm_minimum_viable_shape() {
-        let content = packaged_tend_goal().description;
+        let content = test_tend_description();
         assert!(content.contains("One question per turn") || content.contains("one question per turn"),
             "prompt must enforce one-question-per-turn");
     }
 
     #[test]
     fn test_spec_tinker_encodes_dual_duty_no_fabrication_at_inflection_points() {
-        let content = packaged_tend_goal().description;
+        let content = test_tend_description();
         assert!(content.contains("Phase 1") || content.contains("Phase 2") || content.contains("Phase 3"),
             "prompt must describe interview phases");
         assert!(content.contains("genuinely doesn't know") || content.contains("user names it") || content.contains("investigative, not leading"),
@@ -4158,7 +4252,7 @@ mod tests {
 
     #[test]
     fn test_spec_tinker_prompt_parent_summary_recheck_when_child_edited() {
-        let content = packaged_tend_goal().description;
+        let content = test_tend_description();
         assert!(content.contains("Re-check parent summary"), "prompt must include a 'Re-check parent summary' step");
     }
 
@@ -4167,7 +4261,7 @@ mod tests {
         // tend's write procedure defers the symmetry rule to goal-structure-standard
         // (read fresh) rather than restating it; the guardrail is that the prompt
         // still mandates re-validating every edge, symmetry included.
-        let content = packaged_tend_goal().description;
+        let content = test_tend_description();
         assert!(
             content.contains("Re-validate all edges") && content.contains("symmetry"),
             "prompt must include an edge re-validation step covering related-link symmetry",

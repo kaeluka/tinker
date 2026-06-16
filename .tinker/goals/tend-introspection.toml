@@ -1,6 +1,6 @@
 id = "tend-introspection"
 kind = "feature"
-summary = "This goal owns tend's runtime introspection substrate — the append-only event log at .tinker/logs/runtime.jsonl capturing turns, messages, goal-session lifecycle, dispatch, cleanup, goal-file changes, TUI state, and batch state transitions, plus the semantic UI state snapshot at .tinker/state/runtime.json, written async and non-blocking; batch transitions also emit as user-visible system messages."
+summary = "This goal owns tend's runtime introspection substrate — the append-only event log at .tinker/logs/runtime.jsonl capturing turns, messages, goal-session lifecycle, dispatch, cleanup, goal-file changes, TUI state, batch state transitions, and cross-tier goal collisions, plus the semantic UI state snapshot at .tinker/state/runtime.json, written async and non-blocking; batch transitions also emit as user-visible system messages."
 description = """
 ## WHAT
 A runtime introspection substrate that lets tend inspect its own
@@ -24,7 +24,10 @@ observable facts; `@`-dispatch emissions; cleanup-hook results;
 goal-file changes; TUI structural state changes (selection,
 focus, scroll, queue); and **batch state transitions** — when the
 system moves from idle to active and back — as first-class events,
-alongside the existing system-message stream. The session-start event captures the
+alongside the existing system-message stream. At session registry
+population, cross-tier goal collisions (same id found in multiple
+discovery tiers) are captured with the contributing tiers and paths,
+paralleling the user-visible system message emitted by goal-agents. The session-start event captures the
 system-prompt text plus a goal-list hash so persona/goal drift is
 detectable across sessions. The log format carries a `kind` discriminator, supports
 `jq`-style aggregation, and lets tend retrieve a single event at low
@@ -82,7 +85,7 @@ children = []
 
 [[related]]
 id = "coding-standards"
-reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
+reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestors-scope standard and carries no back-link."
 
 [[related]]
 id = "tui"
@@ -90,7 +93,11 @@ reason = "tend-introspection's substrate captures tui's structural state (select
 
 [[related]]
 id = "goal-agents"
-reason = "tend-introspection logs goal-session lifecycle events (dispatched/started/finished), @-dispatch emissions, and a session-start system-prompt and goal-list-hash capture; the lifecycle and dispatch events it records are produced by goal-agents' session registry."
+reason = "tend-introspection logs goal-session lifecycle events (dispatched/started/finished), @-dispatch emissions, a session-start system-prompt and goal-list-hash capture, and cross-tier goal collision events (goal id, contributing tiers and paths) — all produced by goal-agents' session registry and its startup diagnostics."
+
+[[related]]
+id = "goal-storage"
+reason = "Your runtime event log captures goal-loading events including discovery and precedence resolution; goal-storage owns the four-tier model (project-local, ancestor-global, packaged, binary-relative-packaged) that determines what gets loaded. Asymmetric: goal-storage is a packaged goal and cannot carry a back-link."
 
 [[related]]
 id = "fresh-agents"
@@ -99,3 +106,7 @@ reason = "fresh-agents owns the batch concept (active/idle system state and the 
 [[related]]
 id = "spawn-session"
 reason = "spawn-session dispatches produce a new event type in the runtime event log — dispatcher (parent) session, label, sub-session id, dispatch time — alongside the existing envelope-based dispatch emission."
+
+[[related]]
+id = "send-message"
+reason = "send-message dispatches produce a new event type in the runtime event log — sender, target, dispatch time — alongside the existing envelope-based dispatch emission."

@@ -1,22 +1,34 @@
 id = "goal-storage"
 kind = "feature"
-summary = "This goal owns the on-disk storage layer for goals: the TOML file format at .tinker/goals/<id>.toml, the ancestor-directory merge where the cwd-most version wins on duplicate ids, malformed-file reporting that does not block siblings, transparent symlink following, the intent-only rule that keeps session state out of the file, and the id+reason shape of the [[children]] and [[related]] link fields."
+summary = "This goal owns the on-disk storage layer for goals: the TOML file format at .tinker/goals/<id>.toml, the packaged-goals/ subdirectory convention that distinguishes universal methodology from project-local content, the ancestor-directory merge where the cwd-most version wins on duplicate ids, malformed-file reporting that does not block siblings, transparent symlink following, the intent-only rule that keeps session state out of the file, and the id+reason shape of the [[children]] and [[related]] link fields."
 description = """
 ## WHAT
-Goals are persistent files associated with a project. They live
-directly in a single project-local directory and survive across
-tinker runs. Goals
-from ancestor directories of the current working directory also
-apply, merged with the project's own — so a shared standard defined
-once in the user's home directory takes effect in every project.
-When the same goal id appears in both an ancestor and the current
-project, the project-local version wins (more specific intent beats
-inherited). A malformed goal file is reported as an error but never
-blocks its siblings from loading. Symlinks into goal directories are
-followed transparently, so a shared goal directory can live in a
-separate repo and be linked into the user's home. Link lists
-(`children`, `related`) are stored as array-of-tables of id+reason;
-their semantics are governed by `goal-structure-standard`.
+This goal owns the on-disk storage layer for goals: the TOML file
+format at `.tinker/goals/<id>.toml`, the `packaged-goals/`
+subdirectory convention that distinguishes universal methodology
+from project-local content, the ancestor-directory merge where the
+cwd-most version wins on duplicate ids, malformed-file reporting
+that does not block siblings, transparent symlink following for
+users who want system-wide goal directories, the intent-only rule
+that keeps session state out of the file, and the id+reason shape
+of the `[[children]]` and `[[related]]` link fields.
+
+Goals are persistent files associated with a project. They live in
+the project's `.tinker/goals/` directory and are written as TOML
+with id+reason array-of-tables for `[[children]]` and `[[related]]`
+link fields.
+
+Goals also live in a `packaged-goals/` subdirectory of
+`.tinker/goals/` — that subdirectory holds universal methodology
+applicable to any tinker-managed project. Goals outside that
+subdirectory are project-local. Goals from ancestor directories of
+the current working directory also apply, merged with the project's
+own. When the same goal id appears in multiple locations, the
+cwd-most version wins (more specific intent beats inherited). A
+malformed goal file is reported as an error but never blocks its
+siblings from loading. Symlinks into goal directories are followed
+transparently, so a shared goal directory can live in a separate
+repo and be linked into any ancestor `.tinker/goals/` directory.
 
 Goal files store intent only — not session state. Session IDs and
 history are never persisted to disk, so the goal file is the single
@@ -24,20 +36,54 @@ source of truth across restarts.
 
 ## WHY
 Goals are the user's standing intent. They have to survive restarts,
-be human-editable, and diff cleanly in version control. Sharing
-across projects matters because some intent (coding standards,
-security rules) is global; the user shouldn't have to copy-paste it
-into every project. Storing intent without session state keeps the
-file authoritative — there's no parallel session-history artifact
-that could drift from or override what the goal says.
+be human-editable, and diff cleanly in version control. The TOML
+format keeps them human-readable and diff-friendly.
 
+Packaged goals travel with the project rather than being discovered
+from outside it. This makes them writable alongside project-local
+goals through the same mechanism (surfaced by concrete incident:
+structural audits identified issues in packaged goals that tend
+couldn't address when they lived in a symlinked external directory).
+The subdirectory convention preserves the universal-scope
+distinction without requiring out-of-tree discovery.
+
+Sharing across projects matters because some intent (coding
+standards, security rules) is global; the user shouldn't have to
+copy-paste it into every project. Ancestor-directory merge makes
+universal intent available everywhere while letting project-local
+intent override it.
+
+The id+reason shape on `[[children]]` and `[[related]]` serves
+`goal-structure-standard`'s navigation index and symmetry rules —
+see that goal for semantics.
+
+Malformed-file reporting that does not block siblings means a single
+corrupt file never takes down the whole goal set — resilience over
+strictness.
+
+Intent-only (no session state) keeps the file authoritative across
+restarts and concurrent sessions.
+
+## Related
+- `goal-structure-standard` — defines the semantics of the id+reason link fields; this goal stores them
+- `goal-placement` — consumes this goal's on-disk format decisions
+- `goal-complementarity` — enforces the packaging distinction this goal implements at the storage layer
+- `tend-write-restriction` — defines the write boundary that contains this goal's storage decisions
 """
 parent_id = ""
 
 [[related]]
 id = "goal-structure-standard"
-reason = "`goal-structure-standard` defines the semantics of the link fields this goal stores: what reasons mean on [[children]] and [[related]] entries, how they serve as navigation indexes, and the symmetry rules. This goal owns the format; that goal owns the meaning."
+reason = "goal-structure-standard defines the semantics of the id+reason link fields; this goal stores them."
 
 [[related]]
-id = "coding-standards"
-reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Pull the full standard before writing or restructuring this goal's code. Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
+id = "goal-placement"
+reason = "goal-placement consumes this goal's on-disk format decisions."
+
+[[related]]
+id = "goal-complementarity"
+reason = "goal-complementarity enforces the packaging distinction this goal implements at the storage layer."
+
+[[related]]
+id = "tend-write-restriction"
+reason = "tend-write-restriction defines the write boundary that contains this goal's storage decisions."

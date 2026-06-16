@@ -1,6 +1,6 @@
 id = "goal-structure-standard"
 kind = "behavior"
-summary = "This goal runs whenever tend creates or edits a goal: it holds the tree's structural rules — the five operations (merge/nest-down/nest-up/new-root/retire), level-of-detail coherence, parent-summary re-check, id+reason on every [[children]] and [[related]] link, related-link symmetry with the packaged↔local and ancestor-standard exceptions, the `kind` field, and the natural-language summary form — and re-validates them on every write."
+summary = "This goal runs whenever tend creates or edits a goal: it holds the tree's structural rules — the five operations (merge/nest-down/nest-up/new-root/retire), level-of-detail coherence, parent-summary re-check, id+reason on every [[children]] and [[related]] link, related-link symmetry with the packaged↔local and ancestor-standard exceptions, the `kind` field, the natural-language summary form, and the no-hardcoded-routing-partners rule — and re-validates them on every write."
 description = """
 ## WHAT
 A set of structural rules tend uses to organize goals
@@ -91,6 +91,40 @@ Content quality is governed by the two standards split on `kind`:
 tactics) and `behavior-craft` for behavior goals (good prompt
 engineering). These structural rules apply to both kinds; the content
 twin is whichever the goal's kind selects.
+
+**No hardcoded routing partners in goal text.** Goal text must not
+hardcode specific agents as routing partners. Naming an agent in goal
+text creates a prompt-level privilege: the LLM reading the prompt
+gives structurally higher weight to a name present in the text than to
+an agent whose relevance must be discovered via a lookup scan, regardless
+of which agent is actually most relevant. This undermines the
+extensibility of the goal system: new agents cannot be layered at
+parity with named ones. In packaged goals — which using projects
+cannot edit — this privilege is permanent, and the goal system's
+generic lookup mechanisms (summary scan over behavior goals, owned by
+tend; edge-reason scan over `[[related]]` tables, owned by peer-consult
+and agent-collaboration) degrade to second-class behind hardcoded
+names. When goal text directs a consultation or dispatch, it must
+describe a lookup pattern — "the agent whose summary covers the
+domain," "the content standard matching the goal's kind," "the
+neighbor this reason names" — rather than name a specific agent id.
+Goal text may still define, clarify, or reference agents in prose to
+explain domain relationships and boundaries; the prohibition targets
+**routing instructions** (directing what to do), not **defining
+instructions** (explaining what exists). Declarative sentences about
+other agents are fine (*"rummage establishes what the running system
+actually does"* names a domain boundary); imperative sentences are the
+tell (*"consult rummage for code reality"* is routing, regardless of
+whether the agent id is `@`-prefixed or spelled out in prose). "Goal
+text" for this rule means the TOML prose fields (`summary` and the
+body text); structured link fields (`[[children]]`, `[[related]]`) are
+link data and may contain agent ids. A goal may reference its own id —
+self-identification is not a privilege. The framework preamble
+injected by the harness (navigation, identity, shared agent directory)
+is not authored goal text and is outside this rule's scope. Workloads
+with one genuinely canonical peer may justify a named routing target
+in the prose body; unjustified hardcoded targets violate the rule.
+Retroactive cleanup is mandated for existing violations.
 
 ## WHY
 Defaulting to new, flat files for every request creates "cognitive

@@ -1,6 +1,6 @@
 id = "goal-agents"
 kind = "feature"
-summary = "This goal owns the agent-architecture runtime: the uniform per-goal session registry, universal dispatch routing, the runtime-injected framework preamble and dispatcher-provided spec-diff init section, the tier field and its kind-aware session-start resolution (behavior goals default to high, feature goals to mid), the unified event stream, the .tinker/ access prohibition, and tend's two structural exceptions (eager start with TUI-suppressed startup output and the goal-file parse-correction loop)."
+summary = "This goal owns the agent-architecture runtime: the uniform per-goal session registry, universal dispatch routing, the runtime-injected framework preamble and dispatcher-provided spec-diff init section, the tier field and its kind-aware session-start resolution (behavior goals default to high, feature goals to mid), the unified event stream, the .tinker/ access prohibition, tend's two structural exceptions (eager start with TUI-suppressed startup output and the goal-file parse-correction loop), and the startup diagnostic that emits cross-tier goal collision warnings."
 description = """
 ## WHAT
 Tinker's agent architecture follows one rule: **every goal is a
@@ -56,6 +56,11 @@ behavior goals (complex tasks — reviewing, summarizing, understanding —
 benefit from the strongest model) and `"mid"` for feature goals. Resolved
 at session start via `model-config`.
 
+**Startup diagnostics.** At session-registry population, emit a
+system message for each goal id found in multiple discovery tiers
+(project-local, ancestor global, binary-relative packaged), listing
+the contributing tiers and paths.
+
 **Unified event stream.** Every session emits three kinds of event:
 a streamed output chunk, a done signal, and a cleanup-blocked signal
 carrying the dirty files.
@@ -90,6 +95,12 @@ compliance. Requiring the session to account for every
 `test_spec_` function systemically enforces the tests-as-guardrails
 standard without relying on the session's general good behavior.
 
+The startup diagnostic exists because cross-tier goal collisions are
+rare but invisible: a user installing a global packaged goal that
+accidentally shadows a project-local goal would see no warning
+without it. Listing the contributing tiers and paths makes the
+collision legible and actionable.
+
 """
 parent_id = "the-cycles"
 
@@ -115,7 +126,7 @@ reason = "peer-consult governs the @-block protocol and delivery rules, includin
 
 [[related]]
 id = "goal-storage"
-reason = "the tier field added by this goal extends the goal TOML schema that goal-storage governs."
+reason = "goal-storage defines the three-tier goal discovery model (project-local, ancestor global, binary-relative packaged) and the three-level precedence rule; goal-agents consumes goal-storage's load result to populate the registry and emit cross-tier collision diagnostics. The tier field extends the goal TOML schema goal-storage governs."
 
 [[related]]
 id = "tui"

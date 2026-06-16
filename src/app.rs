@@ -1,4 +1,4 @@
-use crate::goal::Goal;
+use crate::goal::{Goal, GoalCollision};
 use crate::repl_buffer::ReplBuffer;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -216,6 +216,10 @@ pub struct App {
     pub ephemeral_labels: HashMap<String, Option<String>>,
     /// Monotone counter used to assign unique IDs to fresh sub-sessions.
     pub fresh_session_counter: u64,
+    /// Last-seen set of cross-tier goal-id collisions from the loader. The
+    /// watcher diffs the load result against this on each cycle to drive
+    /// startup-diagnostic system messages — see `update_goal_id_collisions`.
+    pub goal_id_collisions: Vec<GoalCollision>,
     /// Pre-announced ephemeral sessions indexed by their base goal ID.
     /// Values are vecs of `(session_id, label)` in detection order, each
     /// corresponding to an opening `<@base_id|label>` tag seen while the
@@ -266,6 +270,7 @@ impl App {
             ephemeral_sessions_ordered: Vec::new(),
             ephemeral_labels: HashMap::new(),
             fresh_session_counter: 0,
+            goal_id_collisions: Vec::new(),
             pending_fresh_announcements: HashMap::new(),
             werkeln_verb_idx: 0,
             werkeln_last_advance: Instant::now(),
@@ -292,6 +297,50 @@ impl App {
             }
         }
         self.parse_errors = new;
+    }
+
+    /// Diffs `new` against the current `goal_id_collisions` and emits a
+    /// system message for any collision not already reported. Each new
+    /// collision produces a single message listing the goal id and every
+    /// contributing tier and path. Returns the list of new collisions
+    /// (cloned from `new`) so callers can drive parallel log-event
+    /// emission — see the `GoalCollision` log event captured by
+    /// `tend-introspection`. Then stores `new` as the current set.
+    ///
+    /// The diff is structural (full path set comparison), not id-only: if a
+    /// user edits one of the contributing paths — renaming or removing the
+    /// duplicate — the new state is detected as a fresh collision to report.
+    /// This mirrors `update_parse_errors` and keeps the watcher in sync with
+    /// disk state.
+    ///
+    /// System messages look like:
+    ///
+    ///   Goal id `shared` found at multiple tiers: \
+    ///   [project-local] /proj/.tinker/goals/shared.toml, \
+    ///   [ancestor global] /home/.tinker/goals/shared.toml
+    pub fn update_goal_id_collisions(&mut self, new: Vec<GoalCollision>) -> Vec<GoalCollision> {
+        let mut added = Vec::new();
+        for collision in &new {
+            let already = self.goal_id_collisions.iter().any(|existing| {
+                existing.goal_id == collision.goal_id
+                    && existing.contributors == collision.contributors
+            });
+            if !already {
+                added.push(collision.clone());
+                let contributors = collision
+                    .contributors
+                    .iter()
+                    .map(|(tier, path)| format!("[{}] {}", tier, path.display()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.push_system_message(&format!(
+                    "Goal id `{}` found at multiple tiers: {}",
+                    collision.goal_id, contributors,
+                ));
+            }
+        }
+        self.goal_id_collisions = new;
+        added
     }
 
     pub fn append_goal_log(&mut self, goal_id: &str, text: &str) {
@@ -400,20 +449,24 @@ impl App {
         out
     }
 
-    /// True when the goal was loaded from a non-primary (ancestor) `.tinker/goals/`
-    /// directory — i.e., it is a packaged goal shipped with tinker, not a goal
-    /// the user authored for this project. A goal is packaged iff its
-    /// `source_path` is set and does NOT sit under the cwd-most (primary)
-    /// `tinker_dirs[0]/goals/`. Goals with no `source_path` (only the test
-    /// path) or with no `tinker_dirs` configured default to project-local.
+    /// True when the goal's `source_path` sits inside a `packaged-goals/`
+    /// subdirectory — i.e., it is a packaged goal shipped with tinker, not a
+    /// goal the user authored for this project. Classification follows the
+    /// on-disk `packaged-goals/` convention, not the `.tinker` ancestor walk:
+    /// a goal loaded from `~/.tinker/goals/x.toml` is project-local (it's
+    /// not in a `packaged-goals/` subdir), while a goal loaded from
+    /// `~/.tinker/goals/packaged-goals/x.toml` is packaged. The ancestor
+    /// walk is a *discovery* mechanism that finds more goal files to load;
+    /// the `packaged-goals/` directory is the *classification* signal. They
+    /// are orthogonal. Goals with no `source_path` (the test-only path)
+    /// default to project-local.
     ///
     /// This consumes the on-disk distinction that `goal-placement` writes
     /// and produces the render-time predicate the de-emphasis rule needs.
     pub fn is_packaged(&self, g: &Goal) -> bool {
-        match (&g.source_path, self.tinker_dirs.first()) {
-            (Some(p), Some(primary)) => !p.starts_with(primary.join("goals")),
-            _ => false,
-        }
+        g.source_path.as_ref()
+            .map(|p| p.components().any(|c| c.as_os_str() == "packaged-goals"))
+            .unwrap_or(false)
     }
 
     pub fn select_next_goal(&mut self) {
@@ -519,10 +572,65 @@ mod tests {
         }
     }
 
-    // spec: packaged-goals-style — a goal whose source_path sits under the
-    // primary (cwd-most) `.tinker/goals/` is project-local, not packaged.
+    // spec: packaged-goals-style — a goal whose `source_path` sits inside a
+    // `packaged-goals/` subdirectory is packaged. Classification follows the
+    // directory convention regardless of which `.tinker` directory the
+    // subdirectory lives under.
     #[test]
-    fn test_spec_is_packaged_source_in_primary_tinker_dir_returns_false() {
+    fn test_spec_is_packaged_source_in_project_local_packaged_goals_dir_returns_true() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![PathBuf::from("/proj/.tinker")];
+        let g = make_goal_with_path(
+            "local-packaged",
+            Some(PathBuf::from("/proj/.tinker/goals/packaged-goals/x.toml")),
+        );
+        assert!(app.is_packaged(&g),
+            "goal under project-local .tinker/goals/packaged-goals/ must be packaged");
+    }
+
+    // spec: packaged-goals-style — a goal loaded from an ancestor `.tinker/goals/`
+    // is project-local under the new rule, NOT packaged. The ancestor walk is a
+    // discovery mechanism, not a classification signal; the `packaged-goals/`
+    // subdirectory is the only classification signal.
+    #[test]
+    fn test_spec_is_packaged_source_in_ancestor_tinker_dir_outside_packaged_goals_returns_false() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![
+            PathBuf::from("/proj/.tinker"),
+            PathBuf::from("/home/.tinker"),
+        ];
+        let g = make_goal_with_path(
+            "ancestor-shared",
+            Some(PathBuf::from("/home/.tinker/goals/shared.toml")),
+        );
+        assert!(!app.is_packaged(&g),
+            "ancestor-loaded goal outside packaged-goals/ must not be packaged");
+    }
+
+    // spec: packaged-goals-style — a goal loaded from an ancestor
+    // `.tinker/goals/packaged-goals/` is packaged. Covers the
+    // "shipped with tinker via the home install symlink" case where
+    // the discovery ancestor walk finds a packaged goal in `~/.tinker/`.
+    #[test]
+    fn test_spec_is_packaged_source_in_ancestor_packaged_goals_dir_returns_true() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![
+            PathBuf::from("/proj/.tinker"),
+            PathBuf::from("/home/.tinker"),
+        ];
+        let g = make_goal_with_path(
+            "ancestor-packaged",
+            Some(PathBuf::from("/home/.tinker/goals/packaged-goals/x.toml")),
+        );
+        assert!(app.is_packaged(&g),
+            "ancestor-loaded goal under packaged-goals/ must be packaged");
+    }
+
+    // spec: packaged-goals-style — a goal under the primary `.tinker/goals/`
+    // (project-local) is not packaged. The directory must contain a
+    // `packaged-goals/` subdirectory for the goal to classify as packaged.
+    #[test]
+    fn test_spec_is_packaged_source_in_project_local_goals_dir_returns_false() {
         let mut app = App::new();
         app.tinker_dirs = vec![PathBuf::from("/proj/.tinker")];
         let g = make_goal_with_path(
@@ -530,24 +638,7 @@ mod tests {
             Some(PathBuf::from("/proj/.tinker/goals/local.toml")),
         );
         assert!(!app.is_packaged(&g),
-            "goal under primary tinker dir must not be packaged");
-    }
-
-    // spec: packaged-goals-style — a goal loaded from an ancestor `.tinker/goals/`
-    // is packaged (universal content shipped with tinker, not project-specific).
-    #[test]
-    fn test_spec_is_packaged_source_in_ancestor_tinker_dir_returns_true() {
-        let mut app = App::new();
-        app.tinker_dirs = vec![
-            PathBuf::from("/proj/.tinker"),
-            PathBuf::from("/home/.tinker"),
-        ];
-        let g = make_goal_with_path(
-            "shared",
-            Some(PathBuf::from("/home/.tinker/goals/shared.toml")),
-        );
-        assert!(app.is_packaged(&g),
-            "goal under ancestor tinker dir must be packaged");
+            "goal under project-local .tinker/goals/ must not be packaged");
     }
 
     // spec: packaged-goals-style — a goal with no `source_path` (test-only
@@ -561,17 +652,20 @@ mod tests {
             "goal without source_path must not be packaged");
     }
 
-    // spec: packaged-goals-style — without any `tinker_dirs` configured
-    // (e.g. before the load completes) no goal can be classified as packaged.
+    // spec: packaged-goals-style — the `packaged-goals/` match is exact.
+    // A directory whose name *contains* "packaged-goals" (e.g. "my-packaged-goals"
+    // or "packaged-goals-backup") must not trigger the packaged classification.
+    // Guards against accidental substring matching.
     #[test]
-    fn test_spec_is_packaged_no_tinker_dirs_returns_false() {
-        let app = App::new();
+    fn test_spec_is_packaged_substring_directory_names_do_not_match() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![PathBuf::from("/proj/.tinker")];
         let g = make_goal_with_path(
             "x",
-            Some(PathBuf::from("/home/.tinker/goals/x.toml")),
+            Some(PathBuf::from("/proj/.tinker/goals/my-packaged-goals/x.toml")),
         );
         assert!(!app.is_packaged(&g),
-            "without tinker_dirs, no goal can be classified as packaged");
+            "a directory whose name contains but does not equal 'packaged-goals' must not classify the goal as packaged");
     }
 
     #[test]
@@ -626,5 +720,176 @@ mod tests {
         }
         let items = app.flat_items();
         assert_eq!(item_ids(&items), vec!["jog", "jog~1", "jog~1~2", "jog~1~2~5"]);
+    }
+
+    // --- update_goal_id_collisions ---
+
+    use crate::goal::GoalCollision;
+
+    fn collision(
+        id: &str,
+        contributors: Vec<(&str, &str)>,
+    ) -> GoalCollision {
+        GoalCollision {
+            goal_id: id.to_string(),
+            contributors: contributors
+                .into_iter()
+                .map(|(tier, path)| (tier.to_string(), PathBuf::from(path)))
+                .collect(),
+        }
+    }
+
+    fn system_messages(app: &App) -> Vec<String> {
+        app.messages
+            .iter()
+            .filter(|m| matches!(m.role, Role::System))
+            .map(|m| m.text.clone())
+            .collect()
+    }
+
+    // spec: goal-agents startup diagnostic — on the first call, every collision
+    // in `new` produces a system message; `goal_id_collisions` is set to `new`.
+    #[test]
+    fn test_spec_update_goal_id_collisions_first_call_emits_each_collision() {
+        let mut app = App::new();
+        let new = vec![
+            collision(
+                "shared",
+                vec![
+                    ("project-local", "/proj/.tinker/goals/shared.toml"),
+                    ("ancestor global", "/home/.tinker/goals/shared.toml"),
+                ],
+            ),
+            collision(
+                "tooling",
+                vec![
+                    ("project-local", "/proj/.tinker/goals/tooling.toml"),
+                    ("ancestor global", "/home/.tinker/goals/tooling.toml"),
+                ],
+            ),
+        ];
+        app.update_goal_id_collisions(new.clone());
+
+        let msgs = system_messages(&app);
+        assert_eq!(msgs.len(), 2, "one system message per collision");
+        assert!(
+            msgs[0].contains("`shared`"),
+            "first message must name the shared collision: {}",
+            msgs[0]
+        );
+        assert!(
+            msgs[0].contains("[project-local]"),
+            "first message must list the project-local tier: {}",
+            msgs[0]
+        );
+        assert!(
+            msgs[0].contains("[ancestor global]"),
+            "first message must list the ancestor tier: {}",
+            msgs[0]
+        );
+        assert!(
+            msgs[1].contains("`tooling`"),
+            "second message must name the tooling collision: {}",
+            msgs[1]
+        );
+        assert_eq!(app.goal_id_collisions, new);
+    }
+
+    // spec: goal-agents startup diagnostic — when the watcher re-runs with the
+    // same set of collisions, no new system messages are emitted. Avoids
+    // re-spamming the user on every 2-second reload cycle.
+    #[test]
+    fn test_spec_update_goal_id_collisions_idempotent_when_unchanged() {
+        let mut app = App::new();
+        let new = vec![collision(
+            "shared",
+            vec![
+                ("project-local", "/proj/.tinker/goals/shared.toml"),
+                ("ancestor global", "/home/.tinker/goals/shared.toml"),
+            ],
+        )];
+        app.update_goal_id_collisions(new.clone());
+        let after_first = system_messages(&app).len();
+        assert_eq!(after_first, 1);
+
+        // Same set — no new messages.
+        app.update_goal_id_collisions(new.clone());
+        assert_eq!(
+            system_messages(&app).len(),
+            after_first,
+            "identical collision set must not emit new system messages"
+        );
+    }
+
+    // spec: goal-agents startup diagnostic — when a contributing path changes
+    // (e.g. the user renames the ancestor file), the new state is detected as
+    // a fresh collision to report. The diff is structural, not id-only.
+    #[test]
+    fn test_spec_update_goal_id_collisions_detects_changed_path() {
+        let mut app = App::new();
+        app.update_goal_id_collisions(vec![collision(
+            "shared",
+            vec![
+                ("project-local", "/proj/.tinker/goals/shared.toml"),
+                ("ancestor global", "/home/.tinker/goals/shared-old.toml"),
+            ],
+        )]);
+        assert_eq!(system_messages(&app).len(), 1);
+
+        // Path changed — emit a new system message for the new state.
+        app.update_goal_id_collisions(vec![collision(
+            "shared",
+            vec![
+                ("project-local", "/proj/.tinker/goals/shared.toml"),
+                ("ancestor global", "/home/.tinker/goals/shared-new.toml"),
+            ],
+        )]);
+        let msgs = system_messages(&app);
+        assert_eq!(msgs.len(), 2, "path change must emit a new message");
+        assert!(
+            msgs[1].contains("shared-new.toml"),
+            "new message must reference the new path: {}",
+            msgs[1]
+        );
+    }
+
+    // spec: goal-agents startup diagnostic — when a collision clears (the
+    // duplicate file is removed), the stored set updates to empty and no
+    // spurious message is emitted.
+    #[test]
+    fn test_spec_update_goal_id_collisions_clears_when_resolved() {
+        let mut app = App::new();
+        app.update_goal_id_collisions(vec![collision(
+            "shared",
+            vec![
+                ("project-local", "/proj/.tinker/goals/shared.toml"),
+                ("ancestor global", "/home/.tinker/goals/shared.toml"),
+            ],
+        )]);
+        assert_eq!(system_messages(&app).len(), 1);
+
+        // Duplicate removed — empty collision set updates state without
+        // emitting a new message.
+        app.update_goal_id_collisions(vec![]);
+        assert!(
+            app.goal_id_collisions.is_empty(),
+            "stored collisions must clear when loader reports none"
+        );
+        assert_eq!(
+            system_messages(&app).len(),
+            1,
+            "clearing collisions must not emit a system message"
+        );
+    }
+
+    // spec: goal-agents startup diagnostic — an empty input vec must not emit
+    // any system message, even on the first call. Common case for the typical
+    // single-project install.
+    #[test]
+    fn test_spec_update_goal_id_collisions_empty_first_call_is_silent() {
+        let mut app = App::new();
+        app.update_goal_id_collisions(vec![]);
+        assert!(system_messages(&app).is_empty());
+        assert!(app.goal_id_collisions.is_empty());
     }
 }

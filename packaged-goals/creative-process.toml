@@ -1,6 +1,6 @@
 id = "creative-process"
 kind = "feature"
-summary = "This goal owns tinker's foundational creative-process rationale: iterative dialectical discovery between the user (a reflective practitioner supplying tacit judgment) and tend (a convention engine), tend's dual duty to execute conventions and surface inflection points, the principle that the spec process must stay hard for the human, tone as downstream of role, and the human as the loop's termination condition. The operational interview behaviors it justifies live in tend."
+summary = "This goal owns tinker's foundational creative-process rationale: iterative dialectical discovery between the user (a reflective practitioner supplying tacit judgment) and tend (a convention engine), tend's dual duty to execute conventions and surface inflection points, the principle that the spec process must stay hard for the human, tone as downstream of role, the human as the loop's termination condition, and the two content standards — feature-craft and behavior-craft — that govern goal text quality."
 description = """
 ## WHAT
 The creative process tend uses to convert the user's intent into a

@@ -1,64 +1,37 @@
 id = "goal-placement"
 kind = "behavior"
-summary = "This goal runs when tend creates or edits a goal: it checks that the goal lives in the directory matching its scope — packaged (~/.tinker/goals/) for content valid across any tinker project, project-local (.tinker/goals/) for content specific to this project — and catches incremental drift when edits make a packaged goal project-specific."
+summary = "This goal runs when tend creates or edits a goal: it checks that the goal lives in the directory matching its scope (packaged subdirectory for universal methodology, project-local directory for project-specific content) and catches incremental drift when edits make a packaged goal project-specific."
 description = """
-You are the goal-placement reviewer — you ensure every goal sits in the
-directory that matches its scope and that edits don't drift it out of scope.
+## WHAT
+This goal runs when tend creates or edits a goal: it checks that the goal lives in the directory matching its scope — packaged subdirectory (`.tinker/goals/packaged-goals/`) for content valid across any tinker project, project-local directory (`.tinker/goals/`) for content specific to this project — and catches incremental drift when edits make a packaged goal project-specific.
 
-This goal is itself correctly project-local: authoring packaged goals is
-the tinker project's own concern — no other tinker-managed project writes
-to `~/.tinker/goals/`, they only consume it. This rule applies here and
-nowhere else.
+On creation, a goal's scope is a one-time decision with clear scope criteria:
+- **Packaged scope** (`.tinker/goals/packaged-goals/`): content valid across any tinker project — universal methodology, general practices, tooling conventions
+- **Project-local scope** (`.tinker/goals/`): content specific to this project
 
-Placement matters because packaged goals apply to every tinker-managed
-project. A project-specific goal in the packaged directory silently imposes
-this project's conventions everywhere; a universal goal buried in
-project-local is invisible to other projects.
+On edit, check for drift: if an edit to a packaged goal makes it project-specific, move it or extract the project-specific part.
 
-**On creation:** Tend must explicitly decide the new goal's scope before
-writing it to disk.
+## WHY
+Goals serve different audiences. Packaging makes the audience distinction physical — the directory you write to determines who benefits.
 
-A goal belongs in the **packaged directory** (`~/.tinker/goals/`) when its
-content governs how tinker works for any project — agent protocols, goal
-structure standards, tend/rummage/jog behavior, universal methodology. A
-reader from a completely different tinker-managed project should find the
-goal fully applicable.
+Drift detection matters because packaged goals accumulate project-specific edits over time. Without catching drift at edit time, a packaged goal gradually becomes project-specific while still living in the universal-scope directory, creating confusion about whether the content serves all projects or just this one.
 
-A goal belongs in the **project-local directory** (`.tinker/goals/`) when
-its content is specific to this project — its architecture, implementation
-goals, coding conventions, README structure, or anything referencing this
-project's specific tools, languages, or design decisions.
-
-Creation applies a hard binary rule — scope is a one-time decision with
-clear criteria and must never be left implicit.
-
-**On edit:** When tend edits a packaged goal, ask: would a reader from a
-different tinker-managed project find this content fully applicable, or does
-it reference this project's specifics?
-
-- If the content remains project-agnostic: no action required.
-- If the edit makes the goal project-specific: the goal must move to
-  project-local, or the project-specific content must be extracted into a
-  project-local goal that extends the packaged one.
-
-Edit delegates to judgment rather than a checklist because drift is
-incremental — individual edits are small in isolation, and only a contextual
-read can tell whether the cumulative effect has crossed the scope boundary.
+Placing a goal in the correct scope on creation prevents the wrong audience from inheriting project-specific intent.
 """
 parent_id = ""
 
 [[related]]
 id = "goal-storage"
-reason = "goal-storage owns the directory structure and ancestor-merge mechanism this goal enforces placement decisions against. Asymmetric: goal-storage is a packaged goal and cannot carry a back-link to this project-local goal."
-
-[[related]]
-id = "goal-structure-standard"
-reason = "goal-structure-standard owns write-time structural validation and is authoritative for the structural-rule side of the packaged/local boundary (the related-link symmetry exception); this goal owns the placement-decision and drift-detection side. Asymmetric: goal-structure-standard is a packaged goal and cannot carry a back-link to this project-local goal."
+reason = "goal-storage owns the on-disk format decisions; this goal enforces placement against that format."
 
 [[related]]
 id = "tend"
-reason = "tend creates and edits goals; this goal runs at both moments to enforce placement scope. Asymmetric: tend is a packaged goal and cannot carry a back-link to this project-local goal."
+reason = "tend is the primary creator of goals; this goal validates tend's placement decisions."
 
 [[related]]
-id = "packaged-goals-style"
-reason = "packaged-goals-style owns the visual de-emphasis rule for packaged goals in the TUI (grey and italic); this goal owns the packaged vs project-local distinction that rule relies on to decide which goals to de-emphasize. Symmetric: goal-placement carries a back-link here, and packaged-goals-style carries one back."
+id = "tend-write-restriction"
+reason = "tend-write-restriction owns the write boundary that covers both scope directories; this goal defines what goes where within that boundary."
+
+[[related]]
+id = "goal-structure-standard"
+reason = "goal-structure-standard enforces the symmetry/exception rules on links; asymmetric links from packaged to project-local are this goal's responsibility to validate."

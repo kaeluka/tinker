@@ -1,17 +1,29 @@
 id = "tend-write-restriction"
 kind = "feature"
-summary = "Tend's write-permission check evaluates equivalent filesystem paths identically."
+summary = "This goal owns the rule that tend can write to any file under .tinker/goals/ recursively, with path-equivalence recognition so equivalent filesystem paths produce the same permission outcome."
 description = """
 ## WHAT
-Tend can only write to goal files within the `.tinker/goals/` directory, a constraint enforced by `backends`'s ToolPolicy layer. This goal ensures that the permission check correctly recognizes equivalent path expressions: an absolute path, a relative path with parent-directory references, and a symlink-resolved variant all referring to the same file on disk must produce the same permission outcome.
+This goal owns the rule that tend can write to any file under `.tinker/goals/` recursively, with path-equivalence recognition so equivalent filesystem paths produce the same permission outcome.
+
+Tend can write to any file within the `.tinker/goals/` directory and all its subdirectories. The permission check recognizes equivalent filesystem paths: an absolute path, a relative path with parent-directory references, and a symlink-resolved variant all referring to the same file on disk must produce the same permission outcome. When the check cannot determine equivalence, it preserves prior permission behavior.
 
 ## WHY
-When the same file can be addressed through different textual path representations, the permission check must resolve them to their canonical form before comparison. Literal string matching would incorrectly deny valid writes (e.g., absolute paths or paths containing `/../`) while the restriction's intent is simply to limit tend to the goals directory.
+The `.tinker/goals/` directory is tend's workspace — both packaged goals and project-local goals live there, so tend needs recursive write access.
 
-The implementation preserves prior behavior when canonical resolution isn't possible — if the check cannot determine equivalence, it falls back to the original string comparison rather than introducing new denial cases.
+Packaged goals live in a subdirectory of `.tinker/goals/`, so the write boundary must be recursive for tend to maintain them. Limiting tend to flat `.toml` files would have prevented tend from maintaining packaged goals once they lived in-tree (surfaced by concrete incident: structural audits identified issues in packaged goals that tend couldn't address).
+
+Path-equivalence recognition matters because `backends` enforces the write boundary at the code level, and code sees filesystem paths, not directory intent. Without equivalence recognition, a relative path like `.tinker/goals/foo.toml` and an absolute path to the same file would produce different permission outcomes — the same write would succeed or fail depending on how the path was expressed.
 """
-parent = "backends"
+parent_id = ""
 
 [[related]]
-id = "no-peek"
-reason = "no-peek established that agents access peer context through @-messages rather than direct file reads; this write restriction is the complementary constraint on tend's own file access scope"
+id = "backends"
+reason = "backends owns the ToolPolicy implementation; this goal defines what the policy should permit."
+
+[[related]]
+id = "goal-storage"
+reason = "goal-storage owns the on-disk format decisions; this goal defines the write boundary that contains those decisions."
+
+[[related]]
+id = "goal-placement"
+reason = "goal-placement defines what goes where within .tinker/goals/ (packaged vs project-local); this goal defines the boundary itself."
