@@ -59,3 +59,7 @@ reason = "`goal-structure-standard` is where orthogonal placement is enforced st
 [[related]]
 id = "no-peek"
 reason = "`no-peek` is the communication-layer expression of this goal's orthogonality principle: when coupling lives in edges rather than enumerated reads, domain orthogonality composes through the graph."
+
+[[related]]
+id = "goal-storage"
+reason = "Goal-storage implements the on-disk storage layer with the three-tier discovery model (project-local, ancestor-global, binary-relative-packaged) and precedence rules that this goal's complementarity principle governs. Symmetric because both are packaged goals."
