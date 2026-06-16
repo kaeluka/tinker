@@ -194,11 +194,14 @@ Every goal is an agent — an addressable session that persists for the
 project's lifetime. When a goal needs to distribute parallel work, it can
 dispatch ephemeral sub-sessions of itself — each one a full participant in
 the message-passing protocol. Any sub-session can itself act as a coordinator,
-dispatching further sub-sessions to any depth. The session view nests them
-accurately under their immediate dispatcher at every level; when a dispatcher
-labels a sub-session, that label appears in place of a generated name, so you
-can tell at a glance what each piece of parallel work is doing. When the batch
-ends, all sub-sessions at every depth are retired.
+dispatching further sub-sessions to any depth. Some goals are purpose-built
+for exactly this: they take a large problem, discover its natural structure,
+and assign each part to a sub-agent — recursing at whatever depth the problem
+demands. The session view nests them accurately under their immediate
+dispatcher at every level; when a dispatcher labels a sub-session, that label
+appears in place of a generated name, so you can tell at a glance what each
+piece of parallel work is doing. When the batch ends, all sub-sessions at
+every depth are retired.
 
 Any agent — persistent or ephemeral — can send a message to any other by name.
 There is no central dispatcher. A send-message tool fires messages to other

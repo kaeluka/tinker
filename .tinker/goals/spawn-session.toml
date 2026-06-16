@@ -41,3 +41,7 @@ reason = "sibling tool surface on the shared dispatch substrate. send-message ro
 [[related]]
 id = "peer-consult"
 reason = "peer-consult owns the @-block envelope detection and routing that spawn-session provides a harness-provided tool alternative to; both are routing surfaces for dispatching work out of the caller, peer-consult authoritative on the envelope path, this goal on the tool path. Asymmetric: peer-consult is a packaged goal and cannot carry a back-link."
+
+[[related]]
+id = "recursive-subdivision"
+reason = "recursive-subdivision is a natural consumer of this tool — its entire operation is recursively dispatching sub-agents via spawn-session, making it the tool surface's most demanding use case."

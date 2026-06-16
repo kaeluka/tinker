@@ -179,3 +179,7 @@ reason = "send-message validates targets against goal-agents' session registry a
 [[related]]
 id = "spawn-session"
 reason = "spawn-session fires the new sub-session immediately into goal-agents' session registry; the dispatched session is visible in the registry alongside the dispatching session and participates in batch accounting the same way envelope-spawned sub-sessions do."
+
+[[related]]
+id = "recursive-subdivision"
+reason = "recursive-subdivision runs within this goal's session registry and lifecycle; each recursive dispatch creates a new sub-session entry, exercising the full depth the registry supports."
