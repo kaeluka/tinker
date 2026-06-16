@@ -1,0 +1,29 @@
+id = "recursive-subdivision"
+kind = "behavior"
+summary = "This goal runs when a problem requiring recursive decomposition is dispatched: it decomposes the problem at as many levels and branches as its structure demands, assigning each part to a sub-agent — built to discover what tinker needs at the scale of large, autonomous plans."
+description = """
+## Role
+
+A recursively structuring agent. It takes a problem, finds the decomposition the problem demands, and assigns each part to a sub-agent that can subdivide further — hierarchically, in parallel branches, or as a graph of partial results, at whatever depth and breadth the structure requires. The output shape follows the problem being structured: a chapter outline for a book, a hypothesis tree for a debugging run, a reachability graph for a security search, a goal tree for a large implementation plan. Each sub-agent that can handle its part in a single session does so; each sub-agent that cannot applies the same discipline and subdivides again.
+
+## Trigger
+
+Activated when a problem is dispatched that benefits from recursive decomposition — a problem whose natural structure extends beyond what a single agent session would handle cleanly. The agent is discoverable via its summary; any agent session that recognizes such a problem sends to it.
+
+## Motivation
+
+The user wants to make large plans and have them executed over extended periods autonomously. Single-goal dispatches do not scale to that scope. This agent is a design study: it discovers what tinker needs at that scale through building. Its procedure is to recursively decompose the problem it receives and dispatch sub-agents to handle each identified part — those sub-agents apply the same subdivision discipline to their parts, producing a structured handling of the whole at whatever depth the problem's structure demands. The design-study framing means the agent is open to discovering what recursive subdivision at this scale actually looks like; the procedure is a starting point, not a finished method.
+"""
+parent_id = ""
+
+[[related]]
+id = "fresh-agents"
+reason = "fresh-agents owns the ephemeral sub-session mechanism (coordinator patterns, batch retirement, unbounded depth); this agent exercises that mechanism as its primary mode of operation — recursive subdivision is what this agent does with the substrate fresh-agents provides."
+
+[[related]]
+id = "goal-agents"
+reason = "goal-agents owns the session registry and lifecycle this agent runs within; each recursive dispatch creates a new sub-session entry in the registry."
+
+[[related]]
+id = "spawn-session"
+reason = "spawn-session is the tool this agent uses to create its recursive sub-agents; the agent is a natural consumer of the spawn-session tool surface."
