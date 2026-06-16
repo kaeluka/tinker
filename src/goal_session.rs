@@ -716,8 +716,10 @@ mod tests {
 
     // spec (agent-collaboration): the neighbor section must be a mandatory
     // consultation requirement — imperative, not advisory. Before and during
-    // significant work the agent must send @-messages to every neighbor,
-    // announce what it is doing, and invite input.
+    // any work that touches a neighbor's scope the agent must send a message
+    // to each such neighbor (mechanism-neutral — the tool is taught in the
+    // message-passing section), announce what it is doing with design
+    // rationale, and await their response before finalizing changes.
     #[test]
     fn test_spec_neighbor_section_is_mandatory_consultation() {
         use crate::goal::RelatedLink;
@@ -731,16 +733,16 @@ mod tests {
         let msg = goal_init_message(&goal, None);
 
         assert!(
-            msg.contains("Before and during significant work"),
-            "neighbor section must mandate consultation before and during work"
+            msg.contains("Before and during any work that touches a neighbor's scope"),
+            "neighbor section must mandate consultation before and during work that touches a neighbor's scope"
         );
         assert!(
-            msg.contains("send an `@`-message to each"),
-            "neighbor section must instruct sending @-messages to each neighbor"
+            msg.contains("send a message to each such neighbor"),
+            "neighbor section must instruct sending a message to each such neighbor (mechanism-neutral, no @-prefix)"
         );
         assert!(
-            msg.contains("parent, children, and related links"),
-            "neighbor section must enumerate all three adjacency categories explicitly"
+            msg.contains("Await their response before finalizing changes"),
+            "neighbor section must require awaiting neighbor responses before finalizing changes"
         );
         assert!(
             msg.contains("Announce what you are doing"),
@@ -761,7 +763,7 @@ mod tests {
         let msg = goal_init_message(&goal, None);
 
         assert!(
-            msg.contains("excluding your dispatcher"),
+            msg.contains("Exclude your dispatcher"),
             "neighbor section must explicitly exempt the dispatcher from consultation"
         );
         assert!(
@@ -894,8 +896,8 @@ mod tests {
         );
     }
 
-    // spec: goal-agents preamble — three shared agents (@tend for intent/should,
-    // @rummage for code-reality/is, @jog for discrepancy finding) must be named
+    // spec: goal-agents preamble — three shared agents (tend for intent/should,
+    // rummage for code-reality/is, jog for discrepancy finding) must be named
     // as routing rules, not merely "available", so every agent knows when to
     // consult them and that goal-file reads don't substitute for agent queries.
     #[test]
@@ -907,8 +909,10 @@ mod tests {
             "preamble must frame shared agents as a routing rule, not availability"
         );
         assert!(
-            msg.contains("@tend") && msg.contains("@rummage") && msg.contains("@jog"),
-            "preamble must name all three shared agents"
+            msg.contains("send_message(target=\"tend\"")
+                && msg.contains("send_message(target=\"rummage\"")
+                && msg.contains("send_message(target=\"jog\""),
+            "preamble must show all three shared agents as send_message targets"
         );
         assert!(
             msg.contains("route questions"),
@@ -983,10 +987,19 @@ mod tests {
     }
 
     // spec (coding-standards, goal-agents): the neighbor consultation preamble
-    // must name the three adjacency categories and the dispatcher exemption.
+    // must define the trigger as work touching a neighbor's scope, instruct
+    // sending a message to each affected neighbor (mechanism-neutral — the
+    // tool is taught in the message-passing section), and name the dispatcher
+    // exemption.
     #[test]
     fn test_spec_neighbor_preamble_text_matches_storage() {
-        assert!(NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE.contains("parent, children, and related"));
-        assert!(NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE.contains("excluding your dispatcher"));
+        assert!(
+            NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE.contains("neighbor's scope"),
+            "preamble must define the consultation trigger as work touching a neighbor's scope"
+        );
+        assert!(
+            NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE.contains("Exclude your dispatcher"),
+            "preamble must name the dispatcher exemption"
+        );
     }
 }

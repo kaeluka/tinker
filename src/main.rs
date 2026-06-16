@@ -2740,8 +2740,8 @@ mod tests {
         drop(senders_guard);
         let msg = msg_rx.try_recv().expect("tend must receive the consultation");
         assert!(
-            msg.contains("@rummage"),
-            "dispatched message must name the sender so the recipient knows the reply target"
+            msg.contains("send_message(target=\"rummage\""),
+            "dispatched message must include reply instruction naming the sender via send_message"
         );
         // The delivery message must not contain a parseable live envelope — if
         // it did, the harness would extract it on the next parse pass and route

@@ -11,7 +11,12 @@ full adjacency — parent, children, and related goals — announcing what
 you're doing and inviting their input. The full adjacency is the
 complete set of goals whose context bears on the work. The one
 exemption: the agent that dispatched this work already knows what's
-happening and does not need to be consulted.
+happening and does not need to be consulted. The announcement must go
+out before changes land, not after. If your work is small enough to
+finish in one turn, the announcement and the work can happen in the
+same turn — the @-messages dispatch alongside your reply. For larger
+work, announce at the start and integrate neighbor responses as they
+arrive before the work finalizes.
 
 Respond to your neighbors' work in the same spirit of collaboration:
 contribute relevant context, identify conflicts (competing file edits
