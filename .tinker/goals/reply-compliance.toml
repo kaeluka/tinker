@@ -31,3 +31,7 @@ reason = "peer-consult owns the envelope detection and routing protocol; reply-c
 [[related]]
 id = "goal-agents"
 reason = "the reply-format requirement is communicated in the framework preamble that goal-agents constructs; changes to how the requirement is communicated are changes to that preamble."
+
+[[related]]
+id = "send-message"
+reason = "send-message handles outbound sends via tool calls, subsuming the outbound prompting that reply-compliance ensures for the envelope path. reply-compliance remains the compliance guarantee for envelopes while both mechanisms coexist; send-message is the successor and envelopes are temporary."

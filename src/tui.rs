@@ -518,7 +518,7 @@ fn draw_goal_tree(
             lines.extend(
                 g.description
                     .lines()
-                    .map(|l| Line::from(l.to_string()))
+                    .map(|l| Line::from(normalize_list_marker(l)))
             );
             if app.running_sessions.contains_key(&g.id) {
                 let reason = app.running_sessions.get(&g.id)
@@ -760,6 +760,42 @@ fn goal_detail_header_line(g: &crate::goal::Goal, is_packaged: bool) -> Line<'st
         Span::raw("  "),
         Span::styled(tag, style),
     ])
+}
+
+/// Normalize markdown list-item markers in a single line of goal-detail body
+/// text to `-`. A list-item marker is one of:
+///   - unordered: `-`, `*`, or `+` followed by a single space
+///   - ordered:   one or more ASCII digits, then `.` or `)`, then a single space
+///
+/// Lines that don't begin with a list marker (after any leading space indent)
+/// pass through unchanged, so prose, headings, and continuation lines are not
+/// touched. The line's leading space indent is preserved so nested items keep
+/// their nesting position on the rendered line.
+fn normalize_list_marker(line: &str) -> String {
+    let leading = line.len() - line.trim_start_matches(' ').len();
+    let (indent, rest) = line.split_at(leading);
+    if rest.is_empty() {
+        return line.to_string();
+    }
+    let bytes = rest.as_bytes();
+    // Unordered: -, *, or + followed by a single space.
+    if matches!(bytes[0], b'-' | b'*' | b'+') {
+        if bytes.len() >= 2 && bytes[1] == b' ' {
+            return format!("{}- {}", indent, &rest[2..]);
+        }
+        return line.to_string();
+    }
+    // Ordered: one or more ASCII digits, then `.` or `)`, then a single space.
+    if bytes[0].is_ascii_digit() {
+        let mut i = 0;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i + 1 < bytes.len() && (bytes[i] == b'.' || bytes[i] == b')') && bytes[i + 1] == b' ' {
+            return format!("{}- {}", indent, &rest[i + 2..]);
+        }
+    }
+    line.to_string()
 }
 
 fn log_pane_title(id: Option<&str>) -> String {
@@ -1715,6 +1751,85 @@ mod tests {
             text.contains("[feature · mid]"),
             "expected default tag '[feature · mid]', got: {:?}",
             text,
+        );
+    }
+
+    /// Spec (tui — goal-detail body): markdown list items render with a `-`
+    /// marker so the marker recedes against the prose. Covers unordered and
+    /// ordered markers, indented/nested items, and prose lines that must
+    /// pass through unchanged.
+    #[test]
+    fn test_spec_normalize_list_marker_uses_dash_for_all_markers() {
+        // Unordered markers: -, *, + each followed by a space.
+        assert_eq!(normalize_list_marker("- first"),  "- first");
+        assert_eq!(normalize_list_marker("* second"), "- second");
+        assert_eq!(normalize_list_marker("+ third"),  "- third");
+        // Ordered markers: `1.`, `2)`, and multi-digit.
+        assert_eq!(normalize_list_marker("1. one"),   "- one");
+        assert_eq!(normalize_list_marker("2) two"),   "- two");
+        assert_eq!(normalize_list_marker("10. ten"),  "- ten");
+        // Leading space indent is preserved (nested items keep their column).
+        assert_eq!(normalize_list_marker("  - nested"), "  - nested");
+        assert_eq!(normalize_list_marker("    1. deep"), "    - deep");
+        // Lines that are NOT list items pass through unchanged:
+        //   prose, bold/italic, headings, continuation lines, hyphens without space.
+        assert_eq!(normalize_list_marker("plain prose line"), "plain prose line");
+        assert_eq!(normalize_list_marker("**Bold opening.**"), "**Bold opening.**");
+        assert_eq!(normalize_list_marker("*italic*"), "*italic*");
+        assert_eq!(normalize_list_marker("## Heading"), "## Heading");
+        assert_eq!(normalize_list_marker("   continuation"), "   continuation");
+        assert_eq!(normalize_list_marker("-foo"), "-foo");
+        assert_eq!(normalize_list_marker(""), "");
+        assert_eq!(normalize_list_marker("   "), "   ");
+    }
+
+    /// Spec (tui — goal-detail body): when the goal-detail body is rendered,
+    /// the body lines pass through `normalize_list_marker`, so the rendered
+    /// list-item markers in the body are dashes regardless of the marker
+    /// the source TOML used.
+    #[test]
+    fn test_spec_goal_detail_body_renders_list_items_with_dash() {
+        // The body builder is private; exercise it via the same expression
+        // that draw_goal_tree uses for the body lines.
+        let description = "\
+## WHAT
+A short paragraph.
+
+- dash item
+* star item
++ plus item
+1. ordered item
+2) alt-ordered
+   continuation line, not a list
+   another continuation
+  - nested item
+plain trailing line";
+        let body: Vec<Line> = description
+            .lines()
+            .map(|l| Line::from(normalize_list_marker(l)))
+            .collect();
+        let texts: Vec<String> = body
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                "## WHAT".to_string(),
+                "A short paragraph.".to_string(),
+                "".to_string(),
+                "- dash item".to_string(),
+                "- star item".to_string(),
+                "- plus item".to_string(),
+                "- ordered item".to_string(),
+                "- alt-ordered".to_string(),
+                "   continuation line, not a list".to_string(),
+                "   another continuation".to_string(),
+                "  - nested item".to_string(),
+                "plain trailing line".to_string(),
+            ],
+            "every list-item line in the body must render with a `-` marker; \
+             prose, headings, and continuation lines must pass through unchanged",
         );
     }
 

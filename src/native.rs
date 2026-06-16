@@ -18,6 +18,8 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
+#[cfg(test)]
+use std::sync::Arc;
 use tokio::process::Command;
 
 /// OpenRouter model ids — the same models the opencode backend routes to,
@@ -218,6 +220,20 @@ pub fn tool_definitions(policy: &ToolPolicy) -> Vec<Value> {
             &["command"],
         ));
     }
+    // send_message is the structured-tool successor to the @-envelope
+    // mechanism.  It is available to every session — including tend —
+    // because the spec mandates it for "all agent sessions".  The tool
+    // does not touch the filesystem, so the policy layer is irrelevant;
+    // the runtime enforces registry validation in the callback.
+    tools.push(tool_schema(
+        "send_message",
+        "Send a message to another agent session identified by its goal ID. The recipient must already exist in the session registry; this tool does not spawn fresh sub-sessions (use the @-envelope mechanism for that). The recipient session starts processing the message immediately during this turn — it runs in parallel rather than waiting for this session to complete. Returns an error if the target is not a known session, so the sender can route through a different agent. Prefer this over `<@id>...</@id>` envelopes: the tool call cannot be malformed and fires in-turn rather than at end-of-turn.",
+        json!({
+            "target": {"type": "string", "description": "Goal ID of the recipient session (e.g. 'tend', 'rummage'). Must already exist in the session registry — use @-envelopes for spawning fresh sub-sessions."},
+            "message": {"type": "string", "description": "The message body to deliver to the recipient. May span multiple lines."}
+        }),
+        &["target", "message"],
+    ));
     tools
 }
 
@@ -317,6 +333,7 @@ impl OpenCodeRunner for NativeRunner {
         system_prompt: Option<&str>,
         mut on_session_id: Chunk,
         mut on_chunk: Chunk,
+        send_message: Option<crate::cap::SendMessageFn>,
     ) -> Result<String> {
         let api_key = std::env::var(API_KEY_ENV)
             .map_err(|_| anyhow!("{API_KEY_ENV} is not set — the native backend needs an OpenRouter API key"))?;
@@ -455,12 +472,13 @@ impl OpenCodeRunner for NativeRunner {
                     .unwrap_or(json!({}));
 
                 let summary = short_tool_summary(&name, &args);
-                let result = match self.policy.check(&name, &args, work_dir) {
-                    Err(denied) => {
-                        on_chunk(format_tool_error(&name, &summary, &denied));
-                        Err(denied)
-                    }
-                    Ok(()) => match execute_tool(&name, &args, work_dir).await {
+                // The send_message tool is a meta-tool — it does not touch
+                // the filesystem, so the policy layer is irrelevant and the
+                // callback is always consulted (when present).  Every other
+                // tool goes through the policy check first; send_message
+                // skips that check entirely.
+                let result = if name == "send_message" {
+                    match execute_send_message(&args, send_message.as_ref()).await {
                         Ok(output) => {
                             on_chunk(format_tool_ok(&name, &summary));
                             Ok(output)
@@ -470,7 +488,25 @@ impl OpenCodeRunner for NativeRunner {
                             on_chunk(format_tool_error(&name, &summary, &e));
                             Err(e)
                         }
-                    },
+                    }
+                } else {
+                    match self.policy.check(&name, &args, work_dir) {
+                        Err(denied) => {
+                            on_chunk(format_tool_error(&name, &summary, &denied));
+                            Err(denied)
+                        }
+                        Ok(()) => match execute_tool(&name, &args, work_dir).await {
+                            Ok(output) => {
+                                on_chunk(format_tool_ok(&name, &summary));
+                                Ok(output)
+                            }
+                            Err(e) => {
+                                let e = format!("{e:#}");
+                                on_chunk(format_tool_error(&name, &summary, &e));
+                                Err(e)
+                            }
+                        },
+                    }
                 };
                 let content = match result {
                     Ok(out) => truncate_output(&out),
@@ -557,7 +593,52 @@ fn short_tool_summary(tool: &str, input: &Value) -> String {
         "read" | "write" | "edit" => s("path").unwrap_or_default(),
         "bash" => s("command").unwrap_or_default(),
         "glob" | "grep" => s("pattern").unwrap_or_default(),
+        "send_message" => {
+            // For send_message, "target" is the most useful one-liner — it
+            // names the recipient. The message body is potentially long and
+            // would be truncated by the format helper anyway.
+            s("target").unwrap_or_default()
+        }
         _ => String::new(),
+    }
+}
+
+/// Execute the `send_message` tool call. Validates that `target` and
+/// `message` are present, then delegates to the dispatcher callback which
+/// handles registry validation and channel delivery. When the callback is
+/// `None` (e.g. a test mock that does not care about dispatch), the model
+/// receives an explicit error so it can route through an alternative
+/// mechanism — the same error surface the registry uses for unknown targets.
+async fn execute_send_message(
+    args: &Value,
+    send_message: Option<&crate::cap::SendMessageFn>,
+) -> Result<String> {
+    let target = args
+        .get("target")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("missing required argument: target"))?;
+    let message = args
+        .get("message")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("missing required argument: message"))?;
+    if target.is_empty() {
+        return Err(anyhow!("send_message: target must be a non-empty string"));
+    }
+    if message.is_empty() {
+        return Err(anyhow!("send_message: message must be a non-empty string"));
+    }
+    match send_message {
+        Some(cb) => {
+            // The callback returns Ok(confirmation) on successful dispatch
+            // and Err(reason) on unknown target / channel failure.  We
+            // forward the result as the tool output so the model sees a
+            // clean acknowledgement on success and an actionable error on
+            // failure.
+            cb(target, message).map_err(|e| anyhow!("{e}"))
+        }
+        None => Err(anyhow!(
+            "send_message: no dispatcher configured (this runner was started without one)"
+        )),
     }
 }
 
@@ -806,5 +887,238 @@ mod tests {
         let assistant = json!({"content": "Just a simple string."});
         let extracted = extract_assistant_text(&assistant);
         assert_eq!(extracted, "Just a simple string.");
+    }
+
+    // ── send_message tool tests ──────────────────────────────────────────
+
+    // spec (send-message): the send_message tool must appear in the function
+    // schema for every ToolPolicy variant, including TendScope.  The tool is
+    // a meta-tool — it does not touch the filesystem, so the policy layer
+    // is irrelevant and the schema must be uniformly available.
+    #[test]
+    fn test_spec_send_message_tool_in_definitions_for_every_policy() {
+        for policy in [ToolPolicy::Unrestricted, ToolPolicy::TendScope] {
+            let tools = tool_definitions(&policy);
+            let found = tools.iter().any(|t| {
+                t.pointer("/function/name").and_then(|n| n.as_str()) == Some("send_message")
+            });
+            assert!(
+                found,
+                "send_message must be in tool definitions for policy {policy:?}"
+            );
+        }
+    }
+
+    // spec (send-message): the send_message schema must require both `target`
+    // and `message` parameters.  Missing either would let the model produce
+    // a tool call that the runner accepts but cannot dispatch — the exact
+    // format-fragility failure mode the tool replaces.
+    #[test]
+    fn test_spec_send_message_schema_requires_target_and_message() {
+        let tools = tool_definitions(&ToolPolicy::Unrestricted);
+        let tool = tools
+            .iter()
+            .find(|t| t.pointer("/function/name").and_then(|n| n.as_str()) == Some("send_message"))
+            .expect("send_message tool must be present");
+        let required = tool
+            .pointer("/function/parameters/required")
+            .and_then(|r| r.as_array())
+            .expect("send_message must declare required parameters");
+        let names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(names.contains(&"target"), "target must be a required parameter");
+        assert!(names.contains(&"message"), "message must be a required parameter");
+    }
+
+    // spec (send-message): tool description must explicitly say the recipient
+    // must already be in the session registry and that the tool fires
+    // immediately during the turn (so the model picks the right tool for
+    // the job and not the @-envelope mechanism).
+    #[test]
+    fn test_spec_send_message_schema_documents_registry_and_in_turn_dispatch() {
+        let tools = tool_definitions(&ToolPolicy::Unrestricted);
+        let tool = tools
+            .iter()
+            .find(|t| t.pointer("/function/name").and_then(|n| n.as_str()) == Some("send_message"))
+            .expect("send_message tool must be present");
+        let desc = tool
+            .pointer("/function/description")
+            .and_then(|d| d.as_str())
+            .unwrap_or("");
+        assert!(
+            desc.contains("session registry"),
+            "description must mention the session registry requirement: {desc}"
+        );
+        assert!(
+            desc.to_lowercase().contains("immediately")
+                || desc.to_lowercase().contains("during this turn"),
+            "description must explain that the dispatch is in-turn: {desc}"
+        );
+    }
+
+    // spec (send-message): short_tool_summary on send_message returns the
+    // target name, so the `→ send_message target` log line is informative
+    // (mirrors the `→ Write path` / `→ Bash command` form the other tools
+    // produce).
+    #[test]
+    fn test_spec_send_message_short_summary_returns_target() {
+        let args = json!({"target": "rummage", "message": "investigate the auth flow"});
+        let s = short_tool_summary("send_message", &args);
+        assert_eq!(s, "rummage", "short summary must name the target");
+        // Empty target: summary must be empty (no spurious content).
+        let args_empty = json!({"target": "", "message": "x"});
+        let s_empty = short_tool_summary("send_message", &args_empty);
+        assert_eq!(s_empty, "", "empty target must produce empty summary");
+    }
+
+    // spec (send-message): execute_send_message delegates to the callback
+    // when one is provided.  Successful callback invocation returns Ok with
+    // the callback's confirmation string — the model sees a clean ack.
+    #[tokio::test]
+    async fn test_spec_execute_send_message_delegates_to_callback() {
+        let captured: Arc<Mutex<Option<(String, String)>>> = Arc::new(Mutex::new(None));
+        let captured_clone = captured.clone();
+        let cb: crate::cap::SendMessageFn = Arc::new(move |target: &str, message: &str| {
+            *captured_clone.lock().unwrap() = Some((target.to_string(), message.to_string()));
+            Ok(format!("delivered to `{target}`"))
+        });
+        let result = execute_send_message(
+            &json!({"target": "rummage", "message": "trace the init"}),
+            Some(&cb),
+        )
+        .await;
+        let out = result.expect("callback success must yield Ok result");
+        assert!(out.contains("rummage"), "ok result should confirm the recipient");
+        let (t, m) = captured.lock().unwrap().clone().expect("callback was invoked");
+        assert_eq!(t, "rummage");
+        assert_eq!(m, "trace the init");
+    }
+
+    // spec (send-message): when the callback returns Err, the runner surfaces
+    // the error as an Err to the model — the failure path is explicit, never
+    // a silent loss.
+    #[tokio::test]
+    async fn test_spec_execute_send_message_surfaces_callback_error() {
+        let cb: crate::cap::SendMessageFn = Arc::new(|_t: &str, _m: &str| {
+            Err("target `rummage` is not in the session registry".to_string())
+        });
+        let err = execute_send_message(
+            &json!({"target": "rummage", "message": "go"}),
+            Some(&cb),
+        )
+        .await
+        .expect_err("callback Err must produce Err result");
+        assert!(
+            err.to_string().contains("not in the session registry"),
+            "error must surface the registry-miss reason verbatim: {err}"
+        );
+    }
+
+    // spec (send-message): no callback configured returns an explicit error
+    // naming the misconfiguration.  This is the harness's signal that the
+    // feature is not wired (e.g. a test mock that does not care about
+    // dispatch) — the model can route through a different mechanism.
+    #[tokio::test]
+    async fn test_spec_execute_send_message_no_callback_returns_error() {
+        let err = execute_send_message(
+            &json!({"target": "rummage", "message": "go"}),
+            None,
+        )
+        .await
+        .expect_err("no callback must yield Err");
+        assert!(
+            err.to_string().contains("no dispatcher configured"),
+            "error must name the misconfiguration: {err}"
+        );
+    }
+
+    // spec (send-message): missing arguments produce explicit errors, not
+    // silent acceptance.  The runner must reject malformed tool calls the
+    // same way the @-envelope parser would reject a missing tag.
+    #[tokio::test]
+    async fn test_spec_execute_send_message_missing_target_errors() {
+        let cb: crate::cap::SendMessageFn = Arc::new(|_, _| Ok("ok".to_string()));
+        let err = execute_send_message(
+            &json!({"message": "go"}),
+            Some(&cb),
+        )
+        .await
+        .expect_err("missing target must error");
+        assert!(err.to_string().contains("target"), "error must name the missing arg");
+    }
+
+    // spec (send-message): missing message argument errors.
+    #[tokio::test]
+    async fn test_spec_execute_send_message_missing_message_errors() {
+        let cb: crate::cap::SendMessageFn = Arc::new(|_, _| Ok("ok".to_string()));
+        let err = execute_send_message(
+            &json!({"target": "rummage"}),
+            Some(&cb),
+        )
+        .await
+        .expect_err("missing message must error");
+        assert!(err.to_string().contains("message"), "error must name the missing arg");
+    }
+
+    // spec (send-message): empty target is rejected.  An empty target
+    // string would be a tool call the model produced by accident — refusing
+    // it explicitly is safer than treating it as a generic send.
+    #[tokio::test]
+    async fn test_spec_execute_send_message_empty_target_rejected() {
+        let cb: crate::cap::SendMessageFn = Arc::new(|_, _| Ok("ok".to_string()));
+        let err = execute_send_message(
+            &json!({"target": "", "message": "go"}),
+            Some(&cb),
+        )
+        .await
+        .expect_err("empty target must error");
+        assert!(err.to_string().contains("non-empty"), "error must name the empty-arg invariant");
+    }
+
+    // spec (send-message): empty message is rejected.  An accidental
+    // empty-string send would be a silent zero-content delivery.
+    #[tokio::test]
+    async fn test_spec_execute_send_message_empty_message_rejected() {
+        let cb: crate::cap::SendMessageFn = Arc::new(|_, _| Ok("ok".to_string()));
+        let err = execute_send_message(
+            &json!({"target": "rummage", "message": ""}),
+            Some(&cb),
+        )
+        .await
+        .expect_err("empty message must error");
+        assert!(err.to_string().contains("non-empty"), "error must name the empty-arg invariant");
+    }
+
+    // spec (send-message): the send_message tool is available to tend too
+    // (its ToolPolicy is TendScope which strips bash).  Defense in depth
+    // applies: the schema inclusion is the first line; the policy check
+    // would also deny bash, but send_message must NOT be subject to any
+    // policy check at all (it's a meta-tool).
+    #[test]
+    fn test_spec_send_message_for_tend_includes_tool_definitions() {
+        let tools = tool_definitions(&ToolPolicy::TendScope);
+        let names: Vec<&str> = tools
+            .iter()
+            .filter_map(|t| t.pointer("/function/name").and_then(|n| n.as_str()))
+            .collect();
+        assert!(
+            names.contains(&"send_message"),
+            "tend must see send_message: tools were {names:?}"
+        );
+        // bash is the tool tend's policy strips — make sure the comparison
+        // is meaningful: tend's tool list genuinely differs from the
+        // unrestricted list in this one place.
+        let tools_full = tool_definitions(&ToolPolicy::Unrestricted);
+        let full_names: Vec<&str> = tools_full
+            .iter()
+            .filter_map(|t| t.pointer("/function/name").and_then(|n| n.as_str()))
+            .collect();
+        assert!(
+            !names.contains(&"bash"),
+            "tend's policy must still strip bash (control test): {names:?}"
+        );
+        assert!(
+            full_names.contains(&"bash"),
+            "unrestricted policy must include bash (control test): {full_names:?}"
+        );
     }
 }

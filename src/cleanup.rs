@@ -173,7 +173,7 @@ async fn run_oc_oneshot(
 ) -> Result<()> {
     let on_sid: Box<dyn FnMut(String) + Send> = Box::new(|_| {});
     let on_chunk: Box<dyn FnMut(String) + Send> = Box::new(|_| {});
-    oc.run(message, None, work_dir, None, on_sid, on_chunk).await?;
+    oc.run(message, None, work_dir, None, on_sid, on_chunk, None).await?;
     Ok(())
 }
 
@@ -434,6 +434,7 @@ mod tests {
             _system_prompt: Option<&str>,
             _on_session_id: Chunk,
             _on_chunk: Chunk,
+            _send_message: Option<crate::cap::SendMessageFn>,
         ) -> Result<String> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             // Drop any line that is a marker line — mirrors what a real
@@ -466,6 +467,7 @@ mod tests {
             _system_prompt: Option<&str>,
             _on_session_id: Chunk,
             _on_chunk: Chunk,
+            _send_message: Option<crate::cap::SendMessageFn>,
         ) -> Result<String> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(String::new())

@@ -347,7 +347,7 @@ pub async fn run_silent(
         buf_clone.lock().unwrap().push_str(&chunk);
     });
     let on_sid: Box<dyn FnMut(String) + Send> = Box::new(|_| {});
-    oc.run(message, session_id, work_dir, None, on_sid, on_chunk).await?;
+    oc.run(message, session_id, work_dir, None, on_sid, on_chunk, None).await?;
     let s = buf.lock().unwrap().clone();
     Ok(s)
 }
@@ -395,7 +395,7 @@ pub async fn run_goal(
         });
     });
     let session_id = oc
-        .run(&message, None, &work_dir, None, on_sid, on_chunk)
+        .run(&message, None, &work_dir, None, on_sid, on_chunk, None)
         .await?;
 
     let output = full_output.lock().unwrap().clone();
@@ -641,6 +641,7 @@ mod tests {
                 _system_prompt: Option<&str>,
                 _on_session_id: Chunk,
                 _on_chunk: Chunk,
+                _send_message: Option<crate::cap::SendMessageFn>,
             ) -> Result<String> {
                 let n = self.calls.fetch_add(1, Ordering::SeqCst);
                 if n == 0 {

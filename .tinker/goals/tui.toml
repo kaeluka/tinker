@@ -40,6 +40,10 @@ goal's summary in subdued text followed by a compact type tag
 (`[kind · tier]`) in muted grey. The header makes the goal's scope
 and model tier readable at a glance without parsing the body.
 
+In the goal text, list items (markdown bullet points) render with a dash (`-`)
+as the marker — the dash carries less visual weight and keeps the prose
+as the surface.
+
 In the session log, the reason a session was triggered renders in
 bold at the top. The session log pane title shows the selected goal's
 id. The session log is independent of the active conversation: it
@@ -122,6 +126,10 @@ stay visible at a glance. The queue surface is read-only by
 deliberate choice: the user wanted to see what is running without
 being able to cancel or reorder it. Queue control is a separate
 concern, deferred until there is a real need.
+
+List markers render as dashes for the same reason queue markers render dim —
+when a surface is scanned, heavy markers compete with the content they mark.
+The dash recedes.
 
 Ephemeral sub-sessions appear at dispatch time, not at turn completion, for the same reason the system is meant to be watched while it works: the user needs to see that work is forming, not just that it landed. A burst of entries appearing alongside a finished result gives no signal about what happened in between. Nesting at accurate depth reflects the actual work hierarchy — a sub-session shown flat under the root misrepresents which coordinator owns it and obscures the structure of the running task. Label-first display extends the same reasoning to the row itself: if the dispatcher encoded what the sub-session is doing in the label, rendering an opaque index discards that signal.
 

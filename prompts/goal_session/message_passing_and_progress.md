@@ -12,6 +12,21 @@ Output outside envelopes is your private working log (rendered in the log pane, 
 
 **Before sending an `@`-message, check the compact index and edge reasons** in the goal index above. The index and the reason column are the navigation surface for the goal graph — they tell you which agent owns a given domain and what they're responsible for. The goal itself is the agent's role and operating instructions; if the compact index isn't sufficient, escalate to `@tend`, who holds the full goal tree.
 
+### Preferred path: the `send_message` tool
+
+You also have a `send_message` tool available in your function schema. Prefer it over `<@id>…</@id>` envelopes when the target session is already in the registry:
+
+```
+send_message(target="<goal-id>", message="...")
+```
+
+Why use the tool:
+- **Schema-enforced.** The `target` and `message` parameters cannot be malformed the way an envelope can be — if the syntax is right, the dispatch lands.
+- **Fires in-turn.** The recipient session starts processing immediately during your turn, not at the end of it — recipient work overlaps with yours instead of waiting.
+- **Discoverable.** The capability is visible in your function schema, so there's no risk of conflating it with reply envelopes or quoting the syntax in prose.
+
+The tool fails with an explicit error if the target is not already a registered session. Use `<@id>…</@id>` envelopes instead when you need to spawn a fresh sub-session — the envelope mechanism is what `fresh-agents` dispatches.
+
 ### Three shared agents
 
 Three shared agents cover the surfaces every goal agent eventually needs. Use `@`-messaging to route questions on those surfaces to the right agent rather than inferring from the codebase or another agent's goal file — the `@`-envelope is the actor-model routing surface, and the compact index tells you which agent owns what:

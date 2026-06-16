@@ -159,3 +159,7 @@ reason = "fresh-agents adds an ephemeral entry type to the session registry — 
 [[related]]
 id = "prompt-storage"
 reason = "prompt-storage owns the raw prompt text this goal's builder functions assemble into messages — session init templates, framework preamble constants, delivery messages, silence nudges, reply-compliance templates, and parse-correction prompts are loaded from prompt-storage rather than hardcoded."
+
+[[related]]
+id = "send-message"
+reason = "send-message validates targets against goal-agents' session registry and fires recipient sessions immediately into the same routing substrate envelopes use. The registry is the source of truth for target existence in both paths."

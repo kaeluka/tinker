@@ -10,9 +10,12 @@ Features are in heavy flux. This is a design study; work is actively ongoing.
 Every goal in tinker is a running agent. Each goal owns a piece of the
 spec and the code that implements it; when work begins, the goal session
 activates, reads its own spec, and writes directly to its files. Goals
-communicate by dispatching `<@goal-id>...</@goal-id>` tag envelopes to each other —
+communicate by sending messages to each other by name —
 consulting peers, reporting findings, delegating checks — without any
-central coordinator. This is what separates tinker from a conventional
+central coordinator. A send-message tool fires the recipient session
+immediately and fails on unknown targets; an older envelope mechanism
+(`<@goal-id>…</@goal-id>` tags in agent output) continues alongside it.
+This is what separates tinker from a conventional
 coding assistant: the specification is not a passive document but a live
 network of agents that enforce their own constraints.
 
@@ -198,8 +201,12 @@ can tell at a glance what each piece of parallel work is doing. When the batch
 ends, all sub-sessions at every depth are retired.
 
 Any agent — persistent or ephemeral — can send a message to any other by name.
-There is no central dispatcher. Delivery to any recognised agent is guaranteed —
-the harness never silently drops a message. When a goal session finds a gap it
+There is no central dispatcher. The primary path is a send-message tool that
+fires the recipient session immediately during the sender's turn and returns
+an error if the target does not exist. An older mechanism — tag envelopes
+embedded in agent output — continues to work alongside it; both paths deposit
+messages into the same routing substrate, and delivery to any recognised agent
+is guaranteed. When a goal session finds a gap it
 cannot resolve, it messages rummage. When rummage needs intent context, it
 messages tend. When jog wants to read the spec, it messages tend. The exchange
 resolves without you brokering it.

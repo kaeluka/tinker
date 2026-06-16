@@ -57,3 +57,7 @@ reason = "peer-consult's envelope extraction and no-drop delivery guarantee oper
 [[related]]
 id = "prompt-storage"
 reason = "prompt-storage owns the shared tool/stream formatting templates (→/⚠ lines) the native backend renders chunks with."
+
+[[related]]
+id = "send-message"
+reason = "send-message is a tool registered in backends' tool policy layer; its parameters, error semantics, and call accounting are subject to backends' framework constraints."

@@ -1,0 +1,71 @@
+id = "send-message"
+kind = "feature"
+summary = "This goal owns the send-message tool available to every agent session — a schema-enforced, registry-validated outbound message that delivers into the same routing substrate as @-block envelopes but fires the recipient session immediately during the turn rather than at the sender's turn completion, failing outright on unknown targets."
+description = """
+## WHAT
+All agent sessions have a send-message tool that dispatches a message to a
+named target in the session registry. The tool fires during the turn —
+the recipient session starts immediately and runs in parallel, not deferred
+to the sender's turn completion.
+
+The tool validates the target against the session registry and returns an
+error when the target does not exist. From the recipient's view, a
+tool-delivered message is indistinguishable from an envelope-delivered one:
+both paths deposit the same message type into the same routing substrate.
+
+The tool routes only to already-registered sessions. Spawning fresh
+sub-sessions remains the domain of the @-envelope mechanism; the send
+tool does not substitute for @-dispatch.
+
+The envelope mechanism (@-block tags) continues working alongside the tool
+until its retirement — send-message is the successor, and envelopes are
+temporary. The tool's reply-signal surface (whether the sender observes
+the recipient's response as a discrete event) is not in scope here and
+deferred until it becomes necessary.
+
+## WHY
+Envelopes serve their role but leave gaps the tool closes. Three failure
+modes in the envelope path:
+
+- **Format fragility.** Envelopes embed address and content in free-form
+  output. Agents forget the tag format or malform it, and the message is
+  lost. A structured tool with schema-enforced parameters removes the
+  failure mode.
+
+- **Discoverability.** Envelopes are an implicit convention. Agents
+  conflate the reply envelope (unnamed, wraps the outgoing reply) with
+  outbound sends, and try to embed named addresses in envelope text that
+  the harness does not parse. When the send is an explicit tool, the
+  capability is legible in the tool schema.
+
+- **Turn-end latency.** Envelopes extract at turn completion. The recipient
+  sits idle until the sender finishes. A tool call fires during the turn —
+  the recipient dispatches immediately, increasing parallelism between
+  sessions.
+
+The tool validates target existence because silent loss of a message the
+sender intended to deliver is worse than an explicit error. Envelopes
+already guarantee "never silently drops" at the extraction layer; the tool
+extends that to target resolution in schema.
+"""
+parent_id = ""
+
+[[related]]
+id = "peer-consult"
+reason = "sibling messaging mechanism — same domain (agent-to-agent messaging), different delivery path. peer-consult owns @-block extraction, routing, the 'never silently drops' guarantee for envelopes, and user-visible rendering. send-message owns the tool-call path: schema-enforced format, registry validation, in-turn dispatch, and tool error semantics. peer-consult is authoritative for detection and delivery on the @-block path; this goal is authoritative for the tool-call path. Asymmetric: peer-consult is a packaged goal and cannot carry a back-link."
+
+[[related]]
+id = "backends"
+reason = "send-message is a tool registered in backends' tool policy layer; its parameters, error semantics, and call accounting are subject to backends' framework constraints."
+
+[[related]]
+id = "reply-compliance"
+reason = "send-message handles outbound sends via tool calls, subsuming the outbound prompting that reply-compliance ensures for the envelope path. reply-compliance remains the compliance guarantee for envelopes while both mechanisms coexist; send-message is the successor and envelopes are temporary."
+
+[[related]]
+id = "goal-agents"
+reason = "send-message validates targets against goal-agents' session registry and fires recipient sessions immediately into the same routing substrate envelopes use. The registry is the source of truth for target existence in both paths."
+
+[[related]]
+id = "tend-introspection"
+reason = "send-message dispatches produce a new event type in the runtime event log — sender, target, dispatch time — alongside the existing envelope-based dispatch emission."

@@ -106,6 +106,21 @@ pub enum LogEvent {
     BatchTransition {
         direction: String,
     },
+    /// Emitted when an agent calls the `send_message` tool to dispatch a
+    /// message to another session. `sender` is the calling goal's ID;
+    /// `target` is the goal ID the sender addressed; `success` reports
+    /// whether the dispatch reached the registry; `error` is set when
+    /// `success` is false and names the failure reason (typically
+    /// "unknown target" when the target is not in the session registry).
+    /// Tool-delivered dispatches share the same substrate as envelope
+    /// dispatches — the event exists separately so introspection can
+    /// distinguish the two delivery paths.
+    SendMessageDispatched {
+        sender: String,
+        target: String,
+        success: bool,
+        error: Option<String>,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -662,6 +677,82 @@ mod tests {
                 "BatchTransition({direction}) must not mark state dirty"
             );
         }
+    }
+
+    // spec (send-message): the new `SendMessageDispatched` log event serializes
+    // with `kind = "send_message_dispatched"` and carries the sender, target,
+    // and success fields.  The optional `error` field is set on failure with
+    // the registry-miss reason.  This event is the introspection hook that
+    // distinguishes tool-delivered dispatches from envelope-delivered ones.
+    #[test]
+    fn test_spec_send_message_dispatched_event_serializes() {
+        // Success case
+        let event = LogEvent::SendMessageDispatched {
+            sender: "tend".to_string(),
+            target: "rummage".to_string(),
+            success: true,
+            error: None,
+        };
+        let entry = LogEntry {
+            ts: "2026-06-10T00:00:00Z".to_string(),
+            source: "tend".to_string(),
+            event,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["kind"], "send_message_dispatched");
+        assert_eq!(val["sender"], "tend");
+        assert_eq!(val["target"], "rummage");
+        assert_eq!(val["success"], true);
+        // On success the error field is None — serde serializes None as null
+        // (or skips with skip_serializing_if); here we want the field present
+        // so consumers can rely on it.
+        assert!(val.get("error").is_some(), "error field must be present (even on success)");
+
+        // Failure case — error carries the registry-miss reason.
+        let event_fail = LogEvent::SendMessageDispatched {
+            sender: "tend".to_string(),
+            target: "ghost".to_string(),
+            success: false,
+            error: Some("target `ghost` is not in the session registry".to_string()),
+        };
+        let entry_fail = LogEntry {
+            ts: "2026-06-10T00:00:00Z".to_string(),
+            source: "tend".to_string(),
+            event: event_fail,
+        };
+        let json_fail = serde_json::to_string(&entry_fail).unwrap();
+        let val_fail: serde_json::Value = serde_json::from_str(&json_fail).unwrap();
+        assert_eq!(val_fail["kind"], "send_message_dispatched");
+        assert_eq!(val_fail["success"], false);
+        assert_eq!(
+            val_fail["error"],
+            "target `ghost` is not in the session registry"
+        );
+    }
+
+    // spec (send-message): SendMessageDispatched is NOT state-changing —
+    // it never triggers a state snapshot write.  Dispatch events are
+    // observable but not part of the UI snapshot's queue/selection
+    // surface.
+    #[test]
+    fn test_spec_send_message_dispatched_is_not_state_changing() {
+        let entry = LogEntry {
+            ts: "2026-06-10T00:00:00Z".to_string(),
+            source: "tend".to_string(),
+            event: LogEvent::SendMessageDispatched {
+                sender: "tend".to_string(),
+                target: "rummage".to_string(),
+                success: true,
+                error: None,
+            },
+        };
+        let mut state = StateSnapshot::default();
+        let changed = apply_to_state(&entry, &mut state);
+        assert!(
+            !changed,
+            "SendMessageDispatched must not mark state dirty"
+        );
     }
 
     // spec (tend-introspection): TuiScrollChanged updates the correct
