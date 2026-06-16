@@ -29,6 +29,26 @@ pub type Chunk = Box<dyn FnMut(String) + Send>;
 /// Signature: `fn(target, message) -> Result<confirmation, reason>`.
 pub type SendMessageFn = Arc<dyn Fn(&str, &str) -> Result<String, String> + Send + Sync>;
 
+/// Callback for the `spawn_session` tool. Invoked when an agent's tool loop
+/// encounters a `spawn_session(subgoal, label)` call. The implementation
+/// fires a fresh sub-session of the *caller's own goal* — the routing target
+/// is implicit in the closure (derived from the dispatcher's session id),
+/// not a parameter the model supplies. The `label` is `Some(tag)` when the
+/// caller passed a correlation tag and `None` when the call omitted one
+/// (label is an optional parameter on the tool schema).
+///
+/// Returns `Ok((session_id, label))` on successful enqueue: `session_id` is
+/// the new sub-session's id (e.g. `"rummage~3"` or `"rummage~1~5"` for a
+/// coordinator), `label` is the caller's correlation tag (preserved as-is
+/// for the model to use in reply routing). Returns `Err(reason)` on failure
+/// (e.g. the spawn handler is unavailable, or the caller's goal is not
+/// in the goal tree).
+///
+/// The same `Arc` sharing and `Send + Sync` rationale as `SendMessageFn`
+/// applies: a single closure is cloned for every `run()` call of the
+/// shared runner. Signature: `fn(subgoal, label) -> Result<(session_id, label), reason>`.
+pub type SpawnSessionFn = Arc<dyn Fn(&str, Option<&str>) -> Result<(String, Option<String>), String> + Send + Sync>;
+
 /// Capability for invoking the `opencode` CLI.
 ///
 /// `on_session_id` is called once when a session ID is first seen on the stream.
@@ -46,6 +66,16 @@ pub type SendMessageFn = Arc<dyn Fn(&str, &str) -> Result<String, String> + Send
 /// not wired (e.g. in a test mock that does not care about dispatch).  When
 /// `Some`, the callback handles registry validation and delivery; the runner
 /// just routes the tool call into it.
+///
+/// `spawn_session` is the dispatcher the runner uses when the model emits a
+/// `spawn_session(subgoal, label)` tool call.  When `None`, the tool returns
+/// an error to the model — the same harness signal that the feature is not
+/// wired.  When `Some`, the callback fires a fresh sub-session of the
+/// *caller's own goal* and returns the new sub-session id.  Unlike
+/// `send_message`, no arbitrary target parameter is exposed to the model —
+/// the routing target is implicit in the closure (the dispatcher's session
+/// id) so the self-only constraint is enforced at the harness layer, not
+/// the schema.  The runner just routes the tool call into the callback.
 #[async_trait]
 pub trait OpenCodeRunner: Send + Sync {
     #[allow(clippy::too_many_arguments)]
@@ -58,6 +88,7 @@ pub trait OpenCodeRunner: Send + Sync {
         on_session_id: Chunk,
         on_chunk: Chunk,
         send_message: Option<SendMessageFn>,
+        spawn_session: Option<SpawnSessionFn>,
     ) -> Result<String>;
 }
 

@@ -61,3 +61,7 @@ reason = "prompt-storage owns the shared tool/stream formatting templates (â†’/â
 [[related]]
 id = "send-message"
 reason = "send-message is a tool registered in backends' tool policy layer; its parameters, error semantics, and call accounting are subject to backends' framework constraints."
+
+[[related]]
+id = "spawn-session"
+reason = "spawn-session is a tool registered in backends' tool policy layer; its parameters, dispatch semantics, and call accounting are subject to backends' framework constraints."

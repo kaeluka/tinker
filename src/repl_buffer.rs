@@ -502,8 +502,10 @@ mod tests {
         let messages = vec![msg_user("hello")];
         let mut buf = ReplBuffer::new();
         buf.build_or_extend(&messages, "tend", 0);
-        // line_count(0) may return 0; the import requirement is "must not panic".
-        assert!(buf.total_lines() >= 0);
+        // The property under test is "must not panic" — calling total_lines on
+        // a zero-width buffer must not unwrap or divide by zero. The return
+        // value is secondary (usize, no negative invariant to assert).
+        let _ = buf.total_lines();
     }
 
     /// Spec (security — repl buffer): very long single-line messages must

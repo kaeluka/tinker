@@ -121,6 +121,26 @@ pub enum LogEvent {
         success: bool,
         error: Option<String>,
     },
+    /// Emitted when an agent calls the `spawn_session` tool to spawn a
+    /// fresh sub-session of its own goal. `sender` is the calling session's
+    /// id (could be a permanent goal ID or an ephemeral coordinator id);
+    /// `sub_session_id` is the new ephemeral session id (e.g. `"rummage~3"`
+    /// or `"rummage~1~5"` for a coordinator-spawned sub-session);
+    /// `label` is the caller's correlation tag, `None` when no label was
+    /// provided; `success` reports whether the spawn was enqueued;
+    /// `error` is set when `success` is false and names the failure
+    /// reason (e.g. "no dispatcher configured" when the callback is `None`,
+    /// or the caller's goal was not found in the goal tree). Tool-delivered
+    /// fresh-spawns share the same substrate as envelope-delivered ones
+    /// — the event exists separately so introspection can distinguish
+    /// the two delivery paths.
+    SpawnSessionDispatched {
+        sender: String,
+        sub_session_id: String,
+        label: Option<String>,
+        success: bool,
+        error: Option<String>,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -731,6 +751,65 @@ mod tests {
         );
     }
 
+    // spec (send-message): the self-send failure case is a first-class
+    // observable alongside the unknown-target and channel-closed
+    // failure cases. The event carries `target == sender` (the
+    // model-supplied string, not a normalized name) and the descriptive
+    // `error` reason. Consumers that want to filter for self-sends
+    // structurally can match on `target == sender` without grepping
+    // the error string. This test pins the round-trip — the event must
+    // serialize with the sender string under `target` and the verbatim
+    // error reason, so a logged `SendMessageDispatched` for a rejected
+    // self-send is recoverable in full. The error string is
+    // alternatives-aware: it points to spawn_session for sub-tasks of
+    // self, a different goal id for a different agent, and the
+    // continue-reasoning fallback — locking these phrases in here
+    // pins the agent UX surface alongside the event shape.
+    #[test]
+    fn test_spec_sender_equals_target_failure_serializes() {
+        let event = LogEvent::SendMessageDispatched {
+            sender: "tend".to_string(),
+            target: "tend".to_string(),
+            success: false,
+            error: Some(
+                "send_message: cannot send a message to yourself (`tend` is the same as the sender). To dispatch a sub-task of your own goal, use the spawn_session tool; to reach a different agent, address their goal id; otherwise continue reasoning in the current turn"
+                    .to_string(),
+            ),
+        };
+        let entry = LogEntry {
+            ts: "2026-06-10T00:00:00Z".to_string(),
+            source: "tend".to_string(),
+            event,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["kind"], "send_message_dispatched");
+        // Both fields carry the same string — a consumer can detect
+        // self-sends structurally with `target == sender`.
+        assert_eq!(val["sender"], "tend");
+        assert_eq!(val["target"], "tend");
+        assert_eq!(val["sender"], val["target"], "self-send event must have sender == target");
+        assert_eq!(val["success"], false);
+        // The error string round-trips verbatim — the full reason
+        // including the target name and every course-correction
+        // alternative is recoverable from the log.
+        let err = val["error"].as_str().expect("error field must be a string on failure");
+        assert!(err.contains("tend"), "error must name the offending target");
+        assert!(err.contains("yourself"), "error must surface the self-send condition");
+        assert!(
+            err.contains("spawn_session"),
+            "error must point to spawn_session for sub-tasks of self"
+        );
+        assert!(
+            err.contains("goal id"),
+            "error must point to addressing a different agent's goal id"
+        );
+        assert!(
+            err.contains("continue reasoning"),
+            "error must include the continue-reasoning fallback"
+        );
+    }
+
     // spec (send-message): SendMessageDispatched is NOT state-changing —
     // it never triggers a state snapshot write.  Dispatch events are
     // observable but not part of the UI snapshot's queue/selection
@@ -752,6 +831,112 @@ mod tests {
         assert!(
             !changed,
             "SendMessageDispatched must not mark state dirty"
+        );
+    }
+
+    // spec (spawn-session, tend-introspection): the SpawnSessionDispatched
+    // event serializes with `kind = "spawn_session_dispatched"` and carries
+    // the sender, sub_session_id, label, and success fields. The optional
+    // `error` field is set on failure with the goal-tree-miss reason
+    // (or any other spawn failure). The `ts` field is the dispatch time
+    // (LogEntry-level), not on the variant — keeps the schema flat and
+    // avoids duplicating the timestamp the LogEntry envelope already
+    // provides. Consumers can rely on `error` being present (even on
+    // success, as null) — mirrors the SendMessageDispatched contract.
+    #[test]
+    fn test_spec_spawn_session_dispatched_event_serializes() {
+        // Success case — label is provided, error is None.
+        let event = LogEvent::SpawnSessionDispatched {
+            sender: "rummage".to_string(),
+            sub_session_id: "rummage~3".to_string(),
+            label: Some("investigate-auth".to_string()),
+            success: true,
+            error: None,
+        };
+        let entry = LogEntry {
+            ts: "2026-06-10T00:00:00Z".to_string(),
+            source: "rummage".to_string(),
+            event,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["kind"], "spawn_session_dispatched");
+        assert_eq!(val["sender"], "rummage");
+        assert_eq!(val["sub_session_id"], "rummage~3");
+        assert_eq!(val["label"], "investigate-auth");
+        assert_eq!(val["success"], true);
+        // The error field is present even on success (serialized as null
+        // since we do NOT use skip_serializing_if). Consumers can rely on
+        // the field being present in every event — the same contract
+        // SendMessageDispatched follows.
+        assert!(val.get("error").is_some(), "error field must be present (even on success)");
+
+        // Success case — no label. The label field is present and null,
+        // matching the error-field contract.
+        let event_no_label = LogEvent::SpawnSessionDispatched {
+            sender: "rummage".to_string(),
+            sub_session_id: "rummage~5".to_string(),
+            label: None,
+            success: true,
+            error: None,
+        };
+        let entry_no_label = LogEntry {
+            ts: "2026-06-10T00:00:00Z".to_string(),
+            source: "rummage".to_string(),
+            event: event_no_label,
+        };
+        let json_no_label = serde_json::to_string(&entry_no_label).unwrap();
+        let val_no_label: serde_json::Value = serde_json::from_str(&json_no_label).unwrap();
+        assert!(
+            val_no_label.get("label").is_some(),
+            "label field must be present even when None"
+        );
+
+        // Failure case — error carries the goal-tree-miss reason.
+        let event_fail = LogEvent::SpawnSessionDispatched {
+            sender: "ghost".to_string(),
+            sub_session_id: "ghost~1".to_string(),
+            label: None,
+            success: false,
+            error: Some("spawn_session: caller goal `ghost` is not in the goal tree".to_string()),
+        };
+        let entry_fail = LogEntry {
+            ts: "2026-06-10T00:00:00Z".to_string(),
+            source: "ghost".to_string(),
+            event: event_fail,
+        };
+        let json_fail = serde_json::to_string(&entry_fail).unwrap();
+        let val_fail: serde_json::Value = serde_json::from_str(&json_fail).unwrap();
+        assert_eq!(val_fail["kind"], "spawn_session_dispatched");
+        assert_eq!(val_fail["success"], false);
+        assert_eq!(
+            val_fail["error"],
+            "spawn_session: caller goal `ghost` is not in the goal tree"
+        );
+    }
+
+    // spec (spawn-session, tend-introspection): SpawnSessionDispatched is
+    // NOT state-changing — it never triggers a state snapshot write.
+    // Dispatch events are observable but not part of the UI snapshot's
+    // queue/selection surface. Mirrors the SendMessageDispatched contract.
+    #[test]
+    fn test_spec_spawn_session_dispatched_is_not_state_changing() {
+        let entry = LogEntry {
+            ts: "2026-06-10T00:00:00Z".to_string(),
+            source: "rummage".to_string(),
+            event: LogEvent::SpawnSessionDispatched {
+                sender: "rummage".to_string(),
+                sub_session_id: "rummage~3".to_string(),
+                label: Some("x".to_string()),
+                success: true,
+                error: None,
+            },
+        };
+        let mut state = StateSnapshot::default();
+        let changed = apply_to_state(&entry, &mut state);
+        assert!(
+            !changed,
+            "SpawnSessionDispatched must not mark state dirty"
         );
     }
 

@@ -109,6 +109,7 @@ async fn goal_agent_loop(
     init_message_override: Option<String>,
     skip_cleanup: bool,
     send_message_dispatcher: cap::SendMessageFn,
+    spawn_session_dispatcher: cap::SpawnSessionFn,
 ) {
     let goal_id = goal.id.clone();
     let mut llm_session_id: Option<String> = None;
@@ -237,6 +238,7 @@ async fn goal_agent_loop(
             on_sid,
             on_chunk,
             Some(send_message_dispatcher.clone()),
+            Some(spawn_session_dispatcher.clone()),
         ).await;
         let session_ms = session_t0.elapsed().as_millis() as u64;
 
@@ -558,11 +560,18 @@ async fn run_loop(
         let tend_dispatcher = build_send_message_dispatcher(
             "tend".to_string(),
             session_senders_for_tend,
+            goal_spawn_tx.clone(),
+            app_ref.clone(),
+            log_t.clone(),
+        );
+        let tend_spawn_dispatcher = build_spawn_session_dispatcher(
+            "tend".to_string(),
+            goal_spawn_tx.clone(),
             app_ref.clone(),
             log_t.clone(),
         );
         tokio::spawn(async move {
-            goal_agent_loop(tend_goal, tend_rx, session_tx_t, oc_t, oc_cleanup_t, fs_t, work_dir_t, app_ref, log_t, backend_t, false, None, false, tend_dispatcher).await;
+            goal_agent_loop(tend_goal, tend_rx, session_tx_t, oc_t, oc_cleanup_t, fs_t, work_dir_t, app_ref, log_t, backend_t, false, None, false, tend_dispatcher, tend_spawn_dispatcher).await;
         });
         let _ = tend_tx.send(trigger);
     }
@@ -679,6 +688,13 @@ async fn run_loop(
                     let dispatcher = build_send_message_dispatcher(
                         fresh.session_id.clone(),
                         session_senders_for_fresh,
+                        goal_spawn_tx.clone(),
+                        app_ref_fresh.clone(),
+                        log_fresh.clone(),
+                    );
+                    let spawn_dispatcher = build_spawn_session_dispatcher(
+                        fresh.session_id.clone(),
+                        goal_spawn_tx.clone(),
                         app_ref_fresh.clone(),
                         log_fresh.clone(),
                     );
@@ -689,7 +705,7 @@ async fn run_loop(
                             oc_for_fresh, oc_cleanup_fresh, fs_fresh,
                             work_dir_fresh, app_ref_fresh, log_fresh, backend_fresh,
                             lean_init_fresh, Some(init_msg), true,
-                            dispatcher,
+                            dispatcher, spawn_dispatcher,
                         ).await;
                     });
                 }
@@ -719,6 +735,13 @@ async fn run_loop(
                     let dispatcher = build_send_message_dispatcher(
                         req.goal_id.clone(),
                         session_senders_for_dispatch,
+                        goal_spawn_tx.clone(),
+                        app_ref_goal.clone(),
+                        log_goal.clone(),
+                    );
+                    let spawn_dispatcher = build_spawn_session_dispatcher(
+                        req.goal_id.clone(),
+                        goal_spawn_tx.clone(),
                         app_ref_goal.clone(),
                         log_goal.clone(),
                     );
@@ -729,7 +752,7 @@ async fn run_loop(
                             oc_for_goal, oc_cleanup_goal, fs_goal,
                             work_dir_goal, app_ref_goal, log_goal, backend_goal, lean_init_goal,
                             None, false,
-                            dispatcher,
+                            dispatcher, spawn_dispatcher,
                         ).await;
                     });
                 }
@@ -1173,66 +1196,188 @@ fn scan_opening_tags(text: &str, base_id: &str) -> Vec<Option<String>> {
     labels
 }
 
+/// Outcome of routing a dispatch to a target. Used by both the
+/// `send_message` tool dispatcher and the @-envelope dispatch path so
+/// they share the same registry-then-lazy-spawn decision.
+enum RouteOutcome {
+    /// Sent via the session channel — the message reached (or is queued
+    /// for) the recipient's input.
+    Delivered,
+    /// The session channel was closed — the recipient's task has exited.
+    ChannelClosed,
+    /// Target was a known goal in `app.goals` but not in the session
+    /// registry. A `SpawnGoalRequest` was enqueued; the runtime will
+    /// spawn the session and deliver the message into it.
+    LazySpawned,
+    /// Target is neither a running session nor a known goal. The caller
+    /// treats this as a failed delivery.
+    Unknown,
+}
+
+/// Look up `target` in the session registry; if absent, attempt lazy
+/// spawn via the goal tree (the same path the @-envelope uses). The
+/// caller decides what user-visible surface to produce on each outcome
+/// (system message, log event, running_sessions entry). This is the
+/// shared infrastructure that lets the `send_message` tool and the
+/// @-envelope path deliver to a goal whether or not it has a running
+/// session yet.
+fn route_or_lazy_spawn(
+    target: &str,
+    formatted_message: String,
+    session_senders: &HashMap<String, mpsc::UnboundedSender<String>>,
+    app: &App,
+    goal_spawn_tx: &mpsc::UnboundedSender<SpawnGoalRequest>,
+) -> RouteOutcome {
+    if let Some(tx) = session_senders.get(target) {
+        return if tx.send(formatted_message).is_err() {
+            RouteOutcome::ChannelClosed
+        } else {
+            RouteOutcome::Delivered
+        };
+    }
+    if app.goals.iter().any(|g| g.id == target) {
+        let _ = goal_spawn_tx.send(SpawnGoalRequest {
+            goal_id: target.to_string(),
+            message: formatted_message,
+            fresh_session: None,
+        });
+        return RouteOutcome::LazySpawned;
+    }
+    RouteOutcome::Unknown
+}
+
 /// Build the `send_message` dispatcher closure for one goal session. The
 /// closure captures the sender's identity, the shared session registry, the
-/// app handle (for system-message visibility and batch tracking), and the
-/// log handle (for the new `SendMessageDispatched` introspection event).
+/// shared `goal_spawn_tx` (for lazy-spawn on first contact), the app handle
+/// (for system-message visibility and batch tracking), and the log handle
+/// (for the `SendMessageDispatched` introspection event).
 ///
 /// Contract:
-/// - `target` must already be in the session registry. The spec is explicit:
-///   the tool "routes only to already-registered sessions" and "fails
-///   outright on unknown targets". Spawning remains the @-envelope's job.
-/// - On success: format the message (same `delivery_message` framing as the
-///   envelope path), push a `<@{sender}> → <@{target}>` system message so
-///   the user can see the exchange, insert the target into `running_sessions`
-///   so the batch is correctly active, and emit a `SendMessageDispatched`
-///   log event.
+/// - `target` is checked against both the session registry and the goal
+///   tree. The tool succeeds when the target is in either, mirroring
+///   @-dispatch: a known goal in the tree is lazy-spawned on first
+///   contact so the message can be delivered into its fresh session.
+///   The tool fails outright when the target is unknown — not
+///   recognized as a goal and not present as a running session.
+/// - **Self-send guard:** the captured `sender` (the calling session's
+///   id) is compared against `target` *before* any other work. If they
+///   match, the tool returns `Err` immediately with a course-correction
+///   message — a self-delivered message would create a new turn in the
+///   same session, which the session could then re-process and dispatch
+///   the same call again, recursing without bound. The check fires at
+///   the session-id level (not the base-goal-id level) so a sub-session
+///   `fresh-agents~1` cannot send to itself, but a sub-session sending
+///   to its parent permanent goal (`fresh-agents`) is a legitimate
+///   cross-session dispatch and is allowed. A rejected self-send has no
+///   side effects: no system message pushed, no `running_sessions`
+///   entry, no successful-delivery log event. A `SendMessageDispatched`
+///   event with `success: false` and the rejection reason is emitted
+///   for introspection symmetry with the unknown-target path.
+/// - On success (registry hit or lazy-spawn): format the message (same
+///   `delivery_message` framing as the envelope path), push a
+///   `<@{sender}> → <@{target}>` system message so the user can see
+///   the exchange, insert the target into `running_sessions` so the
+///   batch is correctly active (and the batch-end retirement check
+///   holds off while the lazy-spawned session is being drained), and
+///   emit a `SendMessageDispatched` log event.
+/// - On channel-closed (session registry hit but task has exited):
+///   return `Err(reason)` with the lost-delivery warning so the model
+///   can react.
 /// - On unknown target: return `Err(reason)`. The model receives the
-///   reason as the tool result and can route through a different agent
-///   or fall back to the @-envelope path.
+///   reason as the tool result.
 ///
 /// Returns an `Arc` so the closure can be cloned cheaply and shared across
 /// every `run()` call of the runner that serves this goal session.
 fn build_send_message_dispatcher(
     sender: String,
     session_senders: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<String>>>>,
+    goal_spawn_tx: mpsc::UnboundedSender<SpawnGoalRequest>,
     app: Arc<Mutex<App>>,
     log: logger::LogSender,
 ) -> cap::SendMessageFn {
     Arc::new(move |target: &str, message: &str| -> Result<String, String> {
+        // Self-send guard: a session must not dispatch a message to itself.
+        // A self-delivered message creates a new turn in the same session
+        // — the session would then re-process the message and could emit
+        // the same send_message call again, recursing without bound. The
+        // check fires at the session-id level (sender == target) and runs
+        // *before* any state mutation, so a rejected self-send has no
+        // side effects: no system message, no running_sessions entry, no
+        // delivery log event. A `SendMessageDispatched` event with
+        // success: false is emitted so introspection sees the rejected
+        // dispatch with the same shape as the existing unknown-target
+        // failure path. The error message is alternatives-aware: it
+        // names the offending target and points to specific alternative
+        // actions — spawn_session for sub-tasks of self, a different
+        // goal id for a different agent, or continue reasoning. The
+        // alternatives-aware form closes the loop faster than a generic
+        // "pick a different target" hint because send_message and
+        // spawn_session are sibling tools with different semantics and
+        // the most likely self-send is a confusion between the two.
+        if target == sender {
+            let reason = format!(
+                "send_message: cannot send a message to yourself (`{target}` is the same as the sender). To dispatch a sub-task of your own goal, use the spawn_session tool; to reach a different agent, address their goal id; otherwise continue reasoning in the current turn"
+            );
+            log.emit(
+                &sender,
+                logger::LogEvent::SendMessageDispatched {
+                    sender: sender.clone(),
+                    target: target.to_string(),
+                    success: false,
+                    error: Some(reason.clone()),
+                },
+            );
+            return Err(reason);
+        }
         // First-line summary for the running-sessions reason and the user
         // system message. Truncating at the first line keeps the visible
         // exchange legible in the conversation pane.
         let first_line = message.lines().next().unwrap_or("").to_string();
+        // Format the message with the same delivery framing the envelope
+        // path uses, so a recipient cannot tell which delivery mechanism
+        // put the message in its inbox.
+        let formatted = prompts::delivery_message(&sender, message);
 
-        // Registry validation is the load-bearing step — the spec is
-        // explicit that the tool fails outright on unknown targets.
-        let sender_for_send = session_senders
-            .lock()
-            .unwrap()
-            .get(target)
-            .cloned();
-        match sender_for_send {
-            None => {
-                let reason = format!(
-                    "send_message: target `{target}` is not in the session registry (the tool only routes to already-registered sessions; use @-envelopes to spawn a fresh sub-session)"
-                );
-                log.emit(
-                    &sender,
-                    logger::LogEvent::SendMessageDispatched {
-                        sender: sender.clone(),
-                        target: target.to_string(),
-                        success: false,
-                        error: Some(reason.clone()),
-                    },
-                );
-                Err(reason)
+        // Route via the shared registry-then-lazy-spawn decision so the
+        // tool mirrors the @-envelope path's behavior. Take the senders
+        // lock briefly, drop it, then take the app lock to consult the
+        // goal tree — never hold both at once, in any order.
+        let outcome = {
+            let senders = session_senders.lock().unwrap();
+            if let Some(tx) = senders.get(target) {
+                if tx.send(formatted).is_err() {
+                    RouteOutcome::ChannelClosed
+                } else {
+                    RouteOutcome::Delivered
+                }
+            } else {
+                drop(senders);
+                let a = app.lock().unwrap();
+                if a.goals.iter().any(|g| g.id == target) {
+                    // Lazy-spawn: hand the runtime a SpawnGoalRequest with
+                    // the formatted message, exactly the way the @-envelope
+                    // path does. The runtime drains the request, spawns the
+                    // goal_agent_loop, and delivers the message into the
+                    // new session's channel — all before the sender's turn
+                    // completes. If the runtime is shutting down
+                    // (goal_spawn_tx closed) we still report success here
+                    // and let the shutdown error surface from the run loop;
+                    // dispatch_peer_consultations ignores the same failure
+                    // for the same reason.
+                    let _ = goal_spawn_tx.send(SpawnGoalRequest {
+                        goal_id: target.to_string(),
+                        message: formatted,
+                        fresh_session: None,
+                    });
+                    RouteOutcome::LazySpawned
+                } else {
+                    RouteOutcome::Unknown
+                }
             }
-            Some(tx) => {
-                // Format the message with the same delivery framing the
-                // envelope path uses, so a recipient cannot tell which
-                // delivery mechanism put the message in its inbox.
-                let formatted = prompts::delivery_message(&sender, message);
+        };
+
+        match outcome {
+            RouteOutcome::Delivered | RouteOutcome::LazySpawned => {
                 // Surface the exchange in the conversation pane and the log.
                 // The format matches the envelope path's system message so
                 // the user sees a single uniform "→" line regardless of
@@ -1244,7 +1389,10 @@ fn build_send_message_dispatcher(
                     // Mark the recipient as running so the batch is active.
                     // The recipient's own chunk will replace this entry's
                     // reason; on its Done event running_sessions drops the
-                    // entry, matching the envelope path.
+                    // entry, matching the envelope path. For the
+                    // LazySpawned case the entry is inserted BEFORE the
+                    // SpawnGoalRequest drains, which is exactly the gap the
+                    // batch-end retirement check must wait through.
                     a.running_sessions
                         .entry(target.to_string())
                         .or_insert(Some(first_line));
@@ -1262,21 +1410,203 @@ fn build_send_message_dispatcher(
                         error: None,
                     },
                 );
-                if tx.send(formatted).is_err() {
-                    // The recipient's session task has exited and its
-                    // channel is closed. Surface this as a tool error so the
-                    // model can react — the registry validation passed but
-                    // the channel was dead on arrival.  We do NOT remove
-                    // the running_sessions entry here: the goal_session
-                    // Done event for the recipient (if it ever fires) will
-                    // clear it, and a stale entry is harmless.
-                    let reason = prompts::delivery_lost_warning(&sender, target);
-                    Err(format!("send_message: {}", reason.trim_end()))
-                } else {
-                    Ok(format!("delivered to `{target}`"))
-                }
+                Ok(format!("delivered to `{target}`"))
+            }
+            RouteOutcome::ChannelClosed => {
+                // The recipient's session task has exited and its channel
+                // is closed. Surface this as a tool error so the model can
+                // react — the registry validation passed but the channel
+                // was dead on arrival. We do NOT remove the running_sessions
+                // entry here: the goal_session Done event for the recipient
+                // (if it ever fires) will clear it, and a stale entry is
+                // harmless.
+                let reason = prompts::delivery_lost_warning(&sender, target);
+                log.emit(
+                    &sender,
+                    logger::LogEvent::SendMessageDispatched {
+                        sender: sender.clone(),
+                        target: target.to_string(),
+                        success: false,
+                        error: Some(reason.clone()),
+                    },
+                );
+                Err(format!("send_message: {}", reason.trim_end()))
+            }
+            RouteOutcome::Unknown => {
+                // Target is neither a running session nor a known goal.
+                // The spec is explicit that the tool fails outright on
+                // unknown targets rather than silently dropping — the
+                // model receives the reason as the tool result.
+                let reason = format!(
+                    "send_message: target `{target}` is unknown (not in the session registry and not a known goal)"
+                );
+                log.emit(
+                    &sender,
+                    logger::LogEvent::SendMessageDispatched {
+                        sender: sender.clone(),
+                        target: target.to_string(),
+                        success: false,
+                        error: Some(reason.clone()),
+                    },
+                );
+                Err(reason)
             }
         }
+    })
+}
+
+/// Build the `spawn_session` dispatcher closure for one goal session. The
+/// closure captures the *caller's* session id (could be a permanent goal
+/// id like `"rummage"` or an ephemeral coordinator id like `"rummage~1"`),
+/// the shared session registry, `goal_spawn_tx`, the app handle, and the
+/// log handle.
+///
+/// **Self-only routing** — the schema exposes no `target` parameter, so
+/// the routing target is implicit in the closure. The new sub-session is
+/// always of the *caller's own goal*, derived from the captured session
+/// id. This enforces the self-only constraint at the harness layer (no
+/// arbitrary-goal spawning) rather than the schema layer.
+///
+/// Contract:
+/// - Pre-assigns a unique session id using `app.fresh_session_counter`:
+///   the new id is `{caller_session_id}~{counter}`. The caller session id
+///   is used verbatim as the prefix (not the base permanent goal id), so
+///   a coordinator's sub-session is nested under the coordinator in the
+///   TUI — mirroring the envelope-spawned path at `handle_session_event`.
+/// - Looks up the caller's permanent goal in `app.goals` (resolving
+///   ephemeral coordinators to their base id via `app::session_base_id`).
+///   If the caller's goal is not in the goal tree, returns `Err(reason)`
+///   and the model sees a tool error — there is no fallback path.
+/// - On success: updates `running_sessions` / `ephemeral_sessions` /
+///   `ephemeral_labels` so the batch-end retirement check sees the
+///   new sub-session as active work, enqueues a `SpawnGoalRequest` with
+///   `fresh_session: Some(...)` on `goal_spawn_tx`, emits a system
+///   message for user visibility, emits a `SpawnSessionDispatched` log
+///   event, and returns the pre-assigned session id + label.
+/// - The actual `goal_agent_loop` task is created by the run-loop drain
+///   handler at `goal_spawn_rx` time (the same handler that creates
+///   envelope-spawned sub-sessions), so this dispatcher does NOT
+///   duplicate the channel/init/spawn plumbing — it only does the
+///   pre-id-assignment and registry bookkeeping the envelope path does
+///   in `handle_session_event`.
+///
+/// Returns an `Arc` so the closure can be cloned cheaply and shared across
+/// every `run()` call of the runner that serves this goal session.
+fn build_spawn_session_dispatcher(
+    caller_session_id: String,
+    goal_spawn_tx: mpsc::UnboundedSender<SpawnGoalRequest>,
+    app: Arc<Mutex<App>>,
+    log: logger::LogSender,
+) -> cap::SpawnSessionFn {
+    Arc::new(move |subgoal: &str, label: Option<&str>| -> Result<(String, Option<String>), String> {
+        // The caller is the running session that emitted the tool call.
+        // We use its full session id (could be ephemeral) as the prefix
+        // for the new sub-session id so the TUI nesting reflects the
+        // immediate-dispatcher relationship.
+        let caller = caller_session_id.clone();
+        let label_owned: Option<String> = label.map(String::from);
+
+        // Pre-assign the new sub-session id and update the app state in
+        // one critical section: increment the counter, insert into the
+        // session registry's tracking structures, and enqueue the spawn
+        // request. The actual `goal_agent_loop` task is created by the
+        // run-loop drain handler.
+        let (session_id, first_line, permanent_base) = {
+            let mut a = app.lock().unwrap();
+            a.fresh_session_counter += 1;
+            let counter = a.fresh_session_counter;
+            let id = format!("{}~{}", caller, counter);
+            let first_line = subgoal.lines().next().unwrap_or("").to_string();
+            a.running_sessions.insert(id.clone(), Some(first_line.clone()));
+            a.ephemeral_sessions.insert(id.clone());
+            a.ephemeral_sessions_ordered.push(id.clone());
+            a.ephemeral_labels.insert(id.clone(), label_owned.clone());
+            a.goal_list_scroll.last_total = a.flat_items().len();
+            let perm_base = app::session_base_id(&caller).to_string();
+            (id, first_line, perm_base)
+        };
+
+        // The new sub-session inherits the permanent dispatcher's goal
+        // (description, neighbors, tier). For a permanent caller the
+        // base id equals the caller; for an ephemeral coordinator the
+        // base id is the underlying permanent goal.
+        let caller_goal_in_tree = {
+            let a = app.lock().unwrap();
+            a.goals.iter().any(|g| g.id == permanent_base)
+        };
+        if !caller_goal_in_tree {
+            // The caller's goal is not in the goal tree — undo the
+            // registry bookkeeping we just did (the spawn can't proceed
+            // because the run-loop drain handler would find no goal to
+            // build an init message from).
+            let mut a = app.lock().unwrap();
+            a.running_sessions.remove(&session_id);
+            a.ephemeral_sessions.remove(&session_id);
+            a.ephemeral_sessions_ordered.retain(|id_local| id_local != &session_id);
+            a.ephemeral_labels.remove(&session_id);
+            let reason = format!(
+                "spawn_session: caller goal `{caller}` is not in the goal tree (no init context available)"
+            );
+            log.emit(
+                &caller,
+                logger::LogEvent::SpawnSessionDispatched {
+                    sender: caller.clone(),
+                    sub_session_id: session_id.clone(),
+                    label: label_owned.clone(),
+                    success: false,
+                    error: Some(reason.clone()),
+                },
+            );
+            return Err(reason);
+        }
+
+        // Enqueue the spawn request. The run-loop drain handler picks it
+        // up, does the batch-start retirement, registers the channel,
+        // builds the lean init message, and spawns a `goal_agent_loop`
+        // task — exactly the path envelope-spawned sub-sessions take.
+        let _ = goal_spawn_tx.send(SpawnGoalRequest {
+            goal_id: permanent_base.clone(),
+            message: subgoal.to_string(),
+            fresh_session: Some(FreshSessionConfig {
+                session_id: session_id.clone(),
+                label: label_owned.clone(),
+                dispatcher_id: caller.clone(),
+            }),
+        });
+
+        // Surface the dispatch in the conversation pane so the user can
+        // see tool-spawned sub-sessions in the same way envelope-spawned
+        // ones appear (the format mirrors handle_session_event's
+        // `<@{dispatcher}> → fresh sub-session ...` line so the two
+        // delivery paths produce visually equivalent output).
+        let label_clause = match &label_owned {
+            Some(l) if !l.is_empty() => format!(" ({l})"),
+            _ => String::new(),
+        };
+        let sys = format!(
+            "<@{}> → fresh sub-session `{}`{}: {}",
+            caller, session_id, label_clause, first_line
+        );
+        {
+            let mut a = app.lock().unwrap();
+            a.push_system_message(&sys);
+        }
+        log.emit(
+            &caller,
+            logger::LogEvent::TinkerSystemMessageReceived { content: sys.clone() },
+        );
+        log.emit(
+            &caller,
+            logger::LogEvent::SpawnSessionDispatched {
+                sender: caller.clone(),
+                sub_session_id: session_id.clone(),
+                label: label_owned.clone(),
+                success: true,
+                error: None,
+            },
+        );
+
+        Ok((session_id, label_owned))
     })
 }
 
@@ -1315,20 +1645,33 @@ fn dispatch_peer_consultations(
             || matches!(recipient.as_str(), "tend" | "rummage" | "jog")
             || app.ephemeral_sessions.contains(recipient.as_str());
 
-        if let Some(tx) = session_senders.get(recipient) {
-            if tx.send(formatted).is_err() {
-                // The recipient's session task has exited and its channel is closed.
-                // Surface this as a system message so the user can see the lost delivery.
+        match route_or_lazy_spawn(recipient, formatted, session_senders, app, goal_spawn_tx) {
+            RouteOutcome::ChannelClosed => {
+                // The recipient's session task has exited and its channel
+                // is closed. Surface this as a system message so the user
+                // can see the lost delivery.
                 let warn = prompts::delivery_lost_warning(sender, recipient);
                 app.push_system_message(warn.trim_end());
-                log.emit(sender, logger::LogEvent::TinkerSystemMessageReceived { content: warn.trim_end().to_string() });
+                log.emit(sender, logger::LogEvent::TinkerSystemMessageReceived {
+                    content: warn.trim_end().to_string(),
+                });
             }
-        } else if app.goals.iter().any(|g| &g.id == recipient) {
-            let _ = goal_spawn_tx.send(SpawnGoalRequest {
-                goal_id: recipient.clone(),
-                message: formatted,
-                fresh_session: None,
-            });
+            RouteOutcome::Delivered | RouteOutcome::LazySpawned => {
+                // Delivery is already handled inside route_or_lazy_spawn
+                // (channel send or SpawnGoalRequest enqueue). The system
+                // message push at the top of the loop and the
+                // running_sessions tracking below cover the user-visible
+                // surface for both outcomes.
+            }
+            RouteOutcome::Unknown => {
+                // The @-envelope path is permissive about unknown
+                // recipients — the consultation was extracted from a
+                // finalised reply, the user has already seen the
+                // attempted exchange via the system message, and there
+                // is no session to surface a delivery failure to. The
+                // registry/goal-tree lookups inside route_or_lazy_spawn
+                // have already concluded; nothing more to do here.
+            }
         }
         if should_track {
             let reason = msg.lines().next().unwrap_or("").to_string();
@@ -2849,11 +3192,13 @@ mod tests {
         senders.insert("tend".to_string(), tend_tx);
         senders.insert("rummage".to_string(), rummage_tx);
         let senders = Arc::new(Mutex::new(senders));
+        let (goal_spawn_tx, _goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
         let app = Arc::new(Mutex::new(App::new()));
         let log = logger::noop_sender();
         let dispatcher = build_send_message_dispatcher(
             "rummage".to_string(),
             senders.clone(),
+            goal_spawn_tx,
             app.clone(),
             log,
         );
@@ -2884,21 +3229,26 @@ mod tests {
         assert!(sys.is_some(), "a <@rummage> → <@tend> system message must be pushed");
     }
 
-    // spec (send-message): the dispatcher returns Err with the registry-miss
-    // reason when the target is not in the session registry.  This is the
-    // load-bearing step of the spec — the tool "fails outright on unknown
-    // targets" rather than silently dropping or auto-spawning.
+    // spec (send-message): the dispatcher returns Err with the unknown-target
+    // reason when the target is neither in the session registry nor a
+    // known goal in the goal tree. This is the load-bearing step of the
+    // spec — the tool "fails outright on unknown targets" rather than
+    // silently dropping or auto-spawning. Validation now spans the
+    // registry AND the goal tree; a known but unspawned goal succeeds
+    // (lazy-spawn) while a truly unknown ID errors here.
     #[test]
     fn test_spec_send_message_dispatcher_unknown_target_returns_err() {
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         let mut senders = HashMap::new();
         senders.insert("rummage".to_string(), tx);
         let senders = Arc::new(Mutex::new(senders));
+        let (goal_spawn_tx, _goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
         let app = Arc::new(Mutex::new(App::new()));
         let log = logger::noop_sender();
         let dispatcher = build_send_message_dispatcher(
             "tend".to_string(),
             senders.clone(),
+            goal_spawn_tx,
             app.clone(),
             log,
         );
@@ -2911,7 +3261,7 @@ mod tests {
         );
     }
 
-    // spec (send-message): on registry miss, no system message is pushed —
+    // spec (send-message): on unknown target, no system message is pushed —
     // the dispatch never happened, so there is no exchange to surface to
     // the user.
     #[test]
@@ -2920,10 +3270,12 @@ mod tests {
         let mut senders = HashMap::new();
         senders.insert("rummage".to_string(), tx);
         let senders = Arc::new(Mutex::new(senders));
+        let (goal_spawn_tx, _goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
         let app = Arc::new(Mutex::new(App::new()));
         let dispatcher = build_send_message_dispatcher(
             "tend".to_string(),
             senders.clone(),
+            goal_spawn_tx,
             app.clone(),
             logger::noop_sender(),
         );
@@ -2946,10 +3298,12 @@ mod tests {
         let mut senders = HashMap::new();
         senders.insert("rummage".to_string(), rummage_tx);
         let senders = Arc::new(Mutex::new(senders));
+        let (goal_spawn_tx, _goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
         let app = Arc::new(Mutex::new(App::new()));
         let dispatcher = build_send_message_dispatcher(
             "tend".to_string(),
             senders.clone(),
+            goal_spawn_tx,
             app.clone(),
             logger::noop_sender(),
         );
@@ -2978,10 +3332,12 @@ mod tests {
         let mut senders = HashMap::new();
         senders.insert("tend".to_string(), tend_tx);
         let senders = Arc::new(Mutex::new(senders));
+        let (goal_spawn_tx, _goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
         let app = Arc::new(Mutex::new(App::new()));
         let dispatcher = build_send_message_dispatcher(
             "rummage".to_string(),
             senders.clone(),
+            goal_spawn_tx,
             app.clone(),
             logger::noop_sender(),
         );
@@ -3027,10 +3383,12 @@ mod tests {
         let mut senders = HashMap::new();
         senders.insert("rummage".to_string(), rummage_tx);
         let senders = Arc::new(Mutex::new(senders));
+        let (goal_spawn_tx, _goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
         let app = Arc::new(Mutex::new(App::new()));
         let dispatcher = build_send_message_dispatcher(
             "tend".to_string(),
             senders.clone(),
+            goal_spawn_tx,
             app.clone(),
             logger::noop_sender(),
         );
@@ -3038,6 +3396,416 @@ mod tests {
         // not panic.
         let _ = dispatcher("rummage", "ok path");
         let _ = dispatcher("ghost", "err path");
+    }
+
+    // spec (send-message): the dispatcher rejects a self-send (target ==
+    // sender) with `Err`, so an agent cannot dispatch a message to
+    // itself. Self-send would create a new turn in the same session,
+    // which the session could then re-process and dispatch again —
+    // recursing without bound. The check fires at the session-id level
+    // (the same id the recipient would route on), so a permanent goal
+    // agent sending to itself and an ephemeral sub-session sending to
+    // itself are both blocked.
+    #[test]
+    fn test_spec_send_message_dispatcher_self_send_returns_err() {
+        let (tend_tx, mut tend_rx) = mpsc::unbounded_channel::<String>();
+        let mut senders = HashMap::new();
+        senders.insert("tend".to_string(), tend_tx);
+        let senders = Arc::new(Mutex::new(senders));
+        let (goal_spawn_tx, _goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let app = Arc::new(Mutex::new(App::new()));
+        let dispatcher = build_send_message_dispatcher(
+            "tend".to_string(),
+            senders.clone(),
+            goal_spawn_tx,
+            app.clone(),
+            logger::noop_sender(),
+        );
+
+        let err = dispatcher("tend", "hello me").expect_err("self-send must Err");
+        let msg = err.to_string();
+        // The error must name the offending target and surface the
+        // self-send condition so the model can recognise what went wrong.
+        assert!(msg.contains("tend"), "error must name the self-target: {msg}");
+        assert!(
+            msg.contains("yourself") || msg.contains("same as the sender"),
+            "error must surface the self-send condition: {msg}"
+        );
+        // The rejected dispatch has no side effects: no message arrived
+        // at the recipient's channel.
+        assert!(
+            tend_rx.try_recv().is_err(),
+            "rejected self-send must not deliver a message to the channel"
+        );
+        // The rejected dispatch has no system-message side effect either —
+        // the user shouldn't see a phantom exchange.
+        let a = app.lock().unwrap();
+        assert!(
+            a.messages.is_empty(),
+            "a rejected self-send must not push a system message"
+        );
+    }
+
+    // spec (send-message): the self-send error message guides course
+    // correction. The model receives a reason that names the offending
+    // target AND names the specific alternative actions — pointing to
+    // the spawn_session tool for sub-tasks of self, a different goal id
+    // for a different agent, and the "continue reasoning" fallback. The
+    // alternatives-aware form closes the loop faster than a generic
+    // "pick a different target" hint: send_message and spawn_session
+    // are sibling tools with different semantics (one targets an
+    // existing session, the other spawns a fresh sub-session of self),
+    // and the most likely self-send is a confusion between the two.
+    // Without that hint the model would have to re-derive the right
+    // action from a bare error.
+    #[test]
+    fn test_spec_send_message_dispatcher_self_send_error_guides_correction() {
+        let (rummage_tx, _rx) = mpsc::unbounded_channel::<String>();
+        let mut senders = HashMap::new();
+        senders.insert("rummage".to_string(), rummage_tx);
+        let senders = Arc::new(Mutex::new(senders));
+        let (goal_spawn_tx, _goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let app = Arc::new(Mutex::new(App::new()));
+        let dispatcher = build_send_message_dispatcher(
+            "rummage".to_string(),
+            senders.clone(),
+            goal_spawn_tx,
+            app.clone(),
+            logger::noop_sender(),
+        );
+
+        let err = dispatcher("rummage", "loop me").expect_err("self-send must Err");
+        let msg = err.to_string();
+        // The error must name the offending target.
+        assert!(msg.contains("rummage"), "error must name the self-target: {msg}");
+        // The error must include the spawn_session pointer — the most
+        // likely self-send is a confusion with the spawn_session tool.
+        assert!(
+            msg.contains("spawn_session"),
+            "error must point to spawn_session for sub-tasks of self: {msg}"
+        );
+        // The error must also include a "different goal id" pointer —
+        // the typo / wrong-target case.
+        assert!(
+            msg.contains("goal id") || msg.contains("different agent"),
+            "error must point to addressing a different agent: {msg}"
+        );
+        // The "continue reasoning" fallback must be present so the
+        // model can recover when the call was a misfire entirely.
+        assert!(
+            msg.contains("continue reasoning"),
+            "error must include the continue-reasoning fallback: {msg}"
+        );
+    }
+
+    // spec (send-message): the self-send guard must not interfere with
+    // dispatching to a *known peer* target. The new check sits before
+    // the existing registry lookup and only fires on target == sender;
+    // for any other registered target the original delivery path runs
+    // unchanged. This pins the regression surface: a buggy
+    // implementation that over-blocks (e.g. misread the spec as
+    // blocking cross-level dispatch) would fail this test.
+    #[test]
+    fn test_spec_send_message_dispatcher_known_peer_target_still_succeeds() {
+        let (tend_tx, mut tend_rx) = mpsc::unbounded_channel::<String>();
+        let (rummage_tx, _rummage_rx) = mpsc::unbounded_channel::<String>();
+        let mut senders = HashMap::new();
+        senders.insert("tend".to_string(), tend_tx);
+        senders.insert("rummage".to_string(), rummage_tx);
+        let senders = Arc::new(Mutex::new(senders));
+        let (goal_spawn_tx, _goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let app = Arc::new(Mutex::new(App::new()));
+        let dispatcher = build_send_message_dispatcher(
+            "rummage".to_string(),
+            senders.clone(),
+            goal_spawn_tx,
+            app.clone(),
+            logger::noop_sender(),
+        );
+
+        // Sender is "rummage"; target is "tend" (a different session).
+        // Self-send guard does not fire; the existing registry-hit
+        // delivery path must run.
+        let out = dispatcher("tend", "ping the orchestrator")
+            .expect("dispatch to a known peer must succeed");
+        assert!(out.contains("tend"), "ok result should name the target");
+        let tend_msg = tend_rx.try_recv().expect("tend must receive the dispatch");
+        assert!(tend_msg.contains("[from rummage]"), "delivery message must carry sender attribution");
+    }
+
+    // spec (send-message): the self-send guard does not weaken the
+    // unknown-target behaviour. An unknown target is still rejected
+    // with `Err` regardless of the new check — the self-send guard sits
+    // at the very top of the closure, so unknown-target handling
+    // continues to work for any target that is not in the registry and
+    // not in the goal tree.
+    #[test]
+    fn test_spec_send_message_dispatcher_unknown_target_still_fails_after_self_send_guard() {
+        let (rummage_tx, _rx) = mpsc::unbounded_channel::<String>();
+        let mut senders = HashMap::new();
+        senders.insert("rummage".to_string(), rummage_tx);
+        let senders = Arc::new(Mutex::new(senders));
+        let (goal_spawn_tx, _goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let app = Arc::new(Mutex::new(App::new()));
+        let dispatcher = build_send_message_dispatcher(
+            "tend".to_string(),
+            senders.clone(),
+            goal_spawn_tx,
+            app.clone(),
+            logger::noop_sender(),
+        );
+
+        // "ghost" is neither in the registry (only "rummage" is) nor in
+        // the goal tree (the app is empty). The self-send guard does
+        // not fire (ghost != tend); the unknown-target path runs.
+        let err = dispatcher("ghost", "ping").expect_err("unknown target must still Err");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("ghost") && msg.contains("session registry"),
+            "error must name the unknown target and the registry constraint: {msg}"
+        );
+    }
+
+    // ── spawn_session dispatcher tests ───────────────────────────────────
+
+    // spec (spawn-session): when the caller's goal is in the goal tree, the
+    // dispatcher pre-assigns a session id of the form `{caller_session_id}~{counter}`,
+    // inserts the id into the ephemeral session tracking structures, and
+    // enqueues a `SpawnGoalRequest` with `fresh_session: Some(...)`. The
+    // returned tuple is `(session_id, label)` — both pieces of information
+    // the model needs to route replies to the new sub-session.
+    #[test]
+    fn test_spec_spawn_session_dispatcher_enqueues_request_for_known_goal() {
+        let (goal_spawn_tx, mut goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let app = Arc::new(Mutex::new(App::new()));
+        // Add the caller's goal to the goal tree so the dispatcher's
+        // goal-tree lookup succeeds.
+        app.lock().unwrap().goals.push(goal::Goal {
+            id: "rummage".into(),
+            summary: "code oracle".into(),
+            description: "test".into(),
+            parent_id: "".into(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        });
+        let dispatcher = build_spawn_session_dispatcher(
+            "rummage".to_string(),
+            goal_spawn_tx,
+            app.clone(),
+            logger::noop_sender(),
+        );
+
+        let (session_id, label) = dispatcher("trace the init flow", Some("investigate"))
+            .expect("dispatch to a goal in the tree must succeed");
+        assert_eq!(session_id, "rummage~1", "session id must follow the {{caller}}~{{counter}} format");
+        assert_eq!(label.as_deref(), Some("investigate"), "label must be preserved for reply routing");
+
+        // The spawn request was enqueued with fresh_session = Some.
+        let req = goal_spawn_rx.try_recv().expect("a SpawnGoalRequest must be enqueued");
+        let fresh = req.fresh_session.expect("fresh_session must be Some for spawn_session tool path");
+        assert_eq!(fresh.session_id, "rummage~1", "pre-assigned id must match the enqueued one");
+        assert_eq!(fresh.label.as_deref(), Some("investigate"));
+        assert_eq!(fresh.dispatcher_id, "rummage", "dispatcher_id is the caller's session id");
+        assert_eq!(req.goal_id, "rummage", "the inherited goal id is the caller's permanent base");
+        assert!(req.message.contains("trace the init flow"), "subgoal is forwarded verbatim");
+
+        // Registry bookkeeping happened before the request was enqueued.
+        let a = app.lock().unwrap();
+        assert!(a.running_sessions.contains_key("rummage~1"), "new session must appear in running_sessions");
+        assert!(a.ephemeral_sessions.contains("rummage~1"), "new session must be marked ephemeral");
+        assert_eq!(a.ephemeral_labels.get("rummage~1").and_then(|l| l.as_deref()), Some("investigate"));
+    }
+
+    // spec (spawn-session): the new sub-session id prefix is the caller's
+    // full session id — for an ephemeral coordinator (`rummage~1`), the
+    // sub-session is nested under the coordinator (`rummage~1~N`), matching
+    // the envelope-spawned path's nesting pattern. This is what the TUI
+    // uses to render sub-sessions under the immediate dispatcher.
+    #[test]
+    fn test_spec_spawn_session_dispatcher_nests_under_ephemeral_coordinator() {
+        let (goal_spawn_tx, mut goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let app = Arc::new(Mutex::new(App::new()));
+        // Coordinator's base permanent goal is in the tree.
+        app.lock().unwrap().goals.push(goal::Goal {
+            id: "rummage".into(),
+            summary: "code oracle".into(),
+            description: "test".into(),
+            parent_id: "".into(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        });
+        // The caller's session id is an ephemeral coordinator (`rummage~1`).
+        let dispatcher = build_spawn_session_dispatcher(
+            "rummage~1".to_string(),
+            goal_spawn_tx,
+            app.clone(),
+            logger::noop_sender(),
+        );
+
+        let (session_id, _label) = dispatcher("sub-task", None)
+            .expect("dispatch must succeed when caller's base goal is in the tree");
+        assert_eq!(
+            session_id, "rummage~1~1",
+            "the new sub-session id must be nested under the coordinator's full session id"
+        );
+
+        let req = goal_spawn_rx.try_recv().expect("a SpawnGoalRequest must be enqueued");
+        let fresh = req.fresh_session.expect("fresh_session must be Some");
+        assert_eq!(fresh.session_id, "rummage~1~1");
+        // The dispatcher_id is the caller's full session id (the
+        // coordinator), so the sub-session's replies route back to the
+        // coordinator, not to the root goal.
+        assert_eq!(fresh.dispatcher_id, "rummage~1");
+        // The inherited goal (for init context) is the caller's base.
+        assert_eq!(req.goal_id, "rummage");
+    }
+
+    // spec (spawn-session): the dispatcher pushes a system message in the
+    // same format the envelope path produces (`<@{dispatcher}> → fresh
+    // sub-session ...`). This keeps tool-spawned and envelope-spawned
+    // sub-sessions visually equivalent in the conversation pane.
+    #[test]
+    fn test_spec_spawn_session_dispatcher_pushes_system_message() {
+        let (goal_spawn_tx, _goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let app = Arc::new(Mutex::new(App::new()));
+        app.lock().unwrap().goals.push(goal::Goal {
+            id: "rummage".into(),
+            summary: "code oracle".into(),
+            description: "test".into(),
+            parent_id: "".into(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        });
+        let dispatcher = build_spawn_session_dispatcher(
+            "rummage".to_string(),
+            goal_spawn_tx,
+            app.clone(),
+            logger::noop_sender(),
+        );
+
+        let _ = dispatcher("trace the auth flow", Some("auth"));
+        let a = app.lock().unwrap();
+        let sys = a.messages.iter().find(|m| {
+            m.role == app::Role::System
+                && m.text.contains("<@rummage>")
+                && m.text.contains("rummage~1")
+                && m.text.contains("trace the auth flow")
+        });
+        assert!(sys.is_some(), "a <@rummage> → fresh sub-session system message must be pushed");
+    }
+
+    // spec (spawn-session): when the caller's goal is not in the goal tree,
+    // the dispatcher returns Err with the reason. No spawn request is
+    // enqueued and the registry bookkeeping is rolled back (the new
+    // session id is removed from running_sessions / ephemeral_sessions /
+    // ephemeral_labels) so the goal-list state is not corrupted by a
+    // failed dispatch.
+    #[test]
+    fn test_spec_spawn_session_dispatcher_unknown_caller_goal_returns_err() {
+        let (goal_spawn_tx, mut goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let app = Arc::new(Mutex::new(App::new()));
+        // Empty goal tree — caller's goal is unknown.
+        let dispatcher = build_spawn_session_dispatcher(
+            "ghost".to_string(),
+            goal_spawn_tx,
+            app.clone(),
+            logger::noop_sender(),
+        );
+
+        let err = dispatcher("sub-task", None)
+            .expect_err("unknown caller goal must Err");
+        assert!(
+            err.contains("not in the goal tree"),
+            "error must name the goal-tree-miss reason: {err}"
+        );
+        assert!(
+            goal_spawn_rx.try_recv().is_err(),
+            "no SpawnGoalRequest must be enqueued on failure"
+        );
+        // Registry bookkeeping was rolled back.
+        let a = app.lock().unwrap();
+        assert!(!a.running_sessions.contains_key("ghost~1"), "no session id should remain in running_sessions");
+        assert!(!a.ephemeral_sessions.contains("ghost~1"), "no ephemeral entry should remain");
+    }
+
+    // spec (spawn-session): the dispatcher increments `fresh_session_counter`
+    // monotonically across successive spawns so session ids are unique. The
+    // counter is shared across tool and envelope paths (it lives in the
+    // `app` state), which keeps id assignment central and avoids collisions.
+    #[test]
+    fn test_spec_spawn_session_dispatcher_counter_is_monotonic() {
+        let (goal_spawn_tx, _goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let app = Arc::new(Mutex::new(App::new()));
+        app.lock().unwrap().goals.push(goal::Goal {
+            id: "rummage".into(),
+            summary: "code oracle".into(),
+            description: "test".into(),
+            parent_id: "".into(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        });
+        let dispatcher = build_spawn_session_dispatcher(
+            "rummage".to_string(),
+            goal_spawn_tx,
+            app.clone(),
+            logger::noop_sender(),
+        );
+
+        let (id1, _) = dispatcher("first task", None).expect("first dispatch must succeed");
+        let (id2, _) = dispatcher("second task", None).expect("second dispatch must succeed");
+        let (id3, _) = dispatcher("third task", None).expect("third dispatch must succeed");
+        assert_eq!(id1, "rummage~1");
+        assert_eq!(id2, "rummage~2");
+        assert_eq!(id3, "rummage~3");
+    }
+
+    // spec (spawn-session): the spawn request's `goal_id` field is the
+    // caller's base permanent goal (resolved through `app::session_base_id`),
+    // not the caller's full session id. The run-loop drain handler uses
+    // this to look up the dispatcher goal in `app.goals` for the init
+    // message — it must be a key in the goal tree, not an ephemeral id.
+    #[test]
+    fn test_spec_spawn_session_dispatcher_enqueues_with_base_goal_id() {
+        let (goal_spawn_tx, mut goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let app = Arc::new(Mutex::new(App::new()));
+        // Two goals: rummage (permanent) and an unrelated tend-like goal.
+        app.lock().unwrap().goals.push(goal::Goal {
+            id: "rummage".into(),
+            summary: "code oracle".into(),
+            description: "test".into(),
+            parent_id: "".into(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        });
+        let dispatcher = build_spawn_session_dispatcher(
+            // Caller is an ephemeral coordinator of rummage.
+            "rummage~2".to_string(),
+            goal_spawn_tx,
+            app.clone(),
+            logger::noop_sender(),
+        );
+
+        let _ = dispatcher("sub-task", None).expect("dispatch must succeed");
+        let req = goal_spawn_rx.try_recv().expect("SpawnGoalRequest must be enqueued");
+        assert_eq!(
+            req.goal_id, "rummage",
+            "the enqueued goal_id must be the caller's base permanent goal, not the ephemeral id"
+        );
     }
 
     // spec (peer-consult): the session message channels and the goal-spawn channel
@@ -5053,4 +5821,331 @@ mod tests {
         );
     }
 
+    // spec (goal-agents / send-message): the session registry contains only
+    // eagerly-started sessions at startup. Goals whose sessions have never
+    // been triggered are absent. For send_message, "absent" means the goal
+    // is unknown — it is not in the session registry AND (because App::new
+    // has empty goals) it is not a known goal either. The dispatcher
+    // reports the unknown-target error in this case, with the
+    // registry-miss reason preserved so the model can still route through
+    // a different agent.
+    #[test]
+    fn test_spec_rummage_investigate_registry_eager_start_only_tend() {
+        // Simulate startup: only tend is eagerly registered.
+        let (tend_tx, _tend_rx) = mpsc::unbounded_channel::<String>();
+        let mut senders = HashMap::new();
+        senders.insert("tend".to_string(), tend_tx);
+        let senders = Arc::new(Mutex::new(senders));
+        let (goal_spawn_tx, _goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let app = Arc::new(Mutex::new(App::new()));
+        let log = logger::noop_sender();
+        let dispatcher = build_send_message_dispatcher(
+            "tend".to_string(),
+            senders.clone(),
+            goal_spawn_tx,
+            app.clone(),
+            log,
+        );
+
+        // send_message to rummage fails — not yet in registry and not a known goal.
+        let err_rummage = dispatcher("rummage", "investigate the auth flow")
+            .expect_err("rummage must not be in the registry at startup");
+        assert!(
+            err_rummage.contains("rummage") && err_rummage.contains("session registry"),
+            "error must name unknown target and registry constraint: {err_rummage}"
+        );
+
+        // send_message to goal-agents fails — same reason.
+        let err_ga = dispatcher("goal-agents", "ping")
+            .expect_err("goal-agents must not be in the registry at startup");
+        assert!(
+            err_ga.contains("goal-agents") && err_ga.contains("session registry"),
+            "error must name unknown target and registry constraint: {err_ga}"
+        );
+
+        // After lazy-spawning rummage (simulating the @envelope path), send_message works.
+        let (rummage_tx, mut rummage_rx) = mpsc::unbounded_channel::<String>();
+        senders.lock().unwrap().insert("rummage".to_string(), rummage_tx);
+
+        let ok = dispatcher("rummage", "trace the flow")
+            .expect("rummage must be reachable after lazy spawn");
+        assert!(ok.contains("rummage"), "ok result must name the target");
+        let msg = rummage_rx.try_recv().expect("rummage must receive the message");
+        assert!(msg.contains("trace the flow"));
+    }
+
+    // spec (send-message / goal-agents / peer-consult): send_message and
+    // the @-envelope path share the registry-then-lazy-spawn decision via
+    // `route_or_lazy_spawn`. Both paths:
+    //   1. deliver to a running session in the registry if present;
+    //   2. trigger a SpawnGoalRequest when the target is a known goal in
+    //      the goal tree but not yet a running session;
+    //   3. report failure (or silently drop, in the envelope case) when
+    //      the target is neither.
+    // This test pins the SHARED behavior — the asymmetry between the
+    // two paths is removed; both routes to a known-but-unspawned goal
+    // produce a SpawnGoalRequest the runtime will drain.
+    fn make_goal_for_investigation(id: &str) -> goal::Goal {
+        goal::Goal {
+            id: id.to_string(),
+            kind: None,
+            summary: String::new(),
+            description: String::new(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            source_path: None,
+        }
+    }
+
+    #[test]
+    fn test_spec_send_message_and_envelope_share_lazy_spawn() {
+        let (tend_tx, _tend_rx) = mpsc::unbounded_channel::<String>();
+        let mut senders: HashMap<String, mpsc::UnboundedSender<String>> = HashMap::new();
+        senders.insert("tend".to_string(), tend_tx);
+        let senders_arc = Arc::new(Mutex::new(senders));
+
+        let mut app = App::new();
+        // Populate app.goals with rummage so both paths can find it.
+        app.goals = vec![make_goal_for_investigation("rummage")];
+
+        let (goal_spawn_tx, mut goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let log = logger::noop_sender();
+
+        // Path 1: dispatch_peer_consultations (the @-envelope path).
+        // Triggers a lazy spawn for rummage via SpawnGoalRequest.
+        dispatch_peer_consultations(
+            &mut app,
+            "tend",
+            &[("rummage".to_string(), "investigate this".to_string())],
+            &senders_arc.lock().unwrap(),
+            &goal_spawn_tx,
+            &log,
+        );
+
+        let req_envelope = goal_spawn_rx.try_recv()
+            .expect("@envelope path must trigger a lazy spawn for rummage");
+        assert_eq!(req_envelope.goal_id, "rummage");
+        assert!(req_envelope.fresh_session.is_none(), "not a fresh sub-session");
+        assert!(req_envelope.message.contains("investigate this"));
+
+        // Path 2: build_send_message_dispatcher (the send_message tool path).
+        // Must also trigger a lazy spawn — the asymmetry is gone. The
+        // app's running_sessions and session_senders still do not contain
+        // rummage because the runtime has not yet drained the requests.
+        let app_arc = Arc::new(Mutex::new(app));
+        let dispatcher = build_send_message_dispatcher(
+            "tend".to_string(),
+            senders_arc.clone(),
+            goal_spawn_tx.clone(),
+            app_arc.clone(),
+            logger::noop_sender(),
+        );
+        let ok = dispatcher("rummage", "second ping")
+            .expect("send_message must lazy-spawn a known-but-unspawned goal, not Err");
+        assert!(ok.contains("rummage"), "ok result must name the target: {ok}");
+
+        let req_send = goal_spawn_rx.try_recv()
+            .expect("send_message must also enqueue a SpawnGoalRequest for rummage");
+        assert_eq!(req_send.goal_id, "rummage");
+        assert!(req_send.fresh_session.is_none(), "not a fresh sub-session");
+        assert!(req_send.message.contains("second ping"));
+
+        // Both paths surfaced the dispatch to the user via running_sessions
+        // (the send_message path also pushes a system message). The
+        // batch-end retirement check sees a pending spawn for rummage and
+        // holds off retiring the prior batch.
+        let a = app_arc.lock().unwrap();
+        assert!(
+            a.running_sessions.contains_key("rummage"),
+            "rummage must be tracked in running_sessions after the lazy-spawn dispatch, \
+             so the batch-end retirement check waits for the runtime to drain the spawn"
+        );
+    }
+
+    // spec (send-message): a known-but-unspawned goal's lazy-spawned
+    // session is tracked in running_sessions BEFORE the SpawnGoalRequest
+    // is drained by the run loop. The entry is what holds off the
+    // batch-end retirement check between the model's tool call and the
+    // runtime's spawn of goal_agent_loop. Without this entry, the
+    // batch could go idle and the lazy-spawned goal would be lost.
+    #[test]
+    fn test_spec_send_message_dispatcher_lazy_spawn_tracks_running_sessions() {
+        let (tend_tx, _tend_rx) = mpsc::unbounded_channel::<String>();
+        let mut senders: HashMap<String, mpsc::UnboundedSender<String>> = HashMap::new();
+        senders.insert("tend".to_string(), tend_tx);
+        let senders_arc = Arc::new(Mutex::new(senders));
+
+        let mut app = App::new();
+        app.goals = vec![make_goal_for_investigation("rummage")];
+        let app_arc = Arc::new(Mutex::new(app));
+
+        let (goal_spawn_tx, mut goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let dispatcher = build_send_message_dispatcher(
+            "tend".to_string(),
+            senders_arc.clone(),
+            goal_spawn_tx,
+            app_arc.clone(),
+            logger::noop_sender(),
+        );
+
+        let _ok = dispatcher("rummage", "investigate the auth flow")
+            .expect("send_message to a known goal must succeed via lazy-spawn");
+
+        // SpawnGoalRequest was enqueued.
+        let req = goal_spawn_rx.try_recv()
+            .expect("send_message must enqueue a SpawnGoalRequest for a known-but-unspawned goal");
+        assert_eq!(req.goal_id, "rummage");
+
+        // The target is tracked in running_sessions even though the spawn
+        // has not yet drained. Without this entry the batch-end retirement
+        // check would see an empty queue and could retire the parent
+        // session before the runtime delivers the message.
+        let a = app_arc.lock().unwrap();
+        assert!(
+            a.running_sessions.contains_key("rummage"),
+            "lazy-spawned target must appear in running_sessions before the spawn drains"
+        );
+        let reason = a.running_sessions["rummage"].as_deref().unwrap_or("");
+        assert!(
+            reason.contains("investigate the auth flow"),
+            "running reason must reflect the message first line: {reason}"
+        );
+    }
+
+    // spec (send-message): a `send_message` to a not-yet-spawned target must
+    // leave `running_sessions` populated from the dispatcher's Ok return
+    // until the lazy-spawned session's Done event.  The Chunk event for
+    // the spawned session must not remove the dispatcher's entry
+    // (`running_sessions.entry(...).or_insert(None)` is a no-op when the
+    // entry already exists), and the Done event handler must clear it.
+    // This pins the full lifecycle for the send_message path, mirroring
+    // `test_spec_at_dispatch_adds_goal_agent_to_running_sessions` for the
+    // envelope path and `test_spec_fresh_agents_batch_detection_guards_retirement`
+    // for the retirement-hold-off invariant.
+    //
+    // The load-bearing property: between the dispatcher's Ok return and
+    // the spawned session's Done event, `running_sessions` always contains
+    // the target.  This is what keeps the batch active during the
+    // spawn-drain window so the batch-end retirement check does not fire
+    // and retire the parent session before the runtime delivers the
+    // message into the freshly-spawned goal_agent_loop.
+    #[test]
+    fn test_spec_send_message_dispatcher_running_sessions_lifecycle_until_done() {
+        let (tend_tx, _tend_rx) = mpsc::unbounded_channel::<String>();
+        let mut senders: HashMap<String, mpsc::UnboundedSender<String>> = HashMap::new();
+        senders.insert("tend".to_string(), tend_tx);
+        let senders_arc = Arc::new(Mutex::new(senders));
+
+        let mut app = App::new();
+        app.goals = vec![make_goal_for_investigation("rummage")];
+        let app_arc = Arc::new(Mutex::new(app));
+
+        let (goal_spawn_tx, _goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let dispatcher = build_send_message_dispatcher(
+            "tend".to_string(),
+            senders_arc.clone(),
+            goal_spawn_tx,
+            app_arc.clone(),
+            logger::noop_sender(),
+        );
+
+        // Step 1: dispatcher returns Ok; entry inserted with first-line reason.
+        let _ok = dispatcher("rummage", "investigate the auth flow")
+            .expect("send_message to a known goal must succeed via lazy-spawn");
+        {
+            let a = app_arc.lock().unwrap();
+            assert!(
+                a.running_sessions.contains_key("rummage"),
+                "after dispatcher Ok: target must be in running_sessions",
+            );
+            let reason = a.running_sessions["rummage"].as_deref().unwrap_or("");
+            assert!(
+                reason.contains("investigate the auth flow"),
+                "after dispatcher Ok: running reason must reflect the message first line: {reason}"
+            );
+        }
+
+        // Step 2: simulate the Chunk event for the lazy-spawned session.
+        // `handle_session_event` runs `running_sessions.entry(goal_id).or_insert(None)`
+        // on every Chunk.  When the dispatcher's entry is already there, the
+        // chunk event is a no-op — the original reason is preserved and the
+        // entry is not removed.  This is what keeps the batch active during
+        // the spawn-drain window.
+        {
+            let mut a = app_arc.lock().unwrap();
+            a.running_sessions.entry("rummage".to_string()).or_insert(None);
+        }
+        {
+            let a = app_arc.lock().unwrap();
+            assert!(
+                a.running_sessions.contains_key("rummage"),
+                "Chunk event for the spawned session must not remove the dispatcher's entry"
+            );
+            let reason = a.running_sessions["rummage"].as_deref().unwrap_or("");
+            assert!(
+                reason.contains("investigate the auth flow"),
+                "original reason must survive the Chunk event: {reason}"
+            );
+        }
+
+        // Step 3: simulate the Done event.  `handle_session_event` runs
+        // `running_sessions.remove(&goal_id)` on every Done — the entry is
+        // cleared and the batch becomes idle (subject to whatever else is
+        // in the queue).
+        {
+            let mut a = app_arc.lock().unwrap();
+            a.running_sessions.remove("rummage");
+        }
+        {
+            let a = app_arc.lock().unwrap();
+            assert!(
+                !a.running_sessions.contains_key("rummage"),
+                "Done event must clear the running_sessions entry"
+            );
+        }
+    }
+
+    // spec (send-message): when the target is in the session registry but
+    // its channel receiver has been dropped (the session task exited), the
+    // send_message tool returns Err with a delivery-lost warning. This is
+    // the tool-path counterpart to
+    // test_spec_peer_consult_dropped_receiver_surfaces_warning (the
+    // envelope path). Both paths detect the closed channel and surface it
+    // as an error rather than silently dropping the message.
+    #[test]
+    fn test_spec_send_message_dispatcher_closed_channel_returns_err() {
+        let (tend_tx, _tend_rx) = mpsc::unbounded_channel::<String>();
+        // Create a sender for rummage but drop the receiver — simulates a
+        // session task that has exited.
+        let (rummage_tx, rummage_rx) = mpsc::unbounded_channel::<String>();
+        drop(rummage_rx);
+
+        let mut senders = HashMap::new();
+        senders.insert("tend".to_string(), tend_tx);
+        senders.insert("rummage".to_string(), rummage_tx);
+        let senders = Arc::new(Mutex::new(senders));
+
+        let (goal_spawn_tx, _goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let app = Arc::new(Mutex::new(App::new()));
+        let dispatcher = build_send_message_dispatcher(
+            "tend".to_string(),
+            senders.clone(),
+            goal_spawn_tx,
+            app.clone(),
+            logger::noop_sender(),
+        );
+
+        let err = dispatcher("rummage", "trace the auth flow")
+            .expect_err("send_message to a closed-channel target must return Err");
+        assert!(
+            err.contains("rummage"),
+            "error must name the unreachable target: {err}"
+        );
+        assert!(
+            err.contains("delivery lost") || err.contains("send_message"),
+            "error must carry a delivery-lost indicator: {err}"
+        );
+    }
 }

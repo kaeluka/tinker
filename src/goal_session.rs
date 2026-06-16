@@ -147,90 +147,6 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
     )
 }
 
-/// Session-invariant framework preamble component (message passing, progress
-/// guarantee, rules, neighbor mandate) without goal-specific content.
-///
-/// Not used in production — the full system prompt is now assembled by
-/// `session_init_message(goal, None, compact_index)` and delivered via the
-/// backend's native mechanism.  Retained for tests that verify the preamble's
-/// content properties.
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn goal_agent_framework_preamble() -> String {
-    format!(
-        "{message_passing_and_progress}\n\
-         \n\
-         ## Rules\n\
-         \n\
-         - {vcs_rules}\n\
-         - {tinker_write_rules}\n\
-         - {ownership_mandate}\n\
-         \n\
-         ## Neighbor consultation\n\
-         \n\
-         {neighbor_mandate}",
-        message_passing_and_progress = MESSAGE_PASSING_AND_PROGRESS_SECTIONS,
-        vcs_rules = VCS_RULES,
-        tinker_write_rules = TINKER_DIR_WRITE_RULES,
-        ownership_mandate = IMPLEMENTATION_OWNERSHIP_MANDATE,
-        neighbor_mandate = NEIGHBOR_CONSULTATION_MANDATE_PREAMBLE,
-    )
-}
-
-/// Goal-specific init content without framework preamble (for cases where the
-/// preamble is already in the system prompt).  Contains: identity, goal index,
-/// goal description, neighbor table, and optional trigger reason.
-///
-/// Not used in production since both backends now deliver the full system prompt
-/// via `session_init_message(goal, None, compact_index)` and the first turn
-/// carries only the trigger reason.  Retained for tests.
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn goal_agent_lean_init_message(goal: &Goal, reason: Option<&str>, compact_index: &str) -> String {
-    let table = build_neighborhood_table(goal);
-    let neighbors_section = if table.is_empty() {
-        String::new()
-    } else {
-        format!("\n## Neighbor goals\n\n{}\n", table)
-    };
-
-    let mut prompt = format!(
-        "You are the agent for goal `{id}`.\n\
-         \n\
-         ## Goal index\n\
-         \n\
-         {compact_index}\n\
-         \n\
-         If the compact index isn't sufficient, consult `@tend` — tend holds the full \
-         goal tree and can answer questions about any goal's scope or intent.\n\
-         \n\
-         {fresh_dispatch}\n\
-         \n\
-         ## Your goal\n\
-         \n\
-         Goal ID: {id}\n\
-         Goal:\n\
-         {description}\n\
-         \n\
-         This goal is ongoing — there is no definition of done. You will be \
-         resumed periodically when it makes sense to make further progress on it.\n\
-         \n\
-         Take action only when there is something concrete to do right now. If \
-         the current codebase doesn't call for any work on this goal at this \
-         moment, briefly say so and stop. Never create files speculatively.\n\
-         {neighbors_section}\
-         When you have made meaningful progress (or decided no action is \
-         warranted), stop.",
-        id = goal.id,
-        compact_index = compact_index,
-        description = goal.description,
-        neighbors_section = neighbors_section,
-        fresh_dispatch = FRESH_DISPATCH_INSTRUCTIONS,
-    );
-    if let Some(r) = reason {
-        prompt.push_str(&format!("\n\n## Reason for triggering\n{}", r));
-    }
-    prompt
-}
-
 /// Builds the init message for an ephemeral fresh sub-session. Used by the
 /// run loop when spawning a sub-session in response to a `<@goal-id|label>`
 /// fresh-dispatch envelope.
@@ -347,7 +263,7 @@ pub async fn run_silent(
         buf_clone.lock().unwrap().push_str(&chunk);
     });
     let on_sid: Box<dyn FnMut(String) + Send> = Box::new(|_| {});
-    oc.run(message, session_id, work_dir, None, on_sid, on_chunk, None).await?;
+    oc.run(message, session_id, work_dir, None, on_sid, on_chunk, None, None).await?;
     let s = buf.lock().unwrap().clone();
     Ok(s)
 }
@@ -395,7 +311,7 @@ pub async fn run_goal(
         });
     });
     let session_id = oc
-        .run(&message, None, &work_dir, None, on_sid, on_chunk, None)
+        .run(&message, None, &work_dir, None, on_sid, on_chunk, None, None)
         .await?;
 
     let output = full_output.lock().unwrap().clone();
@@ -642,6 +558,7 @@ mod tests {
                 _on_session_id: Chunk,
                 _on_chunk: Chunk,
                 _send_message: Option<crate::cap::SendMessageFn>,
+                _spawn_session: Option<crate::cap::SpawnSessionFn>,
             ) -> Result<String> {
                 let n = self.calls.fetch_add(1, Ordering::SeqCst);
                 if n == 0 {

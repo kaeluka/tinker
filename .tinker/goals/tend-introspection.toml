@@ -95,3 +95,7 @@ reason = "tend-introspection logs goal-session lifecycle events (dispatched/star
 [[related]]
 id = "fresh-agents"
 reason = "fresh-agents owns the batch concept (active/idle system state and the retirement trigger); tend-introspection captures batch state transitions as first-class event log entries and system messages."
+
+[[related]]
+id = "spawn-session"
+reason = "spawn-session dispatches produce a new event type in the runtime event log — dispatcher (parent) session, label, sub-session id, dispatch time — alongside the existing envelope-based dispatch emission."

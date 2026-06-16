@@ -163,4 +163,8 @@ reason = "prompt-storage owns the raw prompt text this goal's builder functions 
 
 [[related]]
 id = "send-message"
-reason = "send-message validates targets against goal-agents' session registry and fires recipient sessions immediately into the same routing substrate envelopes use. The registry is the source of truth for target existence in both paths."
+reason = "send-message validates targets against goal-agents' session registry and goal tree, firing recipient sessions immediately into the same routing substrate envelopes use. The registry identifies running sessions; the goal tree identifies known goals the tool can lazy-spawn."
+
+[[related]]
+id = "spawn-session"
+reason = "spawn-session fires the new sub-session immediately into goal-agents' session registry; the dispatched session is visible in the registry alongside the dispatching session and participates in batch accounting the same way envelope-spawned sub-sessions do."

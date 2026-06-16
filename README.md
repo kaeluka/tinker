@@ -201,12 +201,12 @@ can tell at a glance what each piece of parallel work is doing. When the batch
 ends, all sub-sessions at every depth are retired.
 
 Any agent — persistent or ephemeral — can send a message to any other by name.
-There is no central dispatcher. The primary path is a send-message tool that
-fires the recipient session immediately during the sender's turn and returns
-an error if the target does not exist. An older mechanism — tag envelopes
-embedded in agent output — continues to work alongside it; both paths deposit
-messages into the same routing substrate, and delivery to any recognised agent
-is guaranteed. When a goal session finds a gap it
+There is no central dispatcher. A send-message tool fires messages to other
+agents immediately during the sender's turn. A separate spawn-session tool
+lets any agent create fresh sub-sessions of itself for parallel work. Both
+tools reach the same routing substrate that an older envelope mechanism —
+tags embedded in agent output — also uses. Delivery to any recognised agent
+is guaranteed on all paths. When a goal session finds a gap it
 cannot resolve, it messages rummage. When rummage needs intent context, it
 messages tend. When jog wants to read the spec, it messages tend. The exchange
 resolves without you brokering it.

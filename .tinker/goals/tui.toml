@@ -30,8 +30,9 @@ TUI suppresses it. The model produces output eagerly on startup but
 the user sees canned startup text instead. All other sessions start
 lazily on first `@goal-id` message.
 
-In the goal list, each row shows the goal id in bold followed by the
-goal's summary. Only the list is selectable — the text beneath is
+In the goal list, each row opens with a status prefix followed by the
+goal id in bold and the goal's summary. Idle goals use a dash (`-`);
+running goals use `▶`. Only the list is selectable — the text beneath is
 read-and-scroll only. Keyboard navigation auto-scrolls the list so
 the selected goal stays visible (edge scrolling).
 
@@ -67,8 +68,8 @@ currently-running goal, a bracketed integer (`[1]`, `[2]`) marking a
 goal's next queued position; a goal with several pending invocations
 shows only that next index. For tend, rummage, and jog, ▶ appears
 when the user submits a message; for goal agents, at dispatch. It
-clears on Done. Markers render dim/grey so they don't dominate
-the goal name. The goal ID of a running goal renders in a distinct
+clears on Done. The prefix character and queue integers render dim regardless of goal packaging,
+so they don't compete with the goal name. The goal ID of a running goal renders in a distinct
 colour. The goal list's pane label shows running IDs inline
 (`Goals > id1, id2, …`); those IDs render bold and in the running
 color, matching their list rows. When a marked goal is selected, the goal-text region

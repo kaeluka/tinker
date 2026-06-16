@@ -1,0 +1,43 @@
+id = "spawn-session"
+kind = "feature"
+summary = "This goal owns the spawn-session tool available to every agent session — a schema-enforced tool-call harness surface for spawning fresh sub-sessions of the caller's own goal, taking a subgoal parameter and an optional label, firing the sub-session immediately during the turn rather than at turn completion."
+description = """
+## WHAT
+
+Every agent session has a `spawn-session` tool that spawns a fresh sub-session of the caller's own goal. The tool takes two parameters: `subgoal` (the task description, self-contained as if the sub-session starts cold) and an optional `label` (a short correlation tag the caller uses to route replies). The tool fires the sub-session immediately during the caller's turn. A sub-session spawned this way may itself act as a coordinator, dispatching further sub-sessions and remaining reachable for replies until the batch ends.
+
+From the sub-session's view, tool-spawned and envelope-spawned sessions are indistinguishable — both paths deposit into the same dispatch substrate.
+
+The @-envelope path continues working alongside the tool during the transition — spawn-session is the eventual successor, and @-envelopes for spawning will be retired once the tool is established (same trajectory as send-message / @-message).
+
+## WHY
+
+The @-envelope syntax for spawning sub-sessions shares limitations with the outbound messaging envelope that send-message succeeded: it embeds the dispatching goal id, a label delimiter, and the sub-task body in free-form output, producing fragility (malformed envelopes that fail to spawn or get silently dropped), low discoverability (an implicit convention that lives in prompt documentation rather than appearing in the tool list), and turn-end latency (the sub-session waits for the caller's full response before dispatch fires).
+
+The tool removes the text-convention failure mode by enforcing parameters in schema, surfaces the capability through the same tool list every agent already uses, and makes sub-session dispatch concurrent with the caller's remaining reasoning rather than deferred to turn end.
+"""
+parent_id = ""
+
+[[related]]
+id = "fresh-agents"
+reason = "fresh-agents owns the fresh-sub-session mechanism (decomposition discipline, coordinator role, ephemeral lifecycle, batch retirement); this goal is a tool-call delivery surface onto that same substrate, self-only-constrained (the caller spawns a sub-session of its own goal, not an arbitrary goal-id — keeping the domain distinct from send-message's lazy-spawn of permanent goals). Both surfaces deposit into the same dispatch substrate."
+
+[[related]]
+id = "backends"
+reason = "spawn-session is a tool registered in backends' tool policy layer; its parameters, dispatch semantics, and call accounting are subject to backends' framework constraints."
+
+[[related]]
+id = "goal-agents"
+reason = "spawn-session fires the new sub-session immediately into goal-agents' session registry; the dispatched session is visible in the registry alongside the dispatching session and participates in batch accounting the same way envelope-spawned sub-sessions do."
+
+[[related]]
+id = "tend-introspection"
+reason = "spawn-session dispatches produce a new event type in the runtime event log — dispatcher (parent) session, label, sub-session id, dispatch time — alongside the existing envelope-based dispatch emission."
+
+[[related]]
+id = "send-message"
+reason = "sibling tool surface on the shared dispatch substrate. send-message routes to existing or lazy-spawned permanent sessions; spawn-session routes to fresh ephemeral sub-sessions of the caller's own goal. Both coexist with their envelope predecessors during the transition. The domain split (send-to-existing/lazy-permanent vs spawn-ephemeral-of-self) is what keeps the two tools orthogonal."
+
+[[related]]
+id = "peer-consult"
+reason = "peer-consult owns the @-block envelope detection and routing that spawn-session provides a harness-provided tool alternative to; both are routing surfaces for dispatching work out of the caller, peer-consult authoritative on the envelope path, this goal on the tool path. Asymmetric: peer-consult is a packaged goal and cannot carry a back-link."

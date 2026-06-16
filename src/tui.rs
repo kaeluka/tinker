@@ -682,6 +682,9 @@ fn goal_list_row_line(
             //      even if active — ambient packaging yields to nothing here.
             //   3. Active (running) cue applies to non-packaged, non-selected.
             //   4. Default: darkgray bold id, plain summary.
+            //
+            // The prefix character (dash for idle, ▶ for running) is computed
+            // outside this cascade and is always dim — see marker_style below.
             let (name_style, id_style) = if is_selected {
                 let base = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
                 let id_s = if is_packaged { base.add_modifier(Modifier::ITALIC) } else { base };
@@ -702,12 +705,12 @@ fn goal_list_row_line(
                     Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
                 )
             };
-            let marker_style = if is_active {
-                Style::default().fg(Color::DarkGray)
-            } else {
-                name_style
-            };
-            let marker_str = if is_active { "▶ " } else { "◉ " };
+            // Prefix marker: always dim (DarkGray) so the marker recedes
+            // against the goal name. The packaged-goals-style grey+italic
+            // rule covers id and summary — not the prefix — so even on a
+            // packaged row the marker stays plain.
+            let marker_style = Style::default().fg(Color::DarkGray);
+            let marker_str = if is_active { "▶ " } else { "- " };
             let indent = "  ".repeat(depth);
             let preview = truncate_with_ellipsis(&g.summary, 60);
             let mut spans = vec![
@@ -731,7 +734,7 @@ fn goal_list_row_line(
                 Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)
             };
             let marker_style = Style::default().fg(Color::DarkGray);
-            let marker_str = if is_active { "▶ " } else { "◉ " };
+            let marker_str = if is_active { "▶ " } else { "- " };
             let indent = "  ".repeat(depth);
             let display_text = match label {
                 Some(l) if !l.is_empty() => l.clone(),
@@ -1242,16 +1245,10 @@ mod tests {
     /// Color::DarkGray without any BOLD or other emphasis modifier.
     #[test]
     fn test_spec_running_marker_style_is_dim_grey_not_bold() {
-        let is_active = true;
-        let is_selected = false;
-        // Mirror the marker-style derivation from draw_goal_tree.
-        let marker_style = if is_active {
-            Style::default().fg(Color::DarkGray)
-        } else if is_selected {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
+        // Mirror the marker-style derivation from draw_goal_tree — the prefix
+        // is always DarkGray, independent of row state, per the dim-regardless-
+        // of-packaging rule.
+        let marker_style = Style::default().fg(Color::DarkGray);
         assert_eq!(
             marker_style.fg,
             Some(Color::DarkGray),
@@ -1263,6 +1260,154 @@ mod tests {
         );
     }
 
+    /// Spec (tui — goal list row): idle (non-running) goal rows open with a
+    /// dash, not a heavy bullet. The dash is the lightest possible marker
+    /// and extends the "marker recedes" principle to the row prefix.
+    #[test]
+    fn test_spec_idle_marker_is_dash() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![PathBuf::from("/proj/.tinker")];
+        let g = Goal {
+            id: "tui".to_string(),
+            summary: "owns the TUI rendering".to_string(),
+            description: "".to_string(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: Some(PathBuf::from("/proj/.tinker/goals/tui.toml")),
+        };
+        app.goals = vec![g];
+
+        let mut depth_by_id = std::collections::HashMap::new();
+        depth_by_id.insert("tui".to_string(), 0usize);
+        let running = std::collections::HashSet::new();
+        let item = GoalListItem::Goal(app.goals[0].clone());
+        let line = goal_list_row_line(&item, &depth_by_id, None, &running, &app);
+
+        // The first span is the prefix + indent. Extract the marker substring
+        // (the row has no children so indent is empty).
+        let prefix_span = &line.spans[0];
+        let prefix_text = prefix_span.content.as_ref();
+        assert!(
+            prefix_text.contains("- "),
+            "idle row prefix must be a dash; got {:?}",
+            prefix_text,
+        );
+        assert!(
+            !prefix_text.contains("◉"),
+            "idle row must no longer use the fisheye bullet; got {:?}",
+            prefix_text,
+        );
+    }
+
+    /// Spec (tui — goal list row / packaged): the prefix character on a
+    /// packaged, non-selected goal row is dim (DarkGray) without ITALIC. The
+    /// packaged-goals-style grey+italic authority covers id and summary; the
+    /// prefix is explicitly carved out so the marker recedes.
+    #[test]
+    fn test_spec_marker_is_dim_and_unitalic_on_packaged_row() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![PathBuf::from("/proj/.tinker")];
+        let packaged = Goal {
+            id: "tui".to_string(),
+            summary: "owns the TUI rendering".to_string(),
+            description: "".to_string(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: Some(PathBuf::from("/home/.tinker/goals/tui.toml")),
+        };
+        app.goals = vec![packaged];
+
+        let mut depth_by_id = std::collections::HashMap::new();
+        depth_by_id.insert("tui".to_string(), 0usize);
+        let running = std::collections::HashSet::new();
+        let item = GoalListItem::Goal(app.goals[0].clone());
+        // Selection is on a different goal — packaged goal is NOT selected.
+        let line = goal_list_row_line(&item, &depth_by_id, Some("other"), &running, &app);
+
+        // The first span is the prefix + indent. It must be dim and have no
+        // italic — the packaged italic only applies to id and summary.
+        let prefix_span = &line.spans[0];
+        assert_eq!(
+            prefix_span.style.fg,
+            Some(Color::DarkGray),
+            "non-selected packaged prefix must be DarkGray",
+        );
+        assert!(
+            !prefix_span.style.add_modifier.contains(Modifier::ITALIC),
+            "non-selected packaged prefix must NOT be italic — italic is reserved for id and summary",
+        );
+        assert!(
+            !prefix_span.style.add_modifier.contains(Modifier::BOLD),
+            "prefix must not carry BOLD — it's a marker, not content",
+        );
+        // Stronger semantic claim: the prefix carries no modifiers at all on
+        // a packaged row. This is what makes the carve-out a real distinction
+        // rather than a styling accident — the packaged italic applies to id
+        // and summary, and the prefix is plain.
+        assert_eq!(
+            prefix_span.style.add_modifier,
+            Modifier::empty(),
+            "non-selected packaged prefix must have no modifiers (the italic carve-out is semantic, not visual)",
+        );
+    }
+
+    /// Spec (tui — goal list row / ephemeral): ephemeral sub-session rows
+    /// also use the dash for the idle prefix. The prefix style is dim, no
+    /// italic, no bold — same rule as for permanent goal rows.
+    #[test]
+    fn test_spec_ephemeral_idle_marker_is_dash_and_dim() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![PathBuf::from("/proj/.tinker")];
+        let parent = Goal {
+            id: "tui".to_string(),
+            summary: "owns the TUI rendering".to_string(),
+            description: "".to_string(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        };
+        app.goals = vec![parent];
+        app.ephemeral_sessions.insert("tui~1".to_string());
+        app.ephemeral_sessions_ordered.push("tui~1".to_string());
+
+        let mut depth_by_id = std::collections::HashMap::new();
+        depth_by_id.insert("tui".to_string(), 0usize);
+        let running = std::collections::HashSet::new();
+        let ephemeral = GoalListItem::Ephemeral("tui~1".to_string(), None);
+        let line = goal_list_row_line(&ephemeral, &depth_by_id, None, &running, &app);
+
+        let prefix_span = &line.spans[0];
+        let prefix_text = prefix_span.content.as_ref();
+        assert!(
+            prefix_text.contains("- "),
+            "ephemeral idle row prefix must be a dash; got {:?}",
+            prefix_text,
+        );
+        assert!(
+            !prefix_text.contains("◉"),
+            "ephemeral idle row must no longer use the fisheye bullet; got {:?}",
+            prefix_text,
+        );
+        assert_eq!(
+            prefix_span.style.fg,
+            Some(Color::DarkGray),
+            "ephemeral idle prefix must be dim (DarkGray)",
+        );
+        assert!(
+            !prefix_span.style.add_modifier.contains(Modifier::ITALIC),
+            "ephemeral idle prefix must not be italic",
+        );
+    }
+
     /// Spec (tui — queue visibility): the goal ID of a running goal must use a
     /// distinct colour (Yellow) so the running goal stays visually salient
     /// while scrolling. The ▶ marker stays dim; only the ID gets colour.
@@ -1271,10 +1416,10 @@ mod tests {
     fn test_spec_running_goal_id_colour_is_distinct() {
         let is_active = true;
         let is_selected = false;
-        let name_style = Style::default(); // not selected
-        // Mirror the id-style derivation from draw_goal_tree.
+        // Mirror the id-style derivation from draw_goal_tree (the prefix
+        // marker is dim regardless of state — see test_spec_running_marker_style_is_dim_grey_not_bold).
         let id_style = if is_selected {
-            name_style
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
         } else if is_active {
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
         } else {
@@ -1290,11 +1435,7 @@ mod tests {
             "running goal ID must carry BOLD modifier",
         );
         // Confirm the marker is still dim — unchanged by this feature.
-        let marker_style = if is_active {
-            Style::default().fg(Color::DarkGray)
-        } else {
-            name_style
-        };
+        let marker_style = Style::default().fg(Color::DarkGray);
         assert_eq!(
             marker_style.fg,
             Some(Color::DarkGray),

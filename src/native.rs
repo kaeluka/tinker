@@ -224,15 +224,35 @@ pub fn tool_definitions(policy: &ToolPolicy) -> Vec<Value> {
     // mechanism.  It is available to every session — including tend —
     // because the spec mandates it for "all agent sessions".  The tool
     // does not touch the filesystem, so the policy layer is irrelevant;
-    // the runtime enforces registry validation in the callback.
+    // the runtime enforces registry validation in the callback.  The
+    // callback also enforces a self-send guard: passing the sender's
+    // own id as the target returns an explicit error (to prevent
+    // unbounded recursion).  The schema description calls this out so
+    // the model does not waste a turn attempting the call.
     tools.push(tool_schema(
         "send_message",
-        "Send a message to another agent session identified by its goal ID. The recipient must already exist in the session registry; this tool does not spawn fresh sub-sessions (use the @-envelope mechanism for that). The recipient session starts processing the message immediately during this turn — it runs in parallel rather than waiting for this session to complete. Returns an error if the target is not a known session, so the sender can route through a different agent. Prefer this over `<@id>...</@id>` envelopes: the tool call cannot be malformed and fires in-turn rather than at end-of-turn.",
+        "Send a message to another agent session identified by its goal ID. The target is validated against both the session registry and the goal tree: a running session in the registry is delivered to directly; a known goal in the goal tree that is not yet running is lazy-spawned and the message is delivered into the new session. This tool does not spawn fresh sub-sessions of the caller (use the spawn_session tool for that). The recipient session starts processing the message immediately during this turn — it runs in parallel rather than waiting for this session to complete. Returns an error only when the target is unknown — not in the session registry and not in the goal tree — so the sender can route through a different agent. Also returns an error if the target is the sender's own id (a self-send would create a new turn in the same session and recurse without bound) — use spawn_session for sub-tasks of your own goal, address a different goal id for a different agent, or continue reasoning in the current turn. Prefer this over `<@id>...</@id>` envelopes: the tool call cannot be malformed and fires in-turn rather than at end-of-turn.",
         json!({
-            "target": {"type": "string", "description": "Goal ID of the recipient session (e.g. 'tend', 'rummage'). Must already exist in the session registry — use @-envelopes for spawning fresh sub-sessions."},
+            "target": {"type": "string", "description": "Goal ID of the recipient (e.g. 'tend', 'rummage'). Validated against both the session registry and the goal tree: a running session is delivered to directly, a known-but-unspawned goal is lazy-spawned and the message is delivered into the new session. Must not be the sender's own id (self-send is rejected to prevent unbounded recursion)."},
             "message": {"type": "string", "description": "The message body to deliver to the recipient. May span multiple lines."}
         }),
         &["target", "message"],
+    ));
+    // spawn_session is the structured-tool successor to the <@{goal-id}|label>
+    // fresh-dispatch envelope.  It is available to every session — including
+    // tend — for the same reason send_message is.  The tool does not touch
+    // the filesystem, so the policy layer is irrelevant; the runtime
+    // enforces the self-only routing constraint (the new sub-session is
+    // always of the *caller's* own goal) in the callback.  The schema has
+    // no target parameter: the routing target is implicit in the caller.
+    tools.push(tool_schema(
+        "spawn_session",
+        "Spawn a fresh sub-session of your own goal. The new sub-session runs concurrently with your current turn (in-turn, not at end-of-turn) — it starts processing the task immediately while you keep reasoning. Use this whenever you can decompose a sub-task into a focused unit of work: each sub-session stays focused on its task and keeps your own context tight. The sub-session may itself act as a coordinator, dispatching further sub-sessions. From the sub-session's view, tool-spawned and envelope-spawned sessions are indistinguishable — both deposit into the same dispatch substrate. The `subgoal` parameter must be self-contained: the sub-session starts cold and only sees the text you pass here, so include all the context it needs without referring to 'above' or 'earlier'. Returns the sub-session id and the label (preserved as-is) on success. The sub-session replies to you via `<@{your-goal-id}>...</@{your-goal-id}>` envelopes — the reply mechanism is unchanged. Prefer this over `<@{your-goal-id}|label>...</@{your-goal-id}|label>` envelopes: the tool call cannot be malformed and fires in-turn rather than at end-of-turn.",
+        json!({
+            "subgoal": {"type": "string", "description": "The task description for the sub-session. Self-contained: include all the context the sub-session needs to complete the task without referring to your surrounding reply or earlier turns."},
+            "label": {"type": "string", "description": "Optional short correlation tag (e.g. 'investigate-auth') the sub-session echoes back to you in its reply envelope. Use an empty string or omit to dispatch without a label."}
+        }),
+        &["subgoal"],
     ));
     tools
 }
@@ -334,6 +354,7 @@ impl OpenCodeRunner for NativeRunner {
         mut on_session_id: Chunk,
         mut on_chunk: Chunk,
         send_message: Option<crate::cap::SendMessageFn>,
+        spawn_session: Option<crate::cap::SpawnSessionFn>,
     ) -> Result<String> {
         let api_key = std::env::var(API_KEY_ENV)
             .map_err(|_| anyhow!("{API_KEY_ENV} is not set — the native backend needs an OpenRouter API key"))?;
@@ -472,13 +493,25 @@ impl OpenCodeRunner for NativeRunner {
                     .unwrap_or(json!({}));
 
                 let summary = short_tool_summary(&name, &args);
-                // The send_message tool is a meta-tool — it does not touch
-                // the filesystem, so the policy layer is irrelevant and the
-                // callback is always consulted (when present).  Every other
-                // tool goes through the policy check first; send_message
-                // skips that check entirely.
+                // send_message and spawn_session are meta-tools — they do
+                // not touch the filesystem, so the policy layer is
+                // irrelevant and the callback is always consulted (when
+                // present).  Every other tool goes through the policy
+                // check first; the meta-tools skip that check entirely.
                 let result = if name == "send_message" {
                     match execute_send_message(&args, send_message.as_ref()).await {
+                        Ok(output) => {
+                            on_chunk(format_tool_ok(&name, &summary));
+                            Ok(output)
+                        }
+                        Err(e) => {
+                            let e = format!("{e:#}");
+                            on_chunk(format_tool_error(&name, &summary, &e));
+                            Err(e)
+                        }
+                    }
+                } else if name == "spawn_session" {
+                    match execute_spawn_session(&args, spawn_session.as_ref()).await {
                         Ok(output) => {
                             on_chunk(format_tool_ok(&name, &summary));
                             Ok(output)
@@ -599,6 +632,17 @@ fn short_tool_summary(tool: &str, input: &Value) -> String {
             // would be truncated by the format helper anyway.
             s("target").unwrap_or_default()
         }
+        "spawn_session" => {
+            // For spawn_session, the label is the most useful one-liner when
+            // present (it's the correlation tag the model can use to route
+            // replies). Fall back to the first line of the subgoal when no
+            // label is provided so the `→ spawn_session` log line is still
+            // informative about the dispatched task.
+            s("label")
+                .filter(|l| !l.is_empty())
+                .or_else(|| s("subgoal"))
+                .unwrap_or_default()
+        }
         _ => String::new(),
     }
 }
@@ -638,6 +682,61 @@ async fn execute_send_message(
         }
         None => Err(anyhow!(
             "send_message: no dispatcher configured (this runner was started without one)"
+        )),
+    }
+}
+
+/// Execute the `spawn_session` tool call. Validates that `subgoal` is
+/// present and non-empty, normalises the optional `label`, then delegates
+/// to the dispatcher callback which fires a fresh sub-session of the
+/// *caller's own goal* (the routing target is implicit in the closure —
+/// the schema exposes no target parameter to the model). When the callback
+/// is `None` (e.g. a test mock that does not care about dispatch), the
+/// model receives an explicit error so it can fall back to the @-envelope
+/// mechanism — the same error surface the runner uses for `send_message`.
+///
+/// `label` normalisation: an explicit empty string is treated as "no
+/// label" (None) so the model's "omit the label" and "pass empty string"
+/// forms are equivalent — both produce a `None` label downstream and
+/// the same tool result. The `subgoal` argument is forwarded verbatim;
+/// the callback handles its self-containment contract.
+async fn execute_spawn_session(
+    args: &Value,
+    spawn_session: Option<&crate::cap::SpawnSessionFn>,
+) -> Result<String> {
+    let subgoal = args
+        .get("subgoal")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("missing required argument: subgoal"))?;
+    if subgoal.is_empty() {
+        return Err(anyhow!("spawn_session: subgoal must be a non-empty string"));
+    }
+    // Normalise the label: absent, null, and empty-string are all "no
+    // label" so the model has three equivalent ways to dispatch without
+    // a correlation tag. A non-empty label is preserved verbatim for the
+    // callback (and ultimately for the reply envelope).
+    let label_arg = args.get("label").and_then(|v| v.as_str());
+    let label: Option<&str> = match label_arg {
+        Some(l) if !l.is_empty() => Some(l),
+        _ => None,
+    };
+    match spawn_session {
+        Some(cb) => {
+            // The callback returns Ok((session_id, label)) on successful
+            // enqueue and Err(reason) on failure. We surface both as
+            // clean tool output: success returns the session id and label
+            // in a model-readable form; failure forwards the reason so
+            // the model can react (typically by retrying with a different
+            // subgoal or by routing to a peer).
+            let (session_id, returned_label) = cb(subgoal, label).map_err(|e| anyhow!("{e}"))?;
+            let label_clause = match returned_label.as_deref() {
+                Some(l) if !l.is_empty() => format!(" (label: `{l}`)"),
+                _ => String::new(),
+            };
+            Ok(format!("spawned sub-session `{session_id}`{label_clause}"))
+        }
+        None => Err(anyhow!(
+            "spawn_session: no dispatcher configured (this runner was started without one)"
         )),
     }
 }
@@ -955,6 +1054,97 @@ mod tests {
         );
     }
 
+    // spec (send-message): the schema description must reflect the
+    // registry-or-lazy-spawn behavior — a known goal that has no
+    // running session is a valid target, the runtime spawns the
+    // session and delivers into it. Earlier versions of the
+    // description said "the recipient must already exist in the
+    // session registry", which contradicts the lazy-spawn path and
+    // would mislead a model into thinking a first-contact message to
+    // a known goal would fail. This test pins the description to the
+    // actual behavior: the description must mention both the session
+    // registry and the goal tree, must include the lazy-spawn /
+    // known-goal framing, and must NOT contain the "must already
+    // exist" framing. The error path is also pinned: an error fires
+    // only when the target is unknown — not in either the registry
+    // or the goal tree — not just when the target is not a "known
+    // session". This locks the description to the registry-then-
+    // goal-tree validation the dispatcher actually implements.
+    #[test]
+    fn test_spec_send_message_schema_documents_registry_or_lazy_spawn() {
+        let tools = tool_definitions(&ToolPolicy::Unrestricted);
+        let tool = tools
+            .iter()
+            .find(|t| t.pointer("/function/name").and_then(|n| n.as_str()) == Some("send_message"))
+            .expect("send_message tool must be present");
+        let desc = tool
+            .pointer("/function/description")
+            .and_then(|d| d.as_str())
+            .unwrap_or("");
+        let target_desc = tool
+            .pointer("/function/parameters/properties/target/description")
+            .and_then(|d| d.as_str())
+            .unwrap_or("");
+
+        // Both descriptions must mention the session registry (it's
+        // one half of the validation surface).
+        assert!(
+            desc.contains("session registry"),
+            "tool description must mention the session registry: {desc}"
+        );
+        assert!(
+            target_desc.contains("session registry"),
+            "target property description must mention the session registry: {target_desc}"
+        );
+        // Both descriptions must mention the goal tree (it's the
+        // other half — the lazy-spawn source).
+        assert!(
+            desc.contains("goal tree"),
+            "tool description must mention the goal tree (the lazy-spawn source): {desc}"
+        );
+        assert!(
+            target_desc.contains("goal tree"),
+            "target property description must mention the goal tree: {target_desc}"
+        );
+        // Both descriptions must mention the lazy-spawn behaviour
+        // so the model knows a known goal with no running session is
+        // a valid target.
+        let mentions_lazy_spawn = |s: &str| -> bool {
+            let lower = s.to_lowercase();
+            lower.contains("lazy-spawn")
+                || lower.contains("lazy spawn")
+                || lower.contains("spawns the session")
+                || lower.contains("spawned and the message is delivered")
+                || lower.contains("is lazy-spawned")
+        };
+        assert!(
+            mentions_lazy_spawn(desc),
+            "tool description must mention the lazy-spawn behaviour: {desc}"
+        );
+        assert!(
+            mentions_lazy_spawn(target_desc),
+            "target property description must mention the lazy-spawn behaviour: {target_desc}"
+        );
+        // The error framing must say "unknown" (not just "not a
+        // known session") — an error fires only when the target is
+        // in neither the registry nor the goal tree.
+        assert!(
+            desc.contains("unknown"),
+            "tool description must say the error fires when the target is unknown (not just not in the registry): {desc}"
+        );
+        // The descriptions must NOT contain the misleading framing
+        // that the recipient must already exist in the session
+        // registry — that wording contradicts the lazy-spawn path.
+        assert!(
+            !desc.contains("must already exist in the session registry"),
+            "tool description must not say the recipient must already exist in the session registry (a known-but-unspawned goal is a valid target): {desc}"
+        );
+        assert!(
+            !target_desc.contains("must already exist in the session registry"),
+            "target property description must not say the recipient must already exist in the session registry: {target_desc}"
+        );
+    }
+
     // spec (send-message): short_tool_summary on send_message returns the
     // target name, so the `→ send_message target` log line is informative
     // (mirrors the `→ Write path` / `→ Bash command` form the other tools
@@ -1088,6 +1278,78 @@ mod tests {
         assert!(err.to_string().contains("non-empty"), "error must name the empty-arg invariant");
     }
 
+    // spec (send-message): a self-send rejection surfaces in the
+    // conversation pane as a ⚠ line the user can read. The runner
+    // calls `format_tool_error(&name, &summary, &e)` to build the
+    // streamed chunk, which substitutes the first newline-bounded
+    // line of the dispatcher's Err string into the `⚠ {TOOL}
+    // {SUMMARY}: {ERROR}` template. Because the dispatcher's
+    // self-send error is a single line (no embedded newlines), the
+    // entire string — the self-send condition, the offending target
+    // id, AND the alternatives-aware course-correction pointers —
+    // appears in the streamed ⚠ line. The same string also lands
+    // in the tool result for the model, so both audiences see the
+    // full content. This test pins the conversation-pane surface:
+    // the ⚠ line must start with the tool name and target summary,
+    // and must contain the self-send condition, the offending
+    // target id, and all three course-correction pointers.
+    #[test]
+    fn test_spec_send_message_self_send_warning_line_surfaces_target_and_condition() {
+        // The dispatcher's self-send Err string. A single line —
+        // everything appears in the ⚠ line.
+        let dispatcher_err = "send_message: cannot send a message to yourself (`tend` is the same as the sender). To dispatch a sub-task of your own goal, use the spawn_session tool; to reach a different agent, address their goal id; otherwise continue reasoning in the current turn";
+
+        // short_tool_summary("send_message", ...) returns the target.
+        // For self-send the target equals the sender, so the summary
+        // is the sender's id — visible in the ⚠ line.
+        let summary = "tend";
+        let line = format_tool_error("send_message", summary, dispatcher_err);
+
+        // The ⚠ line is the template `⚠ {TOOL} {SUMMARY}: {ERROR}`,
+        // where ERROR is the first newline-bounded line of the
+        // dispatcher's string. The error has no newlines, so the
+        // full string flows through.
+        assert!(
+            line.starts_with("⚠ send_message tend:"),
+            "warning line must start with `⚠ send_message tend:` — tool name and target summary visible to the user: {line:?}"
+        );
+        // The warning line must surface the self-send condition so
+        // the user can recognise what happened.
+        assert!(
+            line.contains("cannot send a message to yourself"),
+            "warning line must surface the self-send condition: {line:?}"
+        );
+        // The warning line must name the offending target (the
+        // summary's value re-appears inside the error text, so the
+        // user sees it twice — once in the position reserved for
+        // the target, once in the descriptive text).
+        assert!(
+            line.contains("`tend`"),
+            "warning line must name the offending target id: {line:?}"
+        );
+        // Because the full error string flows through the first
+        // newline-bounded line, the alternatives-aware pointers
+        // (spawn_session, different goal id, continue reasoning)
+        // also appear in the streamed ⚠ line. Locking this in keeps
+        // the human-visible surface aligned with the model's
+        // tool-result surface — both see the full course-correction
+        // content. If the dispatcher error is later split into
+        // multiple lines, this assertion will fail and the test
+        // will need to be re-thought for the new line structure.
+        assert!(
+            line.contains("spawn_session"),
+            "warning line must include the spawn_session pointer: {line:?}"
+        );
+        assert!(
+            line.contains("goal id"),
+            "warning line must include the goal-id pointer: {line:?}"
+        );
+        assert!(
+            line.contains("continue reasoning"),
+            "warning line must include the continue-reasoning fallback: {line:?}"
+        );
+    }
+
     // spec (send-message): the send_message tool is available to tend too
     // (its ToolPolicy is TendScope which strips bash).  Defense in depth
     // applies: the schema inclusion is the first line; the policy check
@@ -1120,5 +1382,286 @@ mod tests {
             full_names.contains(&"bash"),
             "unrestricted policy must include bash (control test): {full_names:?}"
         );
+    }
+
+    // ── spawn_session tool tests ─────────────────────────────────────────
+
+    // spec (spawn-session): the spawn_session tool must appear in the
+    // function schema for every ToolPolicy variant, including TendScope.
+    // Like send_message, it is a meta-tool — the policy layer does not
+    // apply and the schema must be uniformly available.  tend uses
+    // spawn_session for delegating work to goal agents, so the tool must
+    // be visible to tend.
+    #[test]
+    fn test_spec_spawn_session_tool_in_definitions_for_every_policy() {
+        for policy in [ToolPolicy::Unrestricted, ToolPolicy::TendScope] {
+            let tools = tool_definitions(&policy);
+            let found = tools.iter().any(|t| {
+                t.pointer("/function/name").and_then(|n| n.as_str()) == Some("spawn_session")
+            });
+            assert!(
+                found,
+                "spawn_session must be in tool definitions for policy {policy:?}"
+            );
+        }
+    }
+
+    // spec (spawn-session): the spawn_session schema must require `subgoal`
+    // — the sub-task body is the load-bearing argument, and a tool call
+    // without it would produce a sub-session with no task. `label` is
+    // optional (correlation tag is convenience, not load-bearing).
+    #[test]
+    fn test_spec_spawn_session_schema_requires_subgoal_only() {
+        let tools = tool_definitions(&ToolPolicy::Unrestricted);
+        let tool = tools
+            .iter()
+            .find(|t| t.pointer("/function/name").and_then(|n| n.as_str()) == Some("spawn_session"))
+            .expect("spawn_session tool must be present");
+        let required = tool
+            .pointer("/function/parameters/required")
+            .and_then(|r| r.as_array())
+            .expect("spawn_session must declare required parameters");
+        let names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(names.contains(&"subgoal"), "subgoal must be a required parameter");
+        // label is optional; the spec does not require it. The schema
+        // must NOT mandate it — that would block the bare-task form
+        // (e.g. `<@my-goal|>` in the envelope path) where no label is
+        // wanted.
+        assert!(!names.contains(&"label"), "label must NOT be a required parameter");
+    }
+
+    // spec (spawn-session): the spawn_session schema must explicitly
+    // document the two load-bearing properties of the tool: (1) it spawns
+    // a sub-session of the *caller's* own goal (no arbitrary target) and
+    // (2) it fires in-turn, not at end-of-turn. Both must be in the
+    // description so the model picks the tool correctly.
+    #[test]
+    fn test_spec_spawn_session_schema_documents_self_only_and_in_turn_dispatch() {
+        let tools = tool_definitions(&ToolPolicy::Unrestricted);
+        let tool = tools
+            .iter()
+            .find(|t| t.pointer("/function/name").and_then(|n| n.as_str()) == Some("spawn_session"))
+            .expect("spawn_session tool must be present");
+        let desc = tool
+            .pointer("/function/description")
+            .and_then(|d| d.as_str())
+            .unwrap_or("");
+        // Self-only: the description must say the sub-session is "of your
+        // own goal" — the model should not expect to address an arbitrary
+        // target through this tool.
+        assert!(
+            desc.contains("your own goal"),
+            "description must state the sub-session is of the caller's own goal: {desc}"
+        );
+        // The schema must NOT expose a target parameter; the routing
+        // target is implicit in the caller.  A target parameter would
+        // generalise the tool to send-message's lazy-spawn territory and
+        // break the domain split.
+        let properties = tool
+            .pointer("/function/parameters/properties")
+            .expect("spawn_session must declare properties");
+        let prop_names: Vec<&str> = properties
+            .as_object()
+            .map(|m| m.keys().map(String::as_str).collect())
+            .unwrap_or_default();
+        assert!(
+            !prop_names.contains(&"target"),
+            "spawn_session must NOT expose a target parameter (self-only constraint): {prop_names:?}"
+        );
+        // In-turn dispatch: the description must explain that the spawn
+        // fires immediately during the caller's turn, so the model
+        // prefers the tool over the @-envelope path (which fires at
+        // end-of-turn).
+        assert!(
+            desc.to_lowercase().contains("in-turn")
+                || desc.to_lowercase().contains("immediately during")
+                || desc.to_lowercase().contains("concurrently"),
+            "description must explain in-turn dispatch: {desc}"
+        );
+    }
+
+    // spec (spawn-session): short_tool_summary on spawn_session returns
+    // the label when one is provided, so the `→ spawn_session label`
+    // log line mirrors the `→ send_message target` form. When no label
+    // is provided, the summary falls back to the first line of the
+    // subgoal so the log line still names the dispatched task.
+    #[test]
+    fn test_spec_spawn_session_short_summary_prefers_label() {
+        // Label present: summary must be the label, not the subgoal.
+        let args = json!({
+            "subgoal": "Trace the auth flow through the login handler",
+            "label": "investigate-auth"
+        });
+        let s = short_tool_summary("spawn_session", &args);
+        assert_eq!(s, "investigate-auth", "label must take priority over subgoal");
+
+        // No label (key absent): summary must fall back to first line
+        // of subgoal so the log line is still informative.
+        let args_no_label = json!({
+            "subgoal": "Trace the auth flow through the login handler"
+        });
+        let s_no_label = short_tool_summary("spawn_session", &args_no_label);
+        assert_eq!(
+            s_no_label, "Trace the auth flow through the login handler",
+            "fallback must be the first line of subgoal"
+        );
+
+        // Empty-string label: treated as "no label" and falls back to
+        // subgoal first line. Mirrors the executor's label normalisation.
+        let args_empty_label = json!({
+            "subgoal": "Trace the auth flow",
+            "label": ""
+        });
+        let s_empty = short_tool_summary("spawn_session", &args_empty_label);
+        assert_eq!(
+            s_empty, "Trace the auth flow",
+            "empty-string label must fall back to subgoal first line"
+        );
+    }
+
+    // spec (spawn-session): execute_spawn_session delegates to the
+    // callback when one is provided. The callback's return value
+    // (session id + label) is surfaced as a clean tool result the model
+    // can route replies to.
+    #[tokio::test]
+    async fn test_spec_execute_spawn_session_delegates_to_callback() {
+        let captured: Arc<Mutex<Option<(String, Option<String>)>>> = Arc::new(Mutex::new(None));
+        let captured_clone = captured.clone();
+        let cb: crate::cap::SpawnSessionFn = Arc::new(move |subgoal: &str, label: Option<&str>| {
+            *captured_clone.lock().unwrap() = Some((subgoal.to_string(), label.map(String::from)));
+            Ok(("rummage~3".to_string(), label.map(String::from)))
+        });
+        let result = execute_spawn_session(
+            &json!({"subgoal": "trace the init", "label": "investigate-auth"}),
+            Some(&cb),
+        )
+        .await;
+        let out = result.expect("callback success must yield Ok result");
+        assert!(out.contains("rummage~3"), "ok result should name the spawned sub-session");
+        assert!(
+            out.contains("investigate-auth"),
+            "ok result should preserve the label for reply routing: {out}"
+        );
+        let (sub, lbl) = captured.lock().unwrap().clone().expect("callback was invoked");
+        assert_eq!(sub, "trace the init");
+        assert_eq!(lbl, Some("investigate-auth".to_string()));
+    }
+
+    // spec (spawn-session): execute_spawn_session with no label still
+    // delegates to the callback and surfaces the session id in the
+    // result. The label clause is omitted from the human-readable
+    // string when no label was provided.
+    #[tokio::test]
+    async fn test_spec_execute_spawn_session_no_label() {
+        let cb: crate::cap::SpawnSessionFn = Arc::new(|_subgoal, _label| {
+            Ok(("rummage~5".to_string(), None))
+        });
+        let result = execute_spawn_session(
+            &json!({"subgoal": "trace the init"}),
+            Some(&cb),
+        )
+        .await;
+        let out = result.expect("callback success must yield Ok result");
+        assert!(out.contains("rummage~5"), "ok result should name the spawned sub-session");
+        // No label clause when label is None.
+        assert!(
+            !out.contains("label:"),
+            "ok result must omit label clause when no label was provided: {out}"
+        );
+    }
+
+    // spec (spawn-session): when the callback returns Err, the runner
+    // surfaces the error as an Err to the model — the failure path is
+    // explicit, never a silent loss.
+    #[tokio::test]
+    async fn test_spec_execute_spawn_session_surfaces_callback_error() {
+        let cb: crate::cap::SpawnSessionFn = Arc::new(|_subgoal, _label| {
+            Err("caller goal `ghost` is not in the goal tree".to_string())
+        });
+        let err = execute_spawn_session(
+            &json!({"subgoal": "trace the init"}),
+            Some(&cb),
+        )
+        .await
+        .expect_err("callback Err must produce Err result");
+        assert!(
+            err.to_string().contains("not in the goal tree"),
+            "error must surface the goal-tree-miss reason verbatim: {err}"
+        );
+    }
+
+    // spec (spawn-session): no callback configured returns an explicit
+    // error naming the misconfiguration. The harness's signal that the
+    // feature is not wired — the model can fall back to the @-envelope
+    // path or to routing to a peer.
+    #[tokio::test]
+    async fn test_spec_execute_spawn_session_no_callback_returns_error() {
+        let err = execute_spawn_session(
+            &json!({"subgoal": "trace the init"}),
+            None,
+        )
+        .await
+        .expect_err("no callback must yield Err");
+        assert!(
+            err.to_string().contains("no dispatcher configured"),
+            "error must name the misconfiguration: {err}"
+        );
+    }
+
+    // spec (spawn-session): missing subgoal produces an explicit error
+    // — the same defence-in-depth the @-envelope parser uses for
+    // missing tags. A tool call without subgoal would otherwise
+    // produce a sub-session with no task.
+    #[tokio::test]
+    async fn test_spec_execute_spawn_session_missing_subgoal_errors() {
+        let cb: crate::cap::SpawnSessionFn = Arc::new(|_, _| Ok(("x~1".to_string(), None)));
+        let err = execute_spawn_session(
+            &json!({"label": "no-subgoal"}),
+            Some(&cb),
+        )
+        .await
+        .expect_err("missing subgoal must error");
+        assert!(err.to_string().contains("subgoal"), "error must name the missing arg");
+    }
+
+    // spec (spawn-session): empty subgoal is rejected. An empty-string
+    // dispatch would produce a sub-session with no task — refusing
+    // explicitly is safer than treating it as a generic spawn.
+    #[tokio::test]
+    async fn test_spec_execute_spawn_session_empty_subgoal_rejected() {
+        let cb: crate::cap::SpawnSessionFn = Arc::new(|_, _| Ok(("x~1".to_string(), None)));
+        let err = execute_spawn_session(
+            &json!({"subgoal": ""}),
+            Some(&cb),
+        )
+        .await
+        .expect_err("empty subgoal must error");
+        assert!(err.to_string().contains("non-empty"), "error must name the empty-arg invariant");
+    }
+
+    // spec (spawn-session): empty-string label is normalised to None
+    // before reaching the callback, so the model's "omit the label"
+    // and "pass empty string" forms are equivalent.
+    #[tokio::test]
+    async fn test_spec_execute_spawn_session_empty_label_normalised_to_none() {
+        let captured: Arc<Mutex<Option<Option<String>>>> = Arc::new(Mutex::new(None));
+        let captured_clone = captured.clone();
+        let cb: crate::cap::SpawnSessionFn = Arc::new(move |_subgoal, label: Option<&str>| {
+            *captured_clone.lock().unwrap() = Some(label.map(String::from));
+            Ok(("x~1".to_string(), label.map(String::from)))
+        });
+        let result = execute_spawn_session(
+            &json!({"subgoal": "trace the init", "label": ""}),
+            Some(&cb),
+        )
+        .await
+        .expect("empty-string label must not error");
+        let observed = captured.lock().unwrap().clone().expect("callback was invoked");
+        assert!(
+            observed.is_none(),
+            "empty-string label must be normalised to None before the callback, got {observed:?}"
+        );
+        // The result string omits the label clause when label is None.
+        assert!(!result.contains("label:"), "result must omit label clause when label is None: {result}");
     }
 }
