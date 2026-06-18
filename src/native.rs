@@ -46,7 +46,7 @@ pub enum ToolPolicy {
     /// Goal sessions (rummage, jog, regular sessions, cleanup): full bash,
     /// unrestricted read/write.
     Unrestricted,
-    /// Tend: no bash at all; write/edit only under `.tinker/goals/`.
+    /// Tend: no bash at all; write/edit/delete only under `.tinker/goals/`.
     /// Read/glob/grep are unrestricted (tend may read anything).
     TendScope,
 }
@@ -59,14 +59,14 @@ impl ToolPolicy {
             ToolPolicy::Unrestricted => Ok(()),
             ToolPolicy::TendScope => match tool {
                 "bash" => Err("policy: tend has no bash access".to_string()),
-                "write" | "edit" => {
+                "write" | "edit" | "delete" => {
                     let path = input.get("path").and_then(|v| v.as_str()).unwrap_or("");
                     let scope = work_dir.join(".tinker").join("goals");
                     if path_within(path, work_dir, &scope) {
                         Ok(())
                     } else {
                         Err(format!(
-                            "policy: tend may only write under .tinker/goals/ — denied: {path}"
+                            "policy: tend may only {tool} under .tinker/goals/ — denied: {path}"
                         ))
                     }
                 }
@@ -191,6 +191,12 @@ pub fn tool_definitions(policy: &ToolPolicy) -> Vec<Value> {
                 "new_string": {"type": "string", "description": "Replacement text"}
             }),
             &["path", "old_string", "new_string"],
+        ),
+        tool_schema(
+            "delete",
+            "Delete a file or directory. If the path is a directory, deletes it recursively.",
+            json!({"path": {"type": "string", "description": "File or directory path to delete"}}),
+            &["path"],
         ),
         tool_schema(
             "glob",
@@ -634,7 +640,7 @@ fn short_tool_summary(tool: &str, input: &Value) -> String {
             .map(|s| s.lines().next().unwrap_or_default().trim().to_string())
     };
     match tool {
-        "read" | "write" | "edit" => s("path").unwrap_or_default(),
+        "read" | "write" | "edit" | "delete" => s("path").unwrap_or_default(),
         "bash" => s("command").unwrap_or_default(),
         "glob" | "grep" => s("pattern").unwrap_or_default(),
         "send_message" => {
@@ -794,6 +800,18 @@ async fn execute_tool(name: &str, args: &Value, work_dir: &Path) -> Result<Strin
             }
             std::fs::write(&path, content.replacen(old, new, 1))?;
             Ok(format!("edited {}", path.display()))
+        }
+        "delete" => {
+            let path = resolve(str_arg("path")?, work_dir);
+            if path.is_dir() {
+                std::fs::remove_dir_all(&path)
+                    .map_err(|e| anyhow!("delete {}: {e}", path.display()))?;
+                Ok(format!("deleted directory {}", path.display()))
+            } else {
+                std::fs::remove_file(&path)
+                    .map_err(|e| anyhow!("delete {}: {e}", path.display()))?;
+                Ok(format!("deleted {}", path.display()))
+            }
         }
         "bash" => {
             let command = str_arg("command")?;
@@ -975,6 +993,69 @@ mod tests {
             result.is_ok(),
             "absolute path with .. resolved to in-scope must be allowed"
         );
+    }
+
+    // spec (tend-write-restriction): deletion follows the same permission
+    // boundary as write/edit — allowed under .tinker/goals/, denied outside.
+    #[test]
+    fn test_spec_tend_policy_delete_scope() {
+        let policy = ToolPolicy::TendScope;
+        let wd = Path::new("/proj");
+        let check = |p: &str| policy.check("delete", &json!({"path": p}), wd);
+        assert!(check(".tinker/goals/foo.toml").is_ok(), "goal file delete must be allowed");
+        assert!(check("/proj/.tinker/goals/bar.toml").is_ok(), "absolute in-scope delete must be allowed");
+        assert!(check("src/main.rs").is_err(), "src delete must be denied");
+        assert!(check(".tinker/notes/notes.md").is_err(), "notes delete must be denied");
+        assert!(check("/etc/passwd").is_err(), "out-of-tree delete must be denied");
+        assert!(check("").is_err(), "empty path must be denied");
+    }
+
+    // spec (tend-write-restriction): delete executes for files and directories
+    // under scope, and path-equivalence recognition applies to deletion too.
+    #[tokio::test]
+    async fn test_spec_tend_policy_delete_canonical_equivalence() {
+        let dir = tempfile::tempdir().unwrap();
+        let goals_dir = dir.path().join(".tinker/goals");
+        std::fs::create_dir_all(&goals_dir).unwrap();
+        // Create a file to delete.
+        std::fs::write(goals_dir.join("retired.toml"), "x").unwrap();
+
+        let policy = ToolPolicy::TendScope;
+
+        // .. that resolves back in scope — must be allowed by the policy.
+        let result = policy.check(
+            "delete",
+            &json!({"path": ".tinker/goals/../goals/retired.toml"}),
+            dir.path(),
+        );
+        assert!(result.is_ok(), "canonical-equivalent delete path must be allowed");
+
+        // Actual execution via execute_tool.
+        let result = execute_tool(
+            "delete",
+            &json!({"path": ".tinker/goals/retired.toml"}),
+            dir.path(),
+        )
+        .await;
+        assert!(result.is_ok(), "delete execution must succeed");
+        assert!(!goals_dir.join("retired.toml").exists(), "file must be gone");
+    }
+
+    // spec (tend-write-restriction): delete tool is in the definitions for
+    // every policy variant (it's a base filesystem tool, like write/edit).
+    #[test]
+    fn test_spec_delete_tool_in_definitions_for_every_policy() {
+        for policy in [ToolPolicy::Unrestricted, ToolPolicy::TendScope] {
+            let tools = tool_definitions(&policy);
+            let names: Vec<&str> = tools
+                .iter()
+                .filter_map(|t| t.pointer("/function/name").and_then(|v| v.as_str()))
+                .collect();
+            assert!(
+                names.contains(&"delete"),
+                "delete must be in tool definitions for {policy:?}"
+            );
+        }
     }
 
     // spec (native-backend): handle array‑format content from the model.

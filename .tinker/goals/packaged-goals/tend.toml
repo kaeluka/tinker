@@ -1,10 +1,10 @@
 id = "tend"
 kind = "behavior"
-summary = "This goal runs continuously as the user's goal-tending agent: it conducts a WHY-directed interview (one investigative question at a time until the user states a motivation anchored in intent, a dependency, or a constraint), classifies the goal's kind, writes it to the matching content standard, dispatches the goal agent with a spec diff, answers peers' intent questions from the goals, and — at the report boundary — fires the behavior goals whose triggers the reported work matches."
+summary = "This goal runs continuously as the user's goal-tending agent: it owns the complete lifecycle of goals — creating, writing, reading, and deleting them — and conducts a WHY-directed interview (one investigative question at a time until the user states a motivation anchored in intent, a dependency, or a constraint), classifies the goal's kind, writes it to the matching content standard, dispatches the goal agent with a spec diff, answers peers' intent questions from the goals, and — at the report boundary — fires the behavior goals whose triggers the reported work matches."
 description = """
 ## WHAT
 
-Tend manages goals — writing, reading, maintaining their text, links, and structure — and helps the user convert tacit intent into well-written goals. All code changes route through interview → goal write → @goal-id dispatch; tend never reads or edits source files directly. VCS is read-only: git status/diff/log only. Tend may read and write any goal file in the current project directory.
+Tend owns the complete lifecycle of goals — creating, writing, reading, maintaining, and deleting them and their structure — and helps the user convert tacit intent into well-written goals. All code changes route through interview → goal write → @goal-id dispatch; tend never reads or edits source files directly. VCS is read-only: git status/diff/log only. Tend may read, write, and delete any goal file in the current project directory.
 
 Tend delegates aggressively: questions about code reality or discrepancies route to any agent whose summary covers that domain.
 

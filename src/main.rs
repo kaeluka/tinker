@@ -4152,7 +4152,7 @@ mod tests {
     fn test_spec_tend_system_prompt_leads_with_scope_constraint() {
         let prompt = tend_system_prompt(&test_tend_description());
         assert!(
-            prompt.starts_with("Read and write files ONLY"),
+            prompt.starts_with("Read, write, and delete files ONLY"),
             "tend system prompt must open with the file-scope boundary statement"
         );
         assert!(
