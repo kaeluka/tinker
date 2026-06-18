@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 // ── Public types ─────────────────────────────────────────────────────────────
@@ -167,6 +168,32 @@ pub enum LogEvent {
         goal_id: String,
         contributors: Vec<(String, String)>,
     },
+    /// Emitted at startup when an eager-start precondition fails — the
+    /// invariant `goal-agents` requires before it can run (today: "tend
+    /// is in the loaded goals"). The variant is named for the invariant
+    /// rather than the specific goal so future eager-start preconditions
+    /// can reuse it without an enum change.
+    ///
+    /// `missing_goal_id` is the goal id the invariant expected to find
+    /// (today always `"tend"`). `expected_sources` lists the
+    /// `(tier_label, path)` pairs that should have produced that goal —
+    /// paralleling `GoalCollision.contributors`'s shape so `jq` queries
+    /// can move between the two without translation.
+    /// `parse_errors_in_tier` carries any `(file_path, short_error)`
+    /// pairs for malformed TOMLs in the relevant tier, so a single
+    /// event carries both the symptom (goal missing) and the cause
+    /// (malformed file that should have produced it).
+    ///
+    /// Emitted via the fatal-events writer (`start_fatal_logger`) so the
+    /// event lands on disk before the panic that triggers it unwinds —
+    /// the regular batched logger is not yet running at this point in
+    /// startup, and any buffered events would be lost when the runtime
+    /// tears down.
+    EagerStartPreconditionMissing {
+        missing_goal_id: String,
+        expected_sources: Vec<(String, String)>,
+        parse_errors_in_tier: Vec<(String, String)>,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -179,9 +206,39 @@ pub struct LogEntry {
 
 // ── LogSender ────────────────────────────────────────────────────────────────
 
+/// Internal dispatch for `LogSender`. Two modes:
+///
+/// - `Async`: the normal path — events go through an unbounded channel
+///   to a background task that batches and flushes asynchronously. This
+///   is the only mode that touches the state file.
+/// - `Sync`: the fatal path — events are serialized and written
+///   synchronously to the on-disk JSONL on every emit, with a flush
+///   before `emit` returns. Used for events emitted from panic-prone
+///   startup paths (eager-start precondition failures) where the
+///   background task isn't running yet or may be torn down by the
+///   panic before its batch flushes. The state file is not touched in
+///   this mode — fatal events are pure log records, not live UI facts.
+///
+/// Both modes can target the same on-disk JSONL safely: POSIX
+/// `O_APPEND` positions each `write()` syscall at end-of-file
+/// atomically, and the sync path's per-line writes are far smaller than
+/// any kernel write-atomicity threshold.
+/// Boxed synchronous writer for the fatal path. The trait object
+/// keeps the underlying filesystem handle out of this module's
+/// source, per the raw-effects confinement rule that confines direct
+/// filesystem calls to `realfs.rs` and `native.rs`. `Filesystem::open_append`
+/// is the intended caller-side opener.
+type SyncWriter = Box<dyn std::io::Write + Send>;
+
+#[derive(Clone)]
+enum LogSenderInner {
+    Async(mpsc::UnboundedSender<LogEntry>),
+    Sync(Arc<std::sync::Mutex<SyncWriter>>),
+}
+
 #[derive(Clone)]
 pub struct LogSender {
-    tx: mpsc::UnboundedSender<LogEntry>,
+    inner: LogSenderInner,
 }
 
 impl LogSender {
@@ -191,7 +248,25 @@ impl LogSender {
             source: source.to_string(),
             event,
         };
-        let _ = self.tx.send(entry);
+        match &self.inner {
+            LogSenderInner::Async(tx) => {
+                let _ = tx.send(entry);
+            }
+            LogSenderInner::Sync(writer) => {
+                // Failure to serialize or write is silently dropped:
+                // the async path does the same on a closed channel,
+                // and the panic that triggered the fatal emit is
+                // already in flight — a logging failure here cannot be
+                // allowed to mask the underlying panic.
+                if let Ok(json) = serde_json::to_string(&entry) {
+                    use std::io::Write;
+                    if let Ok(mut w) = writer.lock() {
+                        let _ = writeln!(w, "{}", json);
+                        let _ = w.flush();
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -199,7 +274,9 @@ impl LogSender {
 #[cfg(test)]
 pub fn noop_sender() -> LogSender {
     let (tx, _rx) = mpsc::unbounded_channel();
-    LogSender { tx }
+    LogSender {
+        inner: LogSenderInner::Async(tx),
+    }
 }
 
 // ── Startup ──────────────────────────────────────────────────────────────────
@@ -207,7 +284,34 @@ pub fn noop_sender() -> LogSender {
 pub fn start_logger(log_path: PathBuf, state_path: PathBuf) -> LogSender {
     let (tx, rx) = mpsc::unbounded_channel::<LogEntry>();
     tokio::spawn(logger_task(rx, log_path, state_path));
-    LogSender { tx }
+    LogSender {
+        inner: LogSenderInner::Async(tx),
+    }
+}
+
+/// Wrap an already-opened append-mode writer as a synchronous fatal-event
+/// `LogSender` usable before `start_logger` runs.
+///
+/// Emits in this mode write directly to the supplied writer and flush
+/// synchronously on every call, so an event emitted just before a
+/// panic unwinds is durable on disk by the time `emit` returns. The
+/// fatal path does not touch the state file — only the runtime event
+/// log is updated, because fatal-path events describe startup
+/// invariants that are not live UI facts.
+///
+/// The writer is passed in by the composition root rather than opened
+/// here: this keeps direct filesystem references out of `logger.rs`
+/// per the raw-effects confinement rule (see `Filesystem::open_append`,
+/// which is the intended caller-side opener). The returned `LogSender`
+/// is interchangeable with the one from `start_logger` for the
+/// purposes of `emit`; the difference is only the durability
+/// guarantee. Both handles can coexist — fatal emits during early
+/// startup, normal startup of the batched logger after the fatal path
+/// is no longer needed.
+pub fn start_fatal_logger(writer: Box<dyn std::io::Write + Send>) -> LogSender {
+    LogSender {
+        inner: LogSenderInner::Sync(Arc::new(std::sync::Mutex::new(writer))),
+    }
 }
 
 // ── Background task ──────────────────────────────────────────────────────────
@@ -1035,8 +1139,9 @@ mod tests {
     // `contributors` list of `(tier_label, path)` pairs, where the first
     // entry is the winning copy and subsequent entries are duplicates that
     // were ignored. Tier labels are open: `"project-local"`,
-    // `"ancestor global"`, `"packaged"` are the current set; new tiers may
-    // be added by `goal::tier_label` without changing this event's shape.
+    // `"ancestor global"`, `"packaged"`, `"binary-relative-packaged"`
+    // are the current set; new tiers may be added by `goal::tier_label`
+    // without changing this event's shape.
     //
     // The event is not state-changing — apply_to_state must return false,
     // so it never triggers a state-snapshot write. The collision is a
@@ -1116,5 +1221,171 @@ mod tests {
             !changed,
             "GoalCollision must not mark state dirty"
         );
+    }
+
+    // spec (tend-introspection / binary-relative-tier-loading): the
+    // eager-start precondition failure emits a structured event so the
+    // missing-goal symptom is queryable via `jq` rather than only
+    // visible in the panic prose. The event is named for the invariant,
+    // not the specific goal, so future eager-start preconditions can
+    // reuse the variant without changing this enum.
+    #[test]
+    fn test_spec_eager_start_precondition_missing_event_serializes() {
+        // Common case: the loader produced zero entries with the
+        // expected id, and there's no underlying parse error to report.
+        let event = LogEvent::EagerStartPreconditionMissing {
+            missing_goal_id: "tend".to_string(),
+            expected_sources: vec![(
+                "binary-relative-packaged".to_string(),
+                "<binary>/../../.tinker/goals/packaged-goals/tend.toml"
+                    .to_string(),
+            )],
+            parse_errors_in_tier: vec![],
+        };
+        let entry = LogEntry {
+            ts: "2026-07-20T00:00:00Z".to_string(),
+            source: "harness".to_string(),
+            event,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(val["kind"], "eager_start_precondition_missing");
+        assert_eq!(val["missing_goal_id"], "tend");
+        let sources = val["expected_sources"]
+            .as_array()
+            .expect("expected_sources must serialize as a JSON array");
+        assert_eq!(sources.len(), 1, "one expected source");
+        assert_eq!(sources[0][0], "binary-relative-packaged");
+        assert_eq!(
+            sources[0][1],
+            "<binary>/../../.tinker/goals/packaged-goals/tend.toml"
+        );
+        let errs = val["parse_errors_in_tier"]
+            .as_array()
+            .expect("parse_errors_in_tier must serialize as a JSON array");
+        assert_eq!(errs.len(), 0, "no parse errors in this case");
+
+        // Populated parse_errors_in_tier: the loader caught a malformed
+        // TOML in the tier that should have produced the goal. A single
+        // event must carry both the symptom and the cause so a `jq`
+        // query recovers both without re-parsing the panic prose.
+        let event_with_errs = LogEvent::EagerStartPreconditionMissing {
+            missing_goal_id: "tend".to_string(),
+            expected_sources: vec![(
+                "binary-relative-packaged".to_string(),
+                "<binary>/../../.tinker/goals/packaged-goals/tend.toml"
+                    .to_string(),
+            )],
+            parse_errors_in_tier: vec![(
+                "<binary>/../../.tinker/goals/packaged-goals/tend.toml"
+                    .to_string(),
+                "missing field `summary` at line 5".to_string(),
+            )],
+        };
+        let entry_with_errs = LogEntry {
+            ts: "2026-07-20T00:00:00Z".to_string(),
+            source: "harness".to_string(),
+            event: event_with_errs,
+        };
+        let json_with_errs = serde_json::to_string(&entry_with_errs).unwrap();
+        let val_with_errs: serde_json::Value = serde_json::from_str(&json_with_errs).unwrap();
+        let errs = val_with_errs["parse_errors_in_tier"].as_array().unwrap();
+        assert_eq!(errs.len(), 1, "one parse error populated");
+        assert_eq!(
+            errs[0][0],
+            "<binary>/../../.tinker/goals/packaged-goals/tend.toml"
+        );
+        assert!(errs[0][1].as_str().unwrap().contains("missing field"));
+
+        // The event is not state-changing — apply_to_state returns false,
+        // because eager-start failures are structural (deployment-level)
+        // rather than live UI facts.
+        let mut state = StateSnapshot::default();
+        let changed = apply_to_state(&entry, &mut state);
+        assert!(
+            !changed,
+            "EagerStartPreconditionMissing must not mark state dirty"
+        );
+    }
+
+    // spec (tend-introspection): the fatal-events writer emits
+    // synchronously to the on-disk JSONL on every call. This is the
+    // durability guarantee that makes
+    // `EagerStartPreconditionMissing` observable when it fires from
+    // inside a panic-prone startup path — a regular batched logger
+    // would lose buffered events when the runtime is torn down by the
+    // panic. Verifies that the line is on disk before `emit` returns
+    // and that subsequent emits append rather than truncate.
+    #[test]
+    fn test_spec_start_fatal_logger_writes_synchronously_on_emit() {
+        // Per-test temp path — cargo runs tests in parallel, so the
+        // filename includes the test name to avoid collisions.
+        let tmp = std::env::temp_dir().join(
+            "tinker-test-fatal-eager-start-precondition-missing.jsonl",
+        );
+        let _ = std::fs::remove_file(&tmp);
+
+        // Tests live outside the raw-effects confinement rule, so
+        // opening the file directly here mirrors what `realfs.rs`'s
+        // `open_append` does at runtime.
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&tmp)
+            .expect("test must be able to open the log file");
+        let log = start_fatal_logger(Box::new(file));
+        log.emit(
+            "harness",
+            LogEvent::EagerStartPreconditionMissing {
+                missing_goal_id: "tend".to_string(),
+                expected_sources: vec![(
+                    "binary-relative-packaged".to_string(),
+                    "<binary>/../../.tinker/goals/packaged-goals/tend.toml"
+                        .to_string(),
+                )],
+                parse_errors_in_tier: vec![],
+            },
+        );
+
+        // The event must be on disk before emit returns — that's the
+        // whole point of the sync writer.
+        let content = std::fs::read_to_string(&tmp)
+            .expect("event must be written to disk before emit returns");
+        assert!(
+            content.contains("\"kind\":\"eager_start_precondition_missing\""),
+            "fatal-writer line must contain the new event kind; got: {content}"
+        );
+        assert!(
+            content.contains("\"missing_goal_id\":\"tend\""),
+            "fatal-writer line must carry missing_goal_id; got: {content}"
+        );
+        assert!(
+            content.contains("\"source\":\"harness\""),
+            "fatal-writer line must carry the source field; got: {content}"
+        );
+
+        // Append-on-second-emit: the file is opened with `O_APPEND`,
+        // so subsequent emits land after the first line rather than
+        // truncating it. Mirrors the regular logger's no-rotation
+        // guarantee from a different code path.
+        log.emit(
+            "harness",
+            LogEvent::EagerStartPreconditionMissing {
+                missing_goal_id: "tend".to_string(),
+                expected_sources: vec![],
+                parse_errors_in_tier: vec![],
+            },
+        );
+        let after = std::fs::read_to_string(&tmp)
+            .expect("second emit must also be on disk");
+        let line_count = after.lines().count();
+        assert_eq!(
+            line_count, 2,
+            "fatal writer must append, not truncate; got {line_count} lines"
+        );
+
+        // Cleanup.
+        let _ = std::fs::remove_file(&tmp);
     }
 }

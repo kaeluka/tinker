@@ -1,7 +1,39 @@
 use crate::cap::Filesystem;
 use anyhow::Result;
+use include_dir::{include_dir, Dir};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+
+/// Compile-time embedded fallback for the binary-relative packaged tier.
+/// `include_dir!` walks the source `.tinker/goals/packaged-goals/` directory
+/// at compile time and embeds every file's bytes into the binary. The
+/// runtime loader falls through to this when the on-disk binary-relative
+/// `<binary>/../../.tinker/goals/packaged-goals/` directory is absent or
+/// empty — the case for `cargo install tinker` from a package registry,
+/// where no build step runs.
+///
+/// The on-disk pass (populated by `build.rs`) takes precedence over the
+/// embedded bytes when both are present: same-tier duplicate-id policy
+/// (first-occurrence-wins) makes the on-disk copy the survivor. This
+/// matches the spec's "file-based copy takes precedence over the embedded
+/// fallback" contract.
+///
+/// Embedded paths use the `embedded://packaged-goals/<file-name>` scheme
+/// as the `source_path` for goals loaded from this fallback, so the
+/// runtime can distinguish embedded-loaded goals from on-disk-loaded
+/// ones in logs and diagnostics while keeping the tier label uniform
+/// (`BINARY_RELATIVE_PACKAGED_TIER`). The `packaged-goals/` component
+/// in the path satisfies `App::is_packaged`'s classification predicate
+/// (which checks for a `packaged-goals` path component) without
+/// requiring a coordinated change to `packaged-goals-style`'s render
+/// rule.
+///
+/// Uses `$CARGO_MANIFEST_DIR` as the path base rather than a relative
+/// path — `include_dir!`'s docs explicitly warn against relative paths
+/// because `rustc` makes no guarantee about the compiler's cwd. The
+/// single source of truth is still `.tinker/goals/packaged-goals/` under
+/// the manifest dir; `build.rs` reads the same path for the on-disk copy.
+static EMBEDDED_PACKAGED_GOALS: Dir = include_dir!("$CARGO_MANIFEST_DIR/.tinker/goals/packaged-goals");
 
 /// The order of top-level keys in a goal TOML file. Referenced by the
 /// tinker prompt (so it follows the schema) and by the
@@ -190,17 +222,32 @@ pub fn load_all_goals(fs: &dyn Filesystem, tinker_dirs: &[PathBuf]) -> Result<Lo
     // environments, exotic filesystems) the pass is silently skipped;
     // packaged defaults still come from the tinker_dir passes.
     let exe_path = std::env::current_exe().ok();
-    load_all_goals_with_exe(fs, tinker_dirs, exe_path.as_deref())
+    // Production: include the compile-time embedded fallback so
+    // registry installs (no build step) still see packaged goals.
+    // Test mode: skip embedded by default so fixture-driven tests
+    // aren't drowned in the extra packaged-goal entries on every load.
+    // Tests that want to exercise the embedded path call
+    // `load_all_goals_with_exe(..., true)` directly.
+    #[cfg(test)]
+    let include_embedded = false;
+    #[cfg(not(test))]
+    let include_embedded = true;
+    load_all_goals_with_exe(fs, tinker_dirs, exe_path.as_deref(), include_embedded)
 }
 
 /// Inner implementation of `load_all_goals` that accepts the binary path
-/// explicitly. Split out so tests can drive the binary-relative pass with
-/// a mock path instead of relying on the test binary's actual location.
-/// The public `load_all_goals` resolves `current_exe()` and delegates here.
+/// and an `include_embedded` flag explicitly. Split out so tests can
+/// drive the binary-relative pass with a mock path instead of relying
+/// on the test binary's actual location, and so tests can disable the
+/// compile-time embedded fallback when they want clean fixture
+/// isolation (without the extra packaged goals always leaking into
+/// expectations). The public `load_all_goals` resolves `current_exe()`
+/// and enables the embedded fallback; production callers should use it.
 fn load_all_goals_with_exe(
     fs: &dyn Filesystem,
     tinker_dirs: &[PathBuf],
     exe_path: Option<&Path>,
+    include_embedded: bool,
 ) -> Result<LoadResult> {
     let mut all = vec![];
     let mut all_errors: Vec<(PathBuf, String)> = vec![];
@@ -242,18 +289,40 @@ fn load_all_goals_with_exe(
         }
     }
 
-    // Pass 3: binary-relative packaged goals. The spec convention is
-    // `<binary>/../../.tinker/goals/packaged-goals/` — tinker-shipped
-    // defaults that travel with the install. Tier label is
-    // `"binary-relative-packaged"`, distinct from Pass 2's `"packaged"`
-    // so the diagnostic can tell apart a vendored project-local packaged
-    // copy from a binary-shipped default. Pass-1 and Pass-2 win on
-    // duplicates (first-occurrence-wins in the merge state). Skipped
-    // silently when `exe_path` is `None` (binary path unresolved).
-    if let Some(exe_path) = exe_path {
+    // Pass 3: binary-relative packaged goals from
+    // `<binary>/../../.tinker/goals/packaged-goals/`, resolved from
+    // `std::env::current_exe()`. These are tinker-shipped defaults that
+    // travel with the binary install — the install location is separate
+    // from the tinker_dir-relative path in dev mode (a dev binary at
+    // `<project>/target/debug/tinker` resolves to
+    // `<project>/target/.tinker/goals/packaged-goals/`, not the
+    // project's own `.tinker/goals/packaged-goals/`). They land last,
+    // so all earlier passes win on duplicate IDs. Skipped silently
+    // when `current_exe()` fails to resolve.
+    //
+    // The pass is internally two-stage:
+    //   3a. On-disk `<binary>/../../.tinker/goals/packaged-goals/` if it
+    //       exists (populated by `build.rs` at build time). This is the
+    //       "file-based" copy and takes precedence when present.
+    //   3b. Compile-time embedded `EMBEDDED_PACKAGED_GOALS` (the
+    //       `include_dir!` macro's contents). This covers `cargo install
+    //       tinker` from a package registry, where no build step runs
+    //       and the on-disk directory is absent. Both stages carry the
+    //       `BINARY_RELATIVE_PACKAGED_TIER` label so same-tier dedupe
+    //       applies — the on-disk copy wins on duplicate ids because it
+    //       loads first.
+    //
+    // Skipped silently when `exe_path` is `None` (binary path
+    // unresolved), but the embedded fallback still loads — the embedded
+    // bytes don't depend on the binary's location. This matters for
+    // sandboxes where `current_exe()` fails: the embedded fallback
+    // alone satisfies the eager-start invariant.
+    let on_disk_loaded = if let Some(exe_path) = exe_path {
         let r = load_binary_relative_packaged_goals(fs, exe_path)?;
         all_errors.extend(r.errors);
+        let mut ids = std::collections::HashSet::new();
         for goal in r.goals {
+            ids.insert(goal.id.clone());
             record_loaded_goal(
                 &mut all,
                 &mut first_seen,
@@ -261,6 +330,47 @@ fn load_all_goals_with_exe(
                 goal,
                 BINARY_RELATIVE_PACKAGED_TIER,
             );
+        }
+        Some(ids)
+    } else {
+        None
+    };
+
+    // Pass 3b: embedded fallback. Only when `include_embedded` is true —
+    // tests can disable it for clean fixture isolation. When both
+    // on-disk and embedded are present, the on-disk copy wins on
+    // duplicate ids because it loads first (same-tier dedupe in
+    // `record_loaded_goal`).
+    if include_embedded {
+        let embedded_ids = load_embedded_packaged_goals(&mut all_errors);
+        if let Some(on_disk_ids) = on_disk_loaded {
+            for goal in embedded_ids {
+                // Only feed goals that the on-disk stage didn't already claim.
+                // `record_loaded_goal`'s same-tier dedupe would also drop these
+                // silently, but skipping here lets the embedded stage skip
+                // parsing for already-loaded ids.
+                if !on_disk_ids.contains(&goal.id) {
+                    record_loaded_goal(
+                        &mut all,
+                        &mut first_seen,
+                        &mut collision_paths,
+                        goal,
+                        BINARY_RELATIVE_PACKAGED_TIER,
+                    );
+                }
+            }
+        } else {
+            // No on-disk stage ran (exe_path unresolved). Embedded alone
+            // satisfies the tier; record every embedded goal.
+            for goal in embedded_ids {
+                record_loaded_goal(
+                    &mut all,
+                    &mut first_seen,
+                    &mut collision_paths,
+                    goal,
+                    BINARY_RELATIVE_PACKAGED_TIER,
+                );
+            }
         }
     }
 
@@ -297,6 +407,25 @@ pub const PACKAGED_TIER: &str = "packaged";
 /// vendored project-local packaged copy (Pass 2) from a binary-shipped
 /// default (Pass 3) when both are present in dev mode.
 pub const BINARY_RELATIVE_PACKAGED_TIER: &str = "binary-relative-packaged";
+
+/// Eager-start diagnostic text, surfaced when the merged goal set lacks
+/// `tend` after `load_all_goals`. Pinning this to a const (rather than
+/// leaving it inline in `main`'s `.expect(...)`) makes the contract
+/// testable: spec tests verify the diagnostic (a) names the failure as
+/// a deployment error, (b) explains where the data was supposed to come
+/// from, and (c) gives the fix.
+///
+/// `goal-agents` owns the eager-start invariant this diagnostic guards;
+/// `binary-relative-tier-loading` owns the population paths the
+/// diagnostic references. The const lives here next to the tier label
+/// it names so both pieces of the contract travel together.
+pub const EAGER_START_DIAGNOSTIC: &str = "tend goal not found in loaded goals — deployment error, not a parse failure.\n\
+\n\
+binary-relative-packaged tier (lowest precedence) was supposed to come from:\n\
+  dev `cargo build`:     build.rs copies .tinker/goals/packaged-goals/ → <binary>/../../.tinker/goals/packaged-goals/\n\
+  registry install:      include_dir! embeds the same source at compile time\n\
+\n\
+fix: dev → `cargo build`; registry → reinstall. Source: .tinker/goals/packaged-goals/tend.toml.";
 
 /// Records a freshly loaded `goal` into the merge state. Shared between
 /// the regular and packaged passes of `load_all_goals` so the collision
@@ -506,6 +635,68 @@ fn binary_relative_packaged_dir(exe_path: &Path) -> PathBuf {
     path.push("goals");
     path.push("packaged-goals");
     path
+}
+
+/// Loads the compile-time embedded fallback for the binary-relative
+/// packaged tier. Each `*.toml` file in `EMBEDDED_PACKAGED_GOALS` is
+/// parsed as a goal and returned. The returned goals have a synthetic
+/// `embedded://packaged-goals/<file-name>` source_path so the runtime
+/// can distinguish embedded-loaded from on-disk-loaded goals in logs
+/// and diagnostics while keeping the tier label uniform. The path
+/// scheme includes a `packaged-goals/` component on purpose: it satisfies
+/// `App::is_packaged`'s existing "any path component is `packaged-goals`"
+/// predicate without requiring a coordinated change to
+/// `packaged-goals-style`'s render rule — the embedded fallback is a
+/// packaged tier, and the synthetic path reflects that classification.
+///
+/// Parse errors are written to `errors` (as `(synthetic_path, short_message)`)
+/// rather than returned, matching the on-disk pass's error-reporting
+/// convention: malformed siblings don't block well-formed ones.
+///
+/// This pass is unconditional — the embedded bytes are compiled in
+/// regardless of build mode — but the on-disk pass in `load_all_goals_with_exe`
+/// runs first and the same-tier dedupe in `record_loaded_goal` makes the
+/// on-disk copy the survivor when both are present.
+fn load_embedded_packaged_goals(errors: &mut Vec<(PathBuf, String)>) -> Vec<Goal> {
+    let mut goals = vec![];
+    for entry in EMBEDDED_PACKAGED_GOALS.files() {
+        // Filter to top-level `*.toml` files (no subdirectory entries;
+        // the embedded dir is flat — see `goal-storage`'s convention).
+        if entry.path().components().count() != 1 {
+            continue;
+        }
+        if entry.path().extension().map(|e| e == "toml").unwrap_or(false) {
+            let file_name = entry.path().file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            // Synthetic path: `embedded://packaged-goals/<file>`. The
+            // `packaged-goals/` component makes `App::is_packaged`
+            // classify this as a packaged tier entry without changing
+            // that predicate. The `embedded://` prefix signals the
+            // fallback origin in logs and diagnostics.
+            let synthetic_path = PathBuf::from(format!("embedded://packaged-goals/{}", file_name));
+            let content = match entry.contents_utf8() {
+                Some(c) => c,
+                None => {
+                    let short = "embedded file is not valid UTF-8".to_string();
+                    errors.push((synthetic_path, short));
+                    continue;
+                }
+            };
+            match toml::from_str::<Goal>(content) {
+                Ok(mut goal) => {
+                    goal.source_path = Some(synthetic_path);
+                    goals.push(goal);
+                }
+                Err(e) => {
+                    let short = e.to_string().lines().next().unwrap_or("parse error").to_string();
+                    errors.push((synthetic_path, short));
+                }
+            }
+        }
+    }
+    goals
 }
 
 pub fn build_tree(goals: &[Goal]) -> Vec<GoalNode> {
@@ -1437,11 +1628,15 @@ reason = "handles the beta subproblem"
             "non-overlapping goal sets must not produce collisions");
     }
 
-    // spec: goal-agents startup diagnostic — the same goal id appearing in
-    // the same tier twice (e.g. duplicate files within one dir) is a
-    // first-occurrence-wins situation, but it is NOT a cross-tier collision
-    // because both copies are in the same tier. The `collisions` vec is
-    // therefore empty: the diagnostic covers cross-tier overlap only.
+    // spec: goal-storage — the same goal id appearing in the same tier
+    // twice (e.g. duplicate files within one dir, or both a file-based
+    // and an embedded copy of the same binary-relative-packaged goal)
+    // is a first-occurrence-wins situation, but it is NOT a cross-tier
+    // collision because both copies are in the same tier. The
+    // `collisions` vec is therefore empty: the diagnostic covers
+    // cross-tier overlap only. The intra-tier silent dedupe policy
+    // lives in `goal-storage`'s spec and is enforced by
+    // `record_loaded_goal`.
     #[test]
     fn test_spec_load_all_goals_no_collision_for_intra_tier_duplicates() {
         let fs = MockFs::new();
@@ -1765,7 +1960,7 @@ reason = "handles the beta subproblem"
         );
 
         let dirs = vec![proj];
-        let result = load_all_goals_with_exe(&fs, &dirs, Some(&exe)).unwrap();
+        let result = load_all_goals_with_exe(&fs, &dirs, Some(&exe), false).unwrap();
         assert_eq!(result.goals.len(), 1);
         assert_eq!(result.goals[0].id, "binary-only");
         // source_path is inside packaged-goals/ so `is_packaged` classifies it.
@@ -1787,7 +1982,7 @@ reason = "handles the beta subproblem"
         fs.add_file(&proj.join("goals/local.toml"), &goal_toml("local", "p"));
 
         let dirs = vec![proj];
-        let result = load_all_goals_with_exe(&fs, &dirs, None).unwrap();
+        let result = load_all_goals_with_exe(&fs, &dirs, None, false).unwrap();
         assert_eq!(result.goals.len(), 1);
         assert_eq!(result.goals[0].id, "local");
     }
@@ -1825,7 +2020,7 @@ reason = "handles the beta subproblem"
         );
 
         let dirs = vec![proj];
-        let result = load_all_goals_with_exe(&fs, &dirs, Some(&exe)).unwrap();
+        let result = load_all_goals_with_exe(&fs, &dirs, Some(&exe), false).unwrap();
         // Winner: the tinker_dir-packaged copy (Pass 2 runs first).
         assert_eq!(result.goals.len(), 1);
         assert_eq!(result.goals[0].description.trim(), "tinker_dir-packaged copy");
@@ -1848,5 +2043,205 @@ reason = "handles the beta subproblem"
     #[test]
     fn test_spec_binary_relative_packaged_tier_label_is_stable() {
         assert_eq!(BINARY_RELATIVE_PACKAGED_TIER, "binary-relative-packaged");
+    }
+
+    // spec: binary-relative-tier-loading — the embedded fallback
+    // (`include_dir!` of `.tinker/goals/packaged-goals/`) loads when
+    // no on-disk tier has a given goal id, filling in the
+    // `binary-relative-packaged` tier so the eager-start invariant
+    // (tend must be in the merged result) is satisfied on registry
+    // installs where no build step runs and the on-disk binary-relative
+    // dir is absent.
+    #[test]
+    fn test_spec_embedded_fallback_loads_when_no_other_tier_has_goal() {
+        let fs = MockFs::new();
+        let proj = PathBuf::from("/proj/.tinker");
+        // exe_path resolves to a directory the MockFs doesn't have, so
+        // the on-disk binary-relative pass finds nothing.
+        let exe = PathBuf::from("/no/such/install/location/tinker");
+        let dirs = vec![proj];
+        let result = load_all_goals_with_exe(&fs, &dirs, Some(&exe), true).unwrap();
+        // Embedded fallback contributes the packaged goals.
+        assert!(
+            result.goals.iter().any(|g| g.id == "tend"),
+            "embedded fallback must load tend when no on-disk tier has it — got {} goals",
+            result.goals.len(),
+        );
+        // Every embedded-loaded goal carries the binary-relative-packaged tier label.
+        for g in &result.goals {
+            assert_eq!(g.tier_label_for_test(), BINARY_RELATIVE_PACKAGED_TIER);
+        }
+    }
+
+    // spec: binary-relative-tier-loading — when both on-disk and
+    // embedded copies of the same goal id are present (e.g., dev mode
+    // after `cargo build` ran the build step), the on-disk copy wins
+    // because it loads first. Same-tier dedupe in `record_loaded_goal`
+    // keeps the embedded duplicate out of the merged result silently.
+    //
+    // Path convention reminder: `binary_relative_packaged_dir(exe)`
+    // resolves `<binary>/../../.tinker/goals/packaged-goals/`. So to
+    // mock a populated on-disk binary-relative dir at
+    // `/custom/install/.tinker/goals/packaged-goals/`, the exe must
+    // sit at `/custom/install/<subdir>/tinker` (e.g.,
+    // `/custom/install/bin/tinker`).
+    #[test]
+    fn test_spec_embedded_fallback_loses_to_on_disk_binary_relative() {
+        let fs = MockFs::new();
+        let proj = PathBuf::from("/proj/.tinker");
+        let exe = PathBuf::from("/custom/install/bin/tinker");
+        let br_packaged = PathBuf::from("/custom/install/.tinker/goals/packaged-goals");
+        fs.add_dir(&br_packaged);
+        let on_disk_tend = "id = \"tend\"\ndescription = \"\"\"on-disk dev-mode override\"\"\"\nparent_id = \"\"\nchildren = []\n".to_string();
+        fs.add_file(&br_packaged.join("tend.toml"), &on_disk_tend);
+
+        let dirs = vec![proj];
+        let result = load_all_goals_with_exe(&fs, &dirs, Some(&exe), true).unwrap();
+        // Only one tend survives.
+        let tends: Vec<&Goal> = result.goals.iter().filter(|g| g.id == "tend").collect();
+        assert_eq!(tends.len(), 1, "on-disk and embedded tend must dedupe to one");
+        // Winner: the on-disk copy (loaded first).
+        assert_eq!(tends[0].description.trim(), "on-disk dev-mode override");
+    }
+
+    // spec: binary-relative-tier-loading — the synthetic source_path
+    // for embedded-loaded goals (`embedded://packaged-goals/<file>`)
+    // includes a `packaged-goals` path component so `App::is_packaged`'s
+    // existing classification predicate picks them up as packaged
+    // without requiring a coordinated change to `packaged-goals-style`.
+    // We can't import `App` here (lives in `src/app.rs`), so we assert
+    // the predicate's component check directly on the path.
+    #[test]
+    fn test_spec_embedded_fallback_synthetic_path_includes_packaged_goals_component() {
+        let fs = MockFs::new();
+        let proj = PathBuf::from("/proj/.tinker");
+        let exe = PathBuf::from("/no/such/install/tinker");
+        let dirs = vec![proj];
+        let result = load_all_goals_with_exe(&fs, &dirs, Some(&exe), true).unwrap();
+        let tend = result.goals.iter().find(|g| g.id == "tend")
+            .expect("embedded fallback must load tend");
+        let path = tend.source_path.as_ref()
+            .expect("embedded-loaded goal must have a synthetic source_path");
+        assert!(
+            path.components().any(|c| c.as_os_str() == "packaged-goals"),
+            "embedded synthetic path must include a `packaged-goals` component for `App::is_packaged` — got `{}`",
+            path.display(),
+        );
+    }
+
+    // spec: binary-relative-tier-loading — `include_embedded=false`
+    // produces no embedded goals even when exe_path resolves to a real
+    // on-disk path. This is the test-mode fixture isolation knob.
+    #[test]
+    fn test_spec_load_all_goals_with_exe_include_embedded_false_skips_fallback() {
+        let fs = MockFs::new();
+        let proj = PathBuf::from("/proj/.tinker");
+        let exe = PathBuf::from("/no/such/install/tinker");
+        let dirs = vec![proj];
+        let result = load_all_goals_with_exe(&fs, &dirs, Some(&exe), false).unwrap();
+        assert!(
+            result.goals.is_empty(),
+            "with include_embedded=false, no embedded goals should load — got {} goals",
+            result.goals.len(),
+        );
+    }
+
+    // spec: binary-relative-tier-loading — the eager-start diagnostic
+    // (surfaced when tend is missing from the merged goal set) must
+    // name the failure as a *deployment error*, not a parse failure,
+    // so the user does not waste time chasing a TOML syntax issue.
+    // Pinned via the `EAGER_START_DIAGNOSTIC` const.
+    #[test]
+    fn test_spec_eager_start_diagnostic_names_deployment_error() {
+        assert!(
+            EAGER_START_DIAGNOSTIC.contains("deployment error"),
+            "diagnostic must classify the failure as a deployment error so the user does not chase a parse issue; got:\n{}",
+            EAGER_START_DIAGNOSTIC,
+        );
+        assert!(
+            !EAGER_START_DIAGNOSTIC.contains("parse failure")
+                || EAGER_START_DIAGNOSTIC.contains("not a parse failure"),
+            "diagnostic must explicitly distinguish itself from a parse failure (the negative form is more legible than the affirmative alone); got:\n{}",
+            EAGER_START_DIAGNOSTIC,
+        );
+    }
+
+    // spec: binary-relative-tier-loading — the diagnostic must explain
+    // where the missing tier was supposed to come from (the
+    // population path), so the user can pick the right fix. Two paths
+    // matter: dev `cargo build` runs `build.rs`, registry install uses
+    // the `include_dir!` compile-time fallback.
+    #[test]
+    fn test_spec_eager_start_diagnostic_explains_source_paths() {
+        assert!(
+            EAGER_START_DIAGNOSTIC.contains(BINARY_RELATIVE_PACKAGED_TIER),
+            "diagnostic must name the binary-relative-packaged tier as the failing tier; got:\n{}",
+            EAGER_START_DIAGNOSTIC,
+        );
+        assert!(
+            EAGER_START_DIAGNOSTIC.contains("build.rs"),
+            "diagnostic must mention build.rs as the dev-mode population step; got:\n{}",
+            EAGER_START_DIAGNOSTIC,
+        );
+        assert!(
+            EAGER_START_DIAGNOSTIC.contains("include_dir!"),
+            "diagnostic must mention include_dir! as the registry-mode fallback; got:\n{}",
+            EAGER_START_DIAGNOSTIC,
+        );
+    }
+
+    // spec: binary-relative-tier-loading — the diagnostic must give a
+    // concrete fix, branch on dev vs registry install, and point at
+    // the source path so the user can verify the file exists.
+    #[test]
+    fn test_spec_eager_start_diagnostic_gives_fix() {
+        assert!(
+            EAGER_START_DIAGNOSTIC.contains("cargo build"),
+            "diagnostic must give `cargo build` as the dev-mode fix; got:\n{}",
+            EAGER_START_DIAGNOSTIC,
+        );
+        assert!(
+            EAGER_START_DIAGNOSTIC.contains("reinstall")
+                || EAGER_START_DIAGNOSTIC.contains("cargo install"),
+            "diagnostic must give a registry-mode fix; got:\n{}",
+            EAGER_START_DIAGNOSTIC,
+        );
+        assert!(
+            EAGER_START_DIAGNOSTIC.contains(".tinker/goals/packaged-goals/tend.toml"),
+            "diagnostic must point at the source TOML path so the user can verify it exists; got:\n{}",
+            EAGER_START_DIAGNOSTIC,
+        );
+    }
+
+    // Helper trait used by the embedded-fallback tests to assert tier
+    // labels without importing private state from `load_all_goals`'s
+    // merge. Goals loaded from the embedded fallback carry the
+    // `BINARY_RELATIVE_PACKAGED_TIER` label via the same
+    // `record_loaded_goal` path as on-disk binary-relative goals, but
+    // the tier label isn't stored on `Goal` itself — it lives in the
+    // merge state. Tests that need to assert per-goal tier can route
+    // through `LoadResult.collisions` or this synthetic helper.
+    //
+    // For the embedded-fallback tests above, we tag embedded-loaded
+    // goals with the synthetic `embedded://packaged-goals/<file>` path,
+    // so the helper derives the tier from the path's `packaged-goals`
+    // component.
+    trait GoalTierLabelForTest {
+        fn tier_label_for_test(&self) -> &'static str;
+    }
+
+    impl GoalTierLabelForTest for Goal {
+        fn tier_label_for_test(&self) -> &'static str {
+            // Embedded-loaded goals carry the synthetic embedded path;
+            // everything else is non-packaged from the test's POV (the
+            // loader's merge state doesn't survive past `load_all_goals`'s
+            // return). For the embedded tests we exercise, every goal
+            // that survives IS embedded, so this is sufficient.
+            let path = self.source_path.as_deref();
+            match path {
+                Some(p) if p.to_string_lossy().starts_with("embedded://") => "binary-relative-packaged",
+                _ => "<merge-state-only>",
+            }
+        }
     }
 }

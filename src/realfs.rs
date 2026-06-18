@@ -5,6 +5,7 @@
 
 use crate::cap::Filesystem;
 use anyhow::{Context, Result};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub struct RealFilesystem;
@@ -52,5 +53,14 @@ impl Filesystem for RealFilesystem {
 
     fn is_dir(&self, path: &Path) -> bool {
         path.is_dir()
+    }
+
+    fn open_append(&self, path: &Path) -> Result<Box<dyn Write + Send>> {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("opening {} for append", path.display()))?;
+        Ok(Box::new(file))
     }
 }

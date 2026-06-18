@@ -6,6 +6,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -103,4 +104,11 @@ pub trait Filesystem: Send + Sync {
     /// Used for recursive tree walking.
     fn list_dir(&self, dir: &Path) -> Result<Vec<PathBuf>>;
     fn is_dir(&self, path: &Path) -> bool;
+    /// Opens `path` in append mode for writing. Returns a boxed writer
+    /// that owns the file handle. Used by the fatal-event logger
+    /// (`logger::start_fatal_logger`) to keep direct filesystem
+    /// references out of `logger.rs` — the composition root opens the
+    /// log file via this method and hands the writer to
+    /// `start_fatal_logger`.
+    fn open_append(&self, path: &Path) -> Result<Box<dyn Write + Send>>;
 }

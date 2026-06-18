@@ -19,6 +19,14 @@ This is what separates tinker from a conventional
 coding assistant: the specification is not a passive document but a live
 network of agents that enforce their own constraints.
 
+Tinker is a flat actor model: every goal — universal goals shipped with
+tinker as well as your project's own — is a structurally identical,
+process-scoped agent reachable by `@goal-id`, with the loader
+transparently composing goals from four discovery tiers so the user
+sees one address space. You only need to know the tiers if you are
+authoring goals or debugging discovery; otherwise the model is just:
+every goal is an agent.
+
 ---
 
 You tell an AI what to build. The AI writes code. Now your codebase has two
@@ -222,6 +230,18 @@ code — tend is restricted to a narrow write scope and cannot run shell
 commands, while goal sessions get the full tool set. A goal that oversteps its
 boundary hits a code barrier, not a guideline.
 
+The actor model applies uniformly across the four discovery tiers. The
+universal goals — the message-passing protocol, the runtime, the
+spec-quality standards — are not a separate "system" code path; they
+are agents in the same address space as your project's own goals, loaded
+from the binary-relative tier alongside the binary and joined into the
+session registry on startup. A build step (`build.rs`) populates that
+tier on every `cargo build` and `cargo install --path`, and an embedded
+fallback (`include_dir!`) takes over when tinker is installed from a
+package registry where no build step runs. The build step is what makes
+the universal agents always available; without it, tinker would need
+an installation ritual before it could start in a new directory.
+
 The consequence for you: you stay informed through tend's reports and the
 session logs, without ever having to read the code behind them. Cognitive debt
 stays low because the goals — which you write and approve — are the whole
@@ -271,7 +291,7 @@ Add the binary to your PATH:
 export PATH="$PATH:/path/to/tinker/target/release"
 ```
 
-**Goal discovery** works across three tiers, from most to least specific:
+**Goal discovery** works across four tiers, from most to least specific:
 
 1. **Project-local** — Goals in `.tinker/goals/` within your project. These
    are where you record project-specific intent, and they override everything
@@ -282,16 +302,26 @@ export PATH="$PATH:/path/to/tinker/target/release"
    goals that apply to all your projects). Use this when you want a goal to
    follow you across work.
 
-3. **Packaged goals** — Goals that ship with tinker itself. These provide
-   sensible defaults and apply to every project. Tinker looks for them at
-   `<binary>/../../.tinker/goals/packaged-goals/`, relative to the binary
-   location. The discovery mechanism is implemented, but the deployment
-   step that populates this directory during build or install is not yet
-   wired up — you'll need to place the packaged-goals there manually for
-   now.
+3. **Packaged** — Goals in the `packaged-goals/` subdirectory of any
+   tinker_dir. This is the tinker-shipped default tier, vendored at each
+   tinker_dir. It is where your own copies of tinker's shipped goals live
+   when you want to customize them — for example, by symlinking the source
+   tree's `packaged-goals/` into `~/.tinker/goals/packaged-goals/`, your
+   edits shadow the binary-relative defaults without rebuilding the
+   binary. Optional for the basic install: the build alone populates the
+   binary-relative tier, which already provides the universal machinery.
+
+4. **Binary-relative packaged** — Universal goals shipped with tinker itself.
+   The build copies them to `<binary>/../../.tinker/goals/packaged-goals/`
+   during `cargo build` and `cargo install --path`, and an embedded copy
+   inside the binary takes over when tinker is installed from a package
+   registry where no build step runs. This tier is what makes tinker work
+   in any working directory — even one with no `.tinker/` of your own —
+   because the universal machinery is always available.
 
 When the same goal exists in multiple tiers, the most specific one wins:
-project-local overrides ancestor-global, which overrides packaged.
+project-local overrides ancestor-global, which overrides packaged, which
+overrides binary-relative packaged.
 
 Run tinker from your project directory:
 

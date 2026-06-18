@@ -341,6 +341,15 @@ async fn main() -> Result<()> {
     fs.mkdir_all(&primary_tinker_dir.join("logs"))?;
     fs.mkdir_all(&primary_tinker_dir.join("discrepancies"))?;
 
+    // Set up the fatal-event logger early — before any operation that
+    // could panic from an eager-start invariant failure. The
+    // batched async logger (`start_logger` below) is not yet running
+    // at this point, so events emitted here are flushed synchronously
+    // to disk via `fs.open_append` and survive the panic unwinding
+    // that triggers them.
+    let log_path = primary_tinker_dir.join("logs").join("runtime.jsonl");
+    let fatal_log = logger::start_fatal_logger(fs.open_append(&log_path)?);
+
     // Write a self-documenting starter config only when none exists yet;
     // then load whatever is present (or default if still absent/invalid).
     // The config governs the native backend only — the other backends use
@@ -360,21 +369,59 @@ async fn main() -> Result<()> {
     let tinker_dirs = discover_tinker_dirs(fs.as_ref(), &work_dir);
     let initial_load = load_all_goals(fs.as_ref(), &tinker_dirs)?;
 
-    // Resolve tend's description from the loaded goals. The packaged-goals/
-    // subdir is the loader's "fill in the default" pass, so a tend goal
-    // must be present after the load — its absence means the binary's
-    // packaged-goals/ is missing or unreadable, which is a deployment
-    // error we want to surface loudly here, not via a later silent failure
-    // when tend's first turn produces an empty system prompt.
-    let tend_description = initial_load
-        .goals
-        .iter()
-        .find(|g| g.id == "tend")
-        .map(|g| g.description.clone())
-        .expect(
-            "tend goal not found in loaded goals — the binary's \
-             .tinker/goals/packaged-goals/tend.toml must be present and parseable",
+    // Resolve tend's description from the loaded goals. The four-tier
+    // loader — project-local > ancestor global > tinker_dir-packaged >
+    // binary-relative-packaged — must produce at least one entry whose
+    // id is "tend". The binary-relative tier is populated by `build.rs`
+    // (file-based copy to `<target>/.tinker/goals/packaged-goals/`) on
+    // local builds and install-from-checkout, and by the
+    // `include_dir!` fallback compiled into the binary on install-from-
+    // registry. If tend is missing from the merged result, both
+    // population paths have failed — a real deployment error worth
+    // surfacing loudly here rather than letting tend's first turn
+    // produce an empty system prompt and a silent cascade.
+    //
+    // Diagnostic form: three sections (what / where / fix), terse
+    // operational register, dev vs registry distinction so the user
+    // doesn't run the wrong fix. See `goal-agents` for the
+    // eager-start invariant this check guards, and
+    // `binary-relative-tier-loading` for the population contract.
+    // The diagnostic text itself is `goal::EAGER_START_DIAGNOSTIC`,
+    // pinned by `test_spec_eager_start_diagnostic_*`.
+    //
+    // Before the panic, emit `EagerStartPreconditionMissing` so the
+    // failure lands on disk — the fatal-event logger flushes
+    // synchronously and survives the unwind, giving the user (or a
+    // debugger) a structured record of which tier was supposed to
+    // contain `tend` and any parse errors in those tiers.
+    let tend_goal = initial_load.goals.iter().find(|g| g.id == "tend");
+    if tend_goal.is_none() {
+        fatal_log.emit(
+            "goal-agents",
+            logger::LogEvent::EagerStartPreconditionMissing {
+                missing_goal_id: "tend".to_string(),
+                expected_sources: vec![
+                    ("project-local".to_string(),
+                     format!("{}/.tinker/goals/tend.toml", work_dir.display())),
+                    ("ancestor global".to_string(),
+                     "<ancestor>/.tinker/goals/tend.toml".to_string()),
+                    ("packaged".to_string(),
+                     format!("{}/.tinker/goals/packaged-goals/tend.toml",
+                             primary_tinker_dir.display())),
+                    ("binary-relative-packaged".to_string(),
+                     "<binary>/../../.tinker/goals/packaged-goals/tend.toml".to_string()),
+                ],
+                parse_errors_in_tier: initial_load
+                    .errors
+                    .iter()
+                    .map(|(p, e)| (p.display().to_string(), e.clone()))
+                    .collect(),
+            },
         );
+    }
+    let tend_description = tend_goal
+        .map(|g| g.description.clone())
+        .expect(crate::goal::EAGER_START_DIAGNOSTIC);
 
     // Five native runner instances:
     //   oc_tend        — exclusive to tend; carries tend_system_prompt(tend_description)
@@ -2352,7 +2399,7 @@ mod tests {
     /// text tests below have a stable fixture to assert against without
     /// coupling to runtime discovery.
     fn test_tend_description() -> String {
-        const TOML: &str = include_str!("../packaged-goals/tend.toml");
+        const TOML: &str = include_str!("../.tinker/goals/packaged-goals/tend.toml");
         toml::from_str::<crate::goal::Goal>(TOML)
             .expect("test fixture tend.toml must be valid Goal TOML")
             .description
@@ -2776,9 +2823,9 @@ mod tests {
     #[test]
     fn test_spec_rummage_jog_tend_use_high_tier_via_toml() {
         // Verify tier="high" is declared in the packaged TOML files.
-        let rummage_toml = include_str!("../packaged-goals/rummage.toml");
+        let rummage_toml = include_str!("../.tinker/goals/packaged-goals/rummage.toml");
         assert!(rummage_toml.contains("tier = \"high\""), "rummage.toml must declare tier = \"high\"");
-        let jog_toml = include_str!("../packaged-goals/jog.toml");
+        let jog_toml = include_str!("../.tinker/goals/packaged-goals/jog.toml");
         assert!(jog_toml.contains("tier = \"high\""), "jog.toml must declare tier = \"high\"");
         // Verify the lazy-spawn runner selection is tier-based (no name-based match).
         let main_rs = include_str!("main.rs");

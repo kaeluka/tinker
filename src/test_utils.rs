@@ -3,19 +3,20 @@
 use crate::cap::Filesystem;
 use anyhow::{anyhow, Result};
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// In-memory `Filesystem` for tests.
 pub struct MockFs {
-    files: Mutex<HashMap<PathBuf, String>>,
+    files: Arc<Mutex<HashMap<PathBuf, String>>>,
     dirs: Mutex<HashSet<PathBuf>>,
 }
 
 impl MockFs {
     pub fn new() -> Self {
         Self {
-            files: Mutex::new(HashMap::new()),
+            files: Arc::new(Mutex::new(HashMap::new())),
             dirs: Mutex::new(HashSet::new()),
         }
     }
@@ -112,5 +113,43 @@ impl Filesystem for MockFs {
 
     fn is_dir(&self, path: &Path) -> bool {
         self.dirs.lock().unwrap().contains(path)
+    }
+
+    fn open_append(&self, path: &Path) -> Result<Box<dyn Write + Send>> {
+        if let Some(parent) = path.parent() {
+            self.dirs.lock().unwrap().insert(parent.to_path_buf());
+        }
+        // Hand out a writer that appends to the MockFs's file map via
+        // a shared `Arc<Mutex<HashMap>>`. Cloning the inner HashMap
+        // (the Mutex itself isn't Clone) gives the writer an
+        // independent handle that accumulates writes like an
+        // append-mode file.
+        let files = Arc::new(Mutex::new(self.files.lock().unwrap().clone()));
+        Ok(Box::new(MockAppendWriter {
+            path: path.to_path_buf(),
+            files,
+        }))
+    }
+}
+
+/// In-memory append-mode writer for `MockFs::open_append`. Each
+/// `write` appends to the file's current contents so successive
+/// writes accumulate like a real append-mode file.
+struct MockAppendWriter {
+    path: PathBuf,
+    files: Arc<Mutex<HashMap<PathBuf, String>>>,
+}
+
+impl Write for MockAppendWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let s = std::str::from_utf8(buf)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let mut files = self.files.lock().unwrap();
+        files.entry(self.path.clone()).or_default().push_str(s);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
