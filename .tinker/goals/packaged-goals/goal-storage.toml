@@ -1,13 +1,18 @@
 id = "goal-storage"
 kind = "feature"
-summary = "This goal owns the on-disk storage layer for goals: the TOML file format at .tinker/goals/<id>.toml, the packaged-goals/ subdirectory convention that distinguishes universal methodology from project-local content, the ancestor-directory merge where the cwd-most version wins on duplicate ids, malformed-file reporting that does not block siblings, transparent symlink following, the intent-only rule that keeps session state out of the file, and the id+reason shape of the [[children]] and [[related]] link fields."
+summary = "This goal owns the on-disk storage layer for goals: the TOML file format at .tinker/goals/<id>.toml, the packaged-goals/ subdirectory convention (in any tinker_dir ancestor) that distinguishes universal methodology from project-local content, the binary-relative packaged tier at <binary>/../../.tinker/goals/packaged-goals/ populated by a build-time copy step and a compile-time embedded fallback, the four-tier label set (project-local, ancestor global, packaged, binary-relative-packaged), the ancestor-directory merge where the cwd-most version wins on duplicate ids, malformed-file reporting that does not block siblings, transparent symlink following, the intent-only rule that keeps session state out of the file, and the id+reason shape of the [[children]] and [[related]] link fields."
 description = """
 ## WHAT
 This goal owns the on-disk storage layer for goals: the TOML file
 format at `.tinker/goals/<id>.toml`, the `packaged-goals/`
-subdirectory convention that distinguishes universal methodology
-from project-local content, the ancestor-directory merge where the
-cwd-most version wins on duplicate ids, malformed-file reporting
+subdirectory convention (in any tinker_dir ancestor) that
+distinguishes universal methodology from project-local content, the
+binary-relative packaged tier at
+`<binary>/../../.tinker/goals/packaged-goals/` (populated by a
+build-time copy step and a compile-time embedded fallback), the
+four-tier label set (`project-local` / `ancestor global` / `packaged`
+/ `binary-relative-packaged`), the ancestor-directory merge where
+the cwd-most version wins on duplicate ids, malformed-file reporting
 that does not block siblings, transparent symlink following for
 users who want system-wide goal directories, the intent-only rule
 that keeps session state out of the file, and the id+reason shape
@@ -30,9 +35,82 @@ siblings from loading. Symlinks into goal directories are followed
 transparently, so a shared goal directory can live in a separate
 repo and be linked into any ancestor `.tinker/goals/` directory.
 
+**Binary-relative tier.** Goals also live at a binary-relative
+tier, resolved from `std::env::current_exe()` as
+`<binary>/../../.tinker/goals/packaged-goals/`. This tier carries
+the universal-machinery goals that travel with the binary itself —
+populated by a build-time copy step that writes the source
+`packaged-goals/*.toml` into the loader's expected path (covering
+development and install from a local checkout), and read with a
+compile-time embedded fallback that covers install from a package
+registry where no local build step runs. The file-based copy takes
+precedence over the embedded fallback when both are present. The
+binary-relative tier is silently skipped when the binary's path
+can't be resolved.
+
+The four-tier label set — `project-local`, `ancestor global`,
+`packaged` (the tinker_dir-packaged tier at
+`<tinker_dir>/goals/packaged-goals/`), and `binary-relative-packaged`
+(this tier) — gives every loaded goal a tier label that the
+eager-start diagnostic and the runtime event log consume. The
+binary-relative tier has the lowest precedence: any project-local,
+ancestor global, or tinker_dir-packaged goal with the same id wins.
+
+**Tier label vocabulary.** The four tier labels emitted by the
+loader are the canonical spelling for any reference to a goal's
+discovery tier, in code, in diagnostics, in goal text, and in
+cross-references between goals. The four labels, with their
+canonical forms, are:
+
+- `project-local` — the goal was loaded from
+  `tinker_dirs[0]/goals/<id>.toml` (the cwd-most tinker dir's
+  regular goals).
+- `ancestor global` — the goal was loaded from a later
+  `tinker_dirs[i]/goals/<id>.toml` (an ancestor tinker dir's regular
+  goals). Note: spelled with a space, not a hyphen, because it is a
+  multi-word label, matching `tier_label`'s runtime string.
+- `packaged` — the goal was loaded from
+  `tinker_dirs[i]/goals/packaged-goals/<id>.toml` (the packaged
+  subdirectory of some tinker dir).
+- `binary-relative-packaged` — the goal was loaded from
+  `<binary>/../../.tinker/goals/packaged-goals/<id>.toml` (the
+  binary-relative tier populated by `build.rs` and read with an
+  `include_dir!` embedded fallback).
+
+Cross-references in `[[related]]` reason strings and elsewhere must
+use these exact spellings. The loader emits these strings via
+`tier_label(...)` and the two `*_TIER` constants in `src/goal.rs`;
+the spec is authoritative when the code and the prose disagree.
+
 Goal files store intent only — not session state. Session IDs and
 history are never persisted to disk, so the goal file is the single
 source of truth across restarts.
+
+**Cross-tier and intra-tier collision policy.** When the same goal
+id is found at multiple tiers, only the first occurrence wins
+(cwd-most for the regular pass, then tinker_dir-packaged, then
+binary-relative-packaged on-disk, then binary-relative-packaged
+embedded). A duplicate at a *different* tier than the first
+occurrence is a cross-tier collision — recorded in
+`LoadResult.collisions` and surfaced to the user via the eager-start
+diagnostic so hidden overrides become visible. A duplicate at the
+*same* tier is silently deduped to the first occurrence — see the
+dedupe paragraph below for the canonical statement. Intra-tier
+dedupe is intentional and outside the scope of the cross-tier
+diagnostic: the loader's behavior is "first encountered wins,
+silently" within a single tier, and "first encountered wins,
+loudly reported" across tiers.
+
+**Intra-tier silent dedupe.** A goal id seen at the same tier
+twice (for example, two TOML files with the same id in one
+`.tinker/goals/`, or both a file-based and an embedded copy of the
+same binary-relative-packaged goal) is silently deduped to the
+first occurrence. Only cross-tier overlaps — the same id at
+distinct tiers — are reported in `LoadResult.collisions` and
+surfaced by the runtime startup diagnostic; intra-tier duplicates
+are not. This matches the first-occurrence-wins semantics of the
+underlying merge and is outside the scope of the cross-tier
+diagnostic.
 
 ## WHY
 Goals are the user's standing intent. They have to survive restarts,
@@ -52,6 +130,14 @@ standards, security rules) is global; the user shouldn't have to
 copy-paste it into every project. Ancestor-directory merge makes
 universal intent available everywhere while letting project-local
 intent override it.
+
+The binary-relative tier carries universal-machinery goals with the
+binary itself, so tinker can start in any working directory — even
+one with no project `.tinker/goals/` and no `.tinker/` ancestor.
+The build-time population keeps the contract as simple as the
+source `packaged-goals/` directory; the embedded fallback covers
+the case where no local build step runs (install from a package
+registry).
 
 The id+reason shape on `[[children]]` and `[[related]]` serves
 `goal-structure-standard`'s navigation index and symmetry rules —
@@ -77,3 +163,7 @@ reason = "goal-structure-standard defines the semantics of the id+reason link fi
 [[related]]
 id = "goal-complementarity"
 reason = "goal-complementarity enforces the packaging distinction this goal implements at the storage layer."
+
+[[related]]
+id = "binary-relative-tier-loading"
+reason = "binary-relative-tier-loading owns the build-time copy (`build.rs`) and compile-time embedded fallback (`include_dir!`) that populate the binary-relative packaged tier; goal-storage owns the runtime contract those delivery surfaces honor — the on-disk path convention, the same-tier silent dedupe between file-based and embedded copies, the four-tier label set, and the malformed-file recovery path."

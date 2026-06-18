@@ -1,43 +1,20 @@
 id = "model-config"
 kind = "feature"
-summary = "This goal owns the .tinker/config.toml model-override file: three optional tier slots (high/mid/low) that fall back to built-in defaults, plus the self-documenting starter template written only when no config file exists."
+summary = "This goal owns the .tinker/config.toml per-tier configuration file: each of three tier slots (high/mid/low) carries an endpoint URL and a model identifier, with auth sourced from per-tier environment variables, plus the self-documenting starter template written only when no config file exists."
 description = """
 ## WHAT
-A `.tinker/config.toml` file that overrides which model each tier
-uses. There are three slots: the three model tiers — `high` (the
-smartest tier, used by `tend`, `rummage`, and `jog`), `mid` (the tier
-goal sessions run on), and `low` (the cheapest tier, used by cleanup) —
-each settable under a `[native]` section (native slots are OpenRouter
-model ids). The file is TOML, so commented lines hold inactive
-alternates the user toggles in and out.
+A `.tinker/config.toml` file that overrides which endpoint and model each tier uses. There are three slots — the three model tiers: `high` (the smartest tier, used by `tend`, `rummage`, and `jog`), `mid` (the tier goal sessions run on), and `low` (the cheapest tier, used by cleanup). Each slot configures the tier's endpoint and model identifier. Auth is not stored in this file; the per-tier resolution contract (env var lookup, empty-means-no-auth) is owned by `backends`.
 
-Every slot is optional. An absent or commented-out slot falls back to
-the model compiled in as that tier's built-in default, so an empty or
-missing config file changes nothing about how tinker runs.
+The file is TOML, so commented lines hold inactive alternates the user toggles in and out. Every slot is optional; an absent or commented-out slot falls back to the value the starter template shows for that tier. The starter template is the canonical default — tinker writes it to disk on first start and reads it back as the fallback for any slot the user has not configured, so an empty or missing config file changes nothing about how tinker runs.
 
-When no config file exists, tinker writes a self-documenting starter
-template: the native section present, every slot listed but commented
-out, each annotated with its consuming agents and showing the current
-built-in default value on the commented line. The user uncomments and
-edits rather than looking up model names or slot identifiers.
+When no config file exists, tinker writes the starter template to disk: it configures OpenRouter for every tier, lists each slot with its consuming agents annotated, and shows the default values on the commented lines. The user uncomments and edits rather than looking up endpoints or model identifiers.
 
 ## WHY
-The user wants to choose the model for each tier — to experiment and
-to control cost — without editing source code or memorizing model
-identifiers. Comments are the switching mechanism: keeping several
-candidate models in the file and toggling which is active is faster
-than rewriting a value each time. Per-tier rather than per-role
-granularity is the point, because mixing tiers — a strong model for
-`high`, a cheap one for `mid` — is exactly the kind of experiment the
-user runs. Optional slots keep the file as sparse as the user wants — they
-write only the slots they currently care about.
+The user wants to choose the endpoint and model for each tier — to use their own hosted subscriptions or locally running model servers, and to mix providers across tiers — without editing source code or memorizing model identifiers. Per-tier rather than per-role granularity is the point, because mixing tiers — a hosted high tier with a local low tier — is exactly the kind of setup the user runs.
 
-Slots are named by capability, not role, because the top tier is
-shared by three agents — a role name would mislead.
+Auth stays out of the file because secrets do not belong in checked-in config; sourcing them from environment variables keeps the file shareable while letting each deployment supply its own credentials.
 
-The config governs model choice only: it does not validate model names
-— an unrecognized name surfaces as whatever the backend does with it.
-
+The config governs endpoint and model choice only: it does not validate URLs, probe endpoints, or check that model identifiers are recognized — those surface as whatever the backend does with them.
 """
 parent_id = "backends"
 children = []
@@ -45,3 +22,7 @@ children = []
 [[related]]
 id = "coding-standards"
 reason = "This goal produces code, which follows `coding-standards` (capability-based DI, the polymorphism ladder, `test_spec_`/`test_security_` marking, security.md, and the `tinker-test-case:` convention). Asymmetric: `coding-standards` is a packaged ancestor-scope standard and carries no back-link."
+
+[[related]]
+id = "readme-maintainer"
+reason = "model-config's .tinker/config.toml schema and starter template are documented in readme-maintainer's README 'Installation' section — the human-facing surface that explains the per-tier endpoint+model shape and the auth-out-of-scope convention."

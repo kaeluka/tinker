@@ -62,4 +62,4 @@ reason = "`no-peek` is the communication-layer expression of this goal's orthogo
 
 [[related]]
 id = "goal-storage"
-reason = "Goal-storage implements the on-disk storage layer with the three-tier discovery model (project-local, ancestor-global, binary-relative-packaged) and precedence rules that this goal's complementarity principle governs. Symmetric because both are packaged goals."
+reason = "Goal-storage implements the on-disk storage layer with the four-tier discovery model (project-local, ancestor global, packaged, binary-relative-packaged) and precedence rules that this goal's complementarity principle governs. Symmetric because both are packaged goals."

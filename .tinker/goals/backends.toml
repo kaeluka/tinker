@@ -1,17 +1,15 @@
 id = "backends"
 kind = "feature"
-summary = "This goal owns the LLM backend abstraction — the native implementation via direct OpenRouter API calls with an in-process tool loop, delivered behind a trait seam that enables testability and composition honesty — the user-editable model-tier configuration, and file-access boundary enforcement in code via the in-process ToolPolicy."
+summary = "This goal owns the LLM backend abstraction — the native implementation that targets any OpenAI-protocol endpoint (with per-tier endpoint and model sourced from `model-config`), delivered as an in-process tool loop behind a trait seam that enables testability and composition honesty — and file-access boundary enforcement in code via the in-process ToolPolicy."
 description = """
 ## WHAT
-Tinker runs against a single backend: the native implementation, which talks to the OpenRouter API directly with no CLI in between. It is the sole implementation of the backend abstraction — a thin trait seam that enables mock implementations for tests and keeps the composition root honest. Business logic depends on that trait, not on any vendor's API.
+Tinker runs against a single backend: the native implementation, which targets any OpenAI-protocol endpoint directly with no CLI in between. The endpoint and model for each tier come from the configuration owned by `model-config`; the trait seam, in-process tool loop, and per-role ToolPolicy are unchanged. Native is the sole implementation of the backend abstraction — a thin trait seam that enables mock implementations for tests and keeps the composition root honest. Business logic depends on that trait, not on any vendor's API.
 
 **System prompt.** Native delivers an identical system prompt to every goal agent session — the framework preamble (owned by `goal-agents`) plus the goal's full description and neighbor table — as the first system message of the in-memory session. The trigger reason is sent as the first turn message. Tend receives a different system prompt.
 
-**Startup precondition.** The OpenRouter API key is required: tinker validates it at startup and, if it is unset or empty, prints a clear error and exits before the TUI starts. Failing fast here avoids the alternative — every session crashing on the missing key, producing empty output that the silence-detection re-nudges into an unbounded cascade.
+**Startup precondition.** Each tier resolves its endpoint and auth independently from configuration. Auth is sourced from per-tier environment variables following a generic naming convention; an unset or empty value means no auth header is sent, which is what local model servers expect. A tier whose configuration is incomplete fails fast before the TUI starts.
 
-**Tool loop.** Native runs the agent loop in-process: it calls OpenRouter's chat-completions API (key from the environment, never stored in config) and executes tool calls itself — exactly six tools: bash, read, write, edit, glob, grep. Because tinker owns the tool executor, file-access boundaries are enforced in code via a per-role tool policy: tend gets restricted tool access and a narrowed write scope (the goals directory); goal sessions — including cleanup, which runs as a goal session like any other — get the full unrestricted tool set. A policy denial is returned to the model as a tool error it can adapt to. Sessions are in-memory only — a restart starts all sessions fresh. Context overflow fails visibly: the session is dropped and the next dispatch starts fresh.
-
-Which model fills each tier is overridable at runtime through `model-config`; the native defaults are the built-in fallback.
+**Tool loop.** Native runs the agent loop in-process: it calls the chat-completions API on the tier's configured endpoint and executes tool calls itself — exactly six tools: bash, read, write, edit, glob, grep. Because tinker owns the tool executor, file-access boundaries are enforced in code via a per-role tool policy: tend gets restricted tool access and a narrowed write scope (the goals directory); goal sessions — including cleanup, which runs as a goal session like any other — get the full unrestricted tool set. A policy denial is returned to the model as a tool error it can adapt to. Sessions are in-memory only — a restart starts all sessions fresh. Context overflow fails visibly: the session is dropped and the next dispatch starts fresh.
 
 **Error feedback.** Tool errors flow back to the model in-loop as tool results. API errors surface as visible chunks the agent can reason about.
 
@@ -20,7 +18,9 @@ Startup argument handling is governed by `startup-args`. Recognised flag: `--ten
 ## WHY
 The trait abstraction earns its keep through testability: mock implementations let session logic be tested without calling any LLM. It also keeps the composition root honest — business logic depends on a capability boundary, not a concrete type — which matters even with a single implementation because it makes the dependency explicit and reviewable.
 
-The native implementation exists because controlling what agents can do through CLI permission systems was a constant hassle: those systems are built for interactive approval, so tinker had to bypass them and re-enforce boundaries through prompts. Owning the tool loop makes the boundary a code path instead. It also removes the external CLI dependency and reduces setup to one environment variable.
+The native implementation exists because controlling what agents can do through CLI permission systems was a constant hassle: those systems are built for interactive approval, so tinker had to bypass them and re-enforce boundaries through prompts. Owning the tool loop makes the boundary a code path instead. It also removes the external CLI dependency.
+
+Targeting any OpenAI-protocol endpoint per tier — hosted subscriptions or locally running model servers — keeps tinker un-pinned to one provider. The OpenAI chat-completions protocol is the common surface that makes this uniform; per-tier configuration preserves the mental model that tiers are independently swappable. Auth sourced from per-tier environment variables, with no auth sent when the value is empty, lets the same mechanism cover local servers that ignore auth and hosted providers that require it.
 
 The former CLI backends (opencode, claude) served as scaffolding during native's development and have been removed.
 """
@@ -28,7 +28,7 @@ parent_id = ""
 
 [[children]]
 id = "model-config"
-reason = "user-editable .tinker/config.toml overriding model tier assignments — three slots (three tiers), absent slots fall back to built-in defaults"
+reason = "user-editable .tinker/config.toml configuring each tier's endpoint and model identifier — three slots (high/mid/low), absent slots fall back to starter-template values; auth sourced from per-tier environment variables and never stored in the file"
 
 [[children]]
 id = "tend-write-restriction"

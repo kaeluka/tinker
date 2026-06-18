@@ -8,8 +8,11 @@ no remote attacker model in scope.
 
 What is trusted:
 - The user.
-- The local `opencode` binary and its model providers (`openrouter.ai` in
-  the current configuration).
+- The native backend's HTTP client and the model providers it talks to
+  — any OpenAI-protocol endpoint, configured per-tier in
+  `.tinker/config.toml` (OpenRouter is the starter-template default; the
+  user may point each tier at any OpenAI-protocol endpoint, including
+  local model servers that ignore the `Authorization` header).
 - The `~/.tinker/` and `<project>/.tinker/` directories the user controls.
 
 What is NOT trusted, or only conditionally trusted:
@@ -24,8 +27,11 @@ What is NOT trusted, or only conditionally trusted:
   goals would be silently included.
 
 The security model assumes the user reviews changes before committing.
-Goal sessions run opencode with the user's filesystem permissions —
-there is no sandboxing.
+Goal sessions run as native code in the user's process — there is no
+subprocess sandbox. The capability boundary lives in-process at the
+tool-call layer (`ToolPolicy` in `native.rs`): tend's writes are
+restricted to `.tinker/goals/`, and tool calls are denied at the
+boundary rather than relying on a subprocess approval UI.
 
 ## Threats
 
@@ -49,10 +55,11 @@ Mitigations:
 
 ### T2. Cross-project session contamination
 
-The `coding-standards` goal lives in `~/.tinker/`, a global location.
-If session state were stored in the global TOML, every project that
-picked it up via the multi-dir merge would resume the same opencode
-session — leaking the history of one project into another.
+Goal sessions are dispatched via the in-process native backend, not via
+a subprocess that might persist state across projects. If session
+state were written into a shared `.tinker/goals/<id>.toml`, every
+project that picked the goal up via the multi-dir merge would resume
+the same session — leaking one project's history into another.
 
 Mitigations:
 - Goal TOML files contain no session state. Session IDs are ephemeral
@@ -77,37 +84,45 @@ Mitigations:
 - No mitigation prevents the merge itself; the user is expected to
   notice.
 
-### T4. opencode goal sessions run non-interactively and cannot respond to approval prompts
+### T4. Native backend tool calls run without a per-call approval prompt
 
-Tinker runs opencode as a subprocess with stdin piped to the session
-message. opencode's interactive per-tool approval UI cannot receive
-input in this configuration. Without pre-approval, opencode stalls on
-the first file read and aborts the session.
-
-Mitigations:
-- Tinker passes `--dangerously-skip-permissions` to every opencode
-  subprocess. This auto-approves tool calls that are not explicitly
-  denied in the user's `opencode.json`. Explicit deny rules still apply.
-- The actual protection boundary is the goal scope (agents work within
-  their assigned goal) and the user's review of changes before commit.
-  opencode's interactive prompt is redundant for an automated tool where
-  every agent run is user-initiated.
-  → test: `test_security_t4_skip_permissions_flag_present`.
-
-### T5. Stderr from opencode could corrupt the TUI
-
-`opencode` writes log lines to stderr. While tinker is in the alternate
-screen mode (raw terminal, no scrollback), unfiltered stderr would
-overwrite the rendered UI and break the user's ability to interact.
+The native backend executes tool calls (read, write, edit, glob, grep,
+bash, send_message, spawn_session) in-process inside the user's tinker
+process. Unlike a subprocess with an interactive approval UI, there is
+no per-call prompt — every dispatched agent run is user-initiated and
+the tool calls fire automatically.
 
 Mitigations:
-- The opencode subprocess stderr is piped and captured. Any stderr content
-  is appended to the session's chunk stream so it appears in the session
-  log rather than leaking to the terminal. Error events also arrive through
-  opencode's structured `--format json` stream and are surfaced as system
-  messages in the REPL.
-  → test: `test_security_t5_stderr_is_captured`.
-- The Claude backend subprocess also pipes and captures stderr. Any
-  captured content is re-injected into the session's error stream rather
-  than leaking to the terminal.
-  → test (claude): `test_security_t5_stderr_is_captured_not_leaked`.
+- The in-process capability boundary is `ToolPolicy` (`native.rs`):
+  every tool call is checked before execution. The default policy
+  (`Unrestricted`) lets a goal agent run bash and read/write anywhere
+  on the filesystem; `TendScope` (used for tend) strips bash entirely
+  and narrows writes to `.tinker/goals/`. A denied call returns the
+  reason to the model as the tool result, so the model can adapt.
+- The goal-scope boundary is the agent's authored goal description.
+  Agents work within the goal they were dispatched to and the user
+  reviews changes before committing.
+- Tend's file-scope enforcement is encoded in `ToolPolicy::TendScope`
+  and applies to every turn (the policy is a struct field on the
+  runner, not a per-call value the model could omit).
+
+### T5. Tool output written directly to the terminal could corrupt the TUI
+
+The native backend runs in-process and writes chunk content to the TUI
+session stream via an mpsc channel. While tinker is in the alternate
+screen mode (raw terminal, no scrollback), any content that bypassed
+the channel and was written directly to stdout/stderr would overwrite
+the rendered UI and break the user's ability to interact.
+
+Mitigations:
+- The native backend's stdout path goes through the `Chunk` callback
+  the session-task passes into `OpenCodeRunner::run`. Every piece of
+  tool output and every error chunk flows through this callback into
+  the session log, never directly to the terminal.
+- Tool output is capped at `MAX_TOOL_OUTPUT_CHARS` (30 000 chars) in
+  `native.rs` before being fed back to the model, so one verbose
+  `cargo test` run cannot blow the context window or the session log.
+- Errors surface as `⚠` chunks via the same channel — backend
+  failures, context-overflow drops, and tool-call denials all reach
+  the user through the session stream rather than leaking to the
+  terminal.

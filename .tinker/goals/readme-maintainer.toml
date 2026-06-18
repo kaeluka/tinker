@@ -31,7 +31,11 @@ The README has five required sections, in order:
   before any operational detail.
 - **Installation**: build from source with `cargo build --release`;
   add the release binary to PATH; symlink packaged goals into
-  `~/.tinker` so the ancestor-merge picks them up.
+  `~/.tinker` so the ancestor-merge picks them up; document the
+  `.tinker/config.toml` per-tier configuration surface — three slots
+  (high/mid/low), each carrying an endpoint URL and a model
+  identifier, with auth sourced from per-tier environment variables,
+  leaving the file itself credential-free.
 - **Agents**: how tend, rummage, and jog collaborate; how to switch
   between them; tend as the right starting point for any
   conversation.
@@ -56,6 +60,10 @@ reason = "readme-maintainer's 'The model' section derives its content from this 
 [[related]]
 id = "project-indexer"
 reason = "Dual documentation goals: project-indexer maintains the LLM-facing map (AGENTS.md), while readme-maintainer maintains the human-facing narrative (README.md). Asymmetric: project-indexer is a packaged goal and cannot carry a back-link to this project-local goal."
+
+[[related]]
+id = "model-config"
+reason = "readme-maintainer's 'Installation' section documents the .tinker/config.toml format that model-config owns — the per-tier endpoint and model slots, and the auth-out-of-scope convention."
 
 [[related]]
 id = "tend"

@@ -97,7 +97,7 @@ reason = "tend-introspection logs goal-session lifecycle events (dispatched/star
 
 [[related]]
 id = "goal-storage"
-reason = "Your runtime event log captures goal-loading events including discovery and precedence resolution; goal-storage owns the four-tier model (project-local, ancestor-global, packaged, binary-relative-packaged) that determines what gets loaded. Asymmetric: goal-storage is a packaged goal and cannot carry a back-link."
+reason = "Your runtime event log captures goal-loading events including discovery and precedence resolution; goal-storage owns the four-tier model (project-local, ancestor global, packaged, binary-relative-packaged) that determines what gets loaded. Asymmetric: goal-storage is a packaged goal and cannot carry a back-link."
 
 [[related]]
 id = "fresh-agents"
@@ -110,3 +110,7 @@ reason = "spawn-session dispatches produce a new event type in the runtime event
 [[related]]
 id = "send-message"
 reason = "send-message dispatches produce a new event type in the runtime event log — sender, target, dispatch time — alongside the existing envelope-based dispatch emission."
+
+[[related]]
+id = "binary-relative-tier-loading"
+reason = "the binary-relative tier's establishment that adds a fourth tier to the loader's spec, on which the runtime-event log's tier-identification fields and the startup-diagnostic capture depend"

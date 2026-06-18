@@ -234,15 +234,26 @@ pub fn stream_error(msg: &str) -> String {
 
 const CONFIG_STARTER_TEMPLATE: &str = include_str!("../prompts/config/starter_template.md");
 
+/// Interpolates the per-tier (endpoint, model) defaults into the starter
+/// template. Six slots: three endpoint URLs and three model identifiers,
+/// one of each per tier (high/mid/low). Auth is intentionally not part of
+/// the template — it's sourced from per-tier environment variables by
+/// `backends`.
 pub fn config_starter_template(
-    native_high: &str,
-    native_mid: &str,
-    native_low: &str,
+    native_high_endpoint: &str,
+    native_high_model: &str,
+    native_mid_endpoint: &str,
+    native_mid_model: &str,
+    native_low_endpoint: &str,
+    native_low_model: &str,
 ) -> String {
     CONFIG_STARTER_TEMPLATE
-        .replace("{NATIVE_HIGH}", native_high)
-        .replace("{NATIVE_MID}", native_mid)
-        .replace("{NATIVE_LOW}", native_low)
+        .replace("{NATIVE_HIGH_ENDPOINT}", native_high_endpoint)
+        .replace("{NATIVE_HIGH_MODEL}", native_high_model)
+        .replace("{NATIVE_MID_ENDPOINT}", native_mid_endpoint)
+        .replace("{NATIVE_MID_MODEL}", native_mid_model)
+        .replace("{NATIVE_LOW_ENDPOINT}", native_low_endpoint)
+        .replace("{NATIVE_LOW_MODEL}", native_low_model)
 }
 
 // ── test-only prompts ───────────────────────────────────────────────────────
@@ -418,17 +429,24 @@ mod tests {
         assert!(!result.contains("{NEIGHBOR_SECTION}"), "no raw placeholders left");
     }
 
-    // spec (prompt-storage): config_starter_template substitutes all three
-    // placeholders (three tiers, one [native] section).
+    // spec (prompt-storage): config_starter_template substitutes all six
+    // placeholders — three endpoint URLs and three model identifiers, one
+    // of each per tier (high/mid/low).
     #[test]
     fn test_spec_config_starter_template_substitutes_placeholders() {
-        let result = config_starter_template("nh", "nm", "nl");
-        assert!(result.contains("nh"), "native_high must be substituted");
-        assert!(result.contains("nm"), "native_mid must be substituted");
-        assert!(result.contains("nl"), "native_low must be substituted");
-        assert!(!result.contains("{NATIVE_HIGH}"), "no raw placeholders left");
-        assert!(!result.contains("{NATIVE_MID}"), "no raw placeholders left");
-        assert!(!result.contains("{NATIVE_LOW}"), "no raw placeholders left");
+        let result = config_starter_template("eh", "mh", "em", "mm", "el", "ml");
+        assert!(result.contains("eh"), "native_high_endpoint must be substituted");
+        assert!(result.contains("mh"), "native_high_model must be substituted");
+        assert!(result.contains("em"), "native_mid_endpoint must be substituted");
+        assert!(result.contains("mm"), "native_mid_model must be substituted");
+        assert!(result.contains("el"), "native_low_endpoint must be substituted");
+        assert!(result.contains("ml"), "native_low_model must be substituted");
+        assert!(!result.contains("{NATIVE_HIGH_ENDPOINT}"), "no raw placeholders left");
+        assert!(!result.contains("{NATIVE_HIGH_MODEL}"), "no raw placeholders left");
+        assert!(!result.contains("{NATIVE_MID_ENDPOINT}"), "no raw placeholders left");
+        assert!(!result.contains("{NATIVE_MID_MODEL}"), "no raw placeholders left");
+        assert!(!result.contains("{NATIVE_LOW_ENDPOINT}"), "no raw placeholders left");
+        assert!(!result.contains("{NATIVE_LOW_MODEL}"), "no raw placeholders left");
     }
 
     #[test]

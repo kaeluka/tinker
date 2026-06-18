@@ -126,7 +126,7 @@ reason = "peer-consult governs the @-block protocol and delivery rules, includin
 
 [[related]]
 id = "goal-storage"
-reason = "goal-storage defines the three-tier goal discovery model (project-local, ancestor global, binary-relative packaged) and the three-level precedence rule; goal-agents consumes goal-storage's load result to populate the registry and emit cross-tier collision diagnostics. The tier field extends the goal TOML schema goal-storage governs."
+reason = "goal-storage defines the four-tier goal discovery model (project-local, ancestor global, packaged, binary-relative-packaged) and the four-level precedence rule; goal-agents consumes goal-storage's load result to populate the registry and emit cross-tier collision diagnostics. The tier field extends the goal TOML schema goal-storage governs."
 
 [[related]]
 id = "tui"
@@ -183,3 +183,7 @@ reason = "spawn-session fires the new sub-session immediately into goal-agents' 
 [[related]]
 id = "recursive-subdivision"
 reason = "recursive-subdivision runs within this goal's session registry and lifecycle; each recursive dispatch creates a new sub-session entry, exercising the full depth the registry supports."
+
+[[related]]
+id = "binary-relative-tier-loading"
+reason = "build-time population of the binary-relative tier and the diagnostic's emitted text that the eager-start invariant depends on — the loader's four-tier result and the diagnostic content this goal produces"

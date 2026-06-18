@@ -1,10 +1,15 @@
-//! Native `OpenCodeRunner` capability: talks directly to the OpenRouter
-//! chat-completions API and runs the tool loop in-process.
+//! Native `OpenCodeRunner` capability: talks directly to any OpenAI-protocol
+//! chat-completions endpoint and runs the tool loop in-process.
 //!
 //! There is no subprocess: tinker owns tool execution, so per-role
 //! capability policy (`ToolPolicy`) is enforced in code rather than via
 //! system prompts. Sessions are in-memory only — a tinker restart starts
 //! everyone fresh.
+//!
+//! Per-tier endpoint, model, and auth are wired at construction by the
+//! composition root (`main.rs`) from `model-config`'s `.tinker/config.toml`
+//! plus per-tier environment variables. An unset/empty auth value means
+//! no Authorization header is sent — what local model servers expect.
 //!
 //! Context overflow fails visibly: the API error is surfaced as a ⚠ chunk,
 //! the session is dropped from the store, and `run` returns `Err` — which
@@ -21,15 +26,6 @@ use std::sync::Mutex;
 #[cfg(test)]
 use std::sync::Arc;
 use tokio::process::Command;
-
-/// OpenRouter model ids — the same models the opencode backend routes to,
-/// minus the `openrouter/` CLI routing prefix.
-pub const TINKER_MODEL: &str = "google/gemini-3.1-pro-preview";
-pub const GOAL_MODEL: &str = "deepseek/deepseek-v4-flash";
-pub const SCHEDULER_MODEL: &str = "google/gemini-3.1-flash-lite-preview";
-
-pub const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
-pub const API_KEY_ENV: &str = "OPENROUTER_API_KEY";
 
 /// Tool results larger than this are truncated before being fed back to the
 /// model, so one verbose `cargo test` run can't blow the context window.
@@ -281,12 +277,21 @@ pub fn request_body(model: &str, messages: &[Value], tools: &[Value]) -> Value {
     })
 }
 
-/// Native runner bound to a model and a capability policy.
-/// The optional struct-level system prompt is used only for tend, whose
-/// scope framing must be present from session creation. Per-call
-/// `system_prompt` (goal agents, first turn) takes priority.
+/// Native runner bound to a chat-completions endpoint, a model, an
+/// optional API key, and a capability policy.
+///
+/// The endpoint and api_key are per-instance rather than module-level
+/// constants so the composition root can wire different combinations
+/// per tier — a different OpenAI-protocol endpoint or no auth at all
+/// (the case for local model servers). The optional struct-level
+/// system prompt is used only for tend, whose scope framing must be
+/// present from session creation. Per-call `system_prompt` (goal agents,
+/// first turn) takes priority.
 pub struct NativeRunner {
+    pub endpoint: String,
     pub model: String,
+    /// `None` means no Authorization header is sent (local model servers).
+    pub api_key: Option<String>,
     pub system_prompt: Option<String>,
     pub policy: ToolPolicy,
     sessions: Mutex<HashMap<String, Vec<Value>>>,
@@ -294,9 +299,16 @@ pub struct NativeRunner {
 }
 
 impl NativeRunner {
-    pub fn new(model: impl Into<String>, policy: ToolPolicy) -> Self {
+    pub fn new(
+        endpoint: impl Into<String>,
+        model: impl Into<String>,
+        api_key: Option<String>,
+        policy: ToolPolicy,
+    ) -> Self {
         Self {
+            endpoint: endpoint.into(),
             model: model.into(),
+            api_key,
             system_prompt: None,
             policy,
             sessions: Mutex::new(HashMap::new()),
@@ -305,12 +317,16 @@ impl NativeRunner {
     }
 
     pub fn with_system_prompt(
+        endpoint: impl Into<String>,
         model: impl Into<String>,
+        api_key: Option<String>,
         system_prompt: impl Into<String>,
         policy: ToolPolicy,
     ) -> Self {
         Self {
+            endpoint: endpoint.into(),
             model: model.into(),
+            api_key,
             system_prompt: Some(system_prompt.into()),
             policy,
             sessions: Mutex::new(HashMap::new()),
@@ -356,9 +372,6 @@ impl OpenCodeRunner for NativeRunner {
         send_message: Option<crate::cap::SendMessageFn>,
         spawn_session: Option<crate::cap::SpawnSessionFn>,
     ) -> Result<String> {
-        let api_key = std::env::var(API_KEY_ENV)
-            .map_err(|_| anyhow!("{API_KEY_ENV} is not set — the native backend needs an OpenRouter API key"))?;
-
         // Resume or create the session's message history.
         let sid: String;
         let mut messages: Vec<Value>;
@@ -403,18 +416,16 @@ impl OpenCodeRunner for NativeRunner {
             }
 
             let body = request_body(&self.model, &messages, &tools);
-            let resp = self
-                .client
-                .post(OPENROUTER_URL)
-                .bearer_auth(&api_key)
-                .json(&body)
-                .send()
-                .await;
+            let mut req = self.client.post(&self.endpoint).json(&body);
+            if let Some(key) = self.api_key.as_deref() {
+                req = req.bearer_auth(key);
+            }
+            let resp = req.send().await;
 
             let resp = match resp {
                 Ok(r) => r,
                 Err(e) => {
-                    let msg = format!("openrouter request failed: {e}");
+                    let msg = format!("backend request failed: {e}");
                     on_chunk(crate::prompts::stream_error(&msg));
                     self.save_session(&sid, messages);
                     return Err(anyhow!(msg));
@@ -425,7 +436,7 @@ impl OpenCodeRunner for NativeRunner {
             let payload: Value = match resp.json().await {
                 Ok(v) => v,
                 Err(e) => {
-                    let msg = format!("openrouter returned unparseable response: {e}");
+                    let msg = format!("backend returned unparseable response: {e}");
                     on_chunk(crate::prompts::stream_error(&msg));
                     self.save_session(&sid, messages);
                     return Err(anyhow!(msg));
@@ -449,7 +460,7 @@ impl OpenCodeRunner for NativeRunner {
                 .and_then(|c| c.get(0))
                 .and_then(|c| c.get("message"))
             else {
-                let msg = "openrouter response has no choices[0].message".to_string();
+                let msg = "backend response has no choices[0].message".to_string();
                 on_chunk(crate::prompts::stream_error(&msg));
                 self.save_session(&sid, messages);
                 return Err(anyhow!(msg));
@@ -564,17 +575,17 @@ impl NativeRunner {
     }
 }
 
-/// Extract a human-readable error from an OpenRouter error payload, if any.
+/// Extract a human-readable error from an OpenAI-protocol error payload, if any.
 fn api_error_message(payload: &Value, http_status: u16) -> Option<String> {
     if let Some(err) = payload.get("error") {
         let msg = err
             .get("message")
             .and_then(|m| m.as_str())
             .unwrap_or("unknown API error");
-        return Some(format!("openrouter error (HTTP {http_status}): {msg}"));
+        return Some(format!("backend error (HTTP {http_status}): {msg}"));
     }
     if http_status >= 400 {
-        return Some(format!("openrouter error: HTTP {http_status}"));
+        return Some(format!("backend error: HTTP {http_status}"));
     }
     None
 }
