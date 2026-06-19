@@ -178,11 +178,6 @@ async fn goal_agent_loop(
                 if a.goals.is_empty() { "[]".to_string() }
                 else { goal::build_compact_index(&a.goals) }
             };
-            // Emit trigger reason as first log line (bold in TUI).
-            let _ = session_tx.try_send(SessionEvent::Chunk {
-                goal_id: goal_id.clone(),
-                text: format!("{}{}\n", goal_session::TRIGGER_REASON_MARKER, dispatch_msg),
-            });
             log.emit("goal_session", logger::LogEvent::GoalSessionDispatched {
                 goal_id: goal_id.clone(),
                 reason: Some(dispatch_msg.clone()),
@@ -971,7 +966,7 @@ async fn run_loop(
             let (scroll_before, sel_before) = {
                 let a = app.lock().unwrap();
                 (
-                    (a.repl_scroll.y.unwrap_or(0), a.log_scroll.y.unwrap_or(0), a.goal_list_scroll.y.unwrap_or(0), a.goal_text_scroll.y.unwrap_or(0)),
+                    (a.repl_scroll.y.unwrap_or(0), a.goal_list_scroll.y.unwrap_or(0), a.goal_text_scroll.y.unwrap_or(0)),
                     a.selected_goal,
                 )
             };
@@ -982,7 +977,7 @@ async fn run_loop(
             let (scroll_after, sel_after) = {
                 let a = app.lock().unwrap();
                 (
-                    (a.repl_scroll.y.unwrap_or(0), a.log_scroll.y.unwrap_or(0), a.goal_list_scroll.y.unwrap_or(0), a.goal_text_scroll.y.unwrap_or(0)),
+                    (a.repl_scroll.y.unwrap_or(0), a.goal_list_scroll.y.unwrap_or(0), a.goal_text_scroll.y.unwrap_or(0)),
                     a.selected_goal,
                 )
             };
@@ -990,13 +985,10 @@ async fn run_loop(
                 log.emit("tui", logger::LogEvent::TuiScrollChanged { pane: "repl".to_string(), y: scroll_after.0 });
             }
             if scroll_after.1 != scroll_before.1 {
-                log.emit("tui", logger::LogEvent::TuiScrollChanged { pane: "log".to_string(), y: scroll_after.1 });
+                log.emit("tui", logger::LogEvent::TuiScrollChanged { pane: "goal_list".to_string(), y: scroll_after.1 });
             }
             if scroll_after.2 != scroll_before.2 {
-                log.emit("tui", logger::LogEvent::TuiScrollChanged { pane: "goal_list".to_string(), y: scroll_after.2 });
-            }
-            if scroll_after.3 != scroll_before.3 {
-                log.emit("tui", logger::LogEvent::TuiScrollChanged { pane: "goal_text".to_string(), y: scroll_after.3 });
+                log.emit("tui", logger::LogEvent::TuiScrollChanged { pane: "goal_text".to_string(), y: scroll_after.2 });
             }
             if sel_after != sel_before {
                 let gid = app.lock().unwrap().flat_items().get(sel_after).map(|i| i.id().to_string());
@@ -1010,7 +1002,7 @@ async fn run_loop(
                 (
                     a.selected_goal,
                     a.focus.clone(),
-                    (a.repl_scroll.y.unwrap_or(0), a.log_scroll.y.unwrap_or(0), a.goal_list_scroll.y.unwrap_or(0), a.goal_text_scroll.y.unwrap_or(0)),
+                    (a.repl_scroll.y.unwrap_or(0), a.goal_list_scroll.y.unwrap_or(0), a.goal_text_scroll.y.unwrap_or(0)),
                 )
             };
             // Build known IDs from both the registry and all goal IDs from app.goals,
@@ -1047,13 +1039,10 @@ async fn run_loop(
                 if a.repl_scroll.y.unwrap_or(0) != scroll_before.0 {
                     log.emit("tui", logger::LogEvent::TuiScrollChanged { pane: "repl".to_string(), y: a.repl_scroll.y.unwrap_or(0) });
                 }
-                if a.log_scroll.y.unwrap_or(0) != scroll_before.1 {
-                    log.emit("tui", logger::LogEvent::TuiScrollChanged { pane: "log".to_string(), y: a.log_scroll.y.unwrap_or(0) });
-                }
-                if a.goal_list_scroll.y.unwrap_or(0) != scroll_before.2 {
+                if a.goal_list_scroll.y.unwrap_or(0) != scroll_before.1 {
                     log.emit("tui", logger::LogEvent::TuiScrollChanged { pane: "goal_list".to_string(), y: a.goal_list_scroll.y.unwrap_or(0) });
                 }
-                if a.goal_text_scroll.y.unwrap_or(0) != scroll_before.3 {
+                if a.goal_text_scroll.y.unwrap_or(0) != scroll_before.2 {
                     log.emit("tui", logger::LogEvent::TuiScrollChanged { pane: "goal_text".to_string(), y: a.goal_text_scroll.y.unwrap_or(0) });
                 }
             }
@@ -1576,7 +1565,6 @@ fn handle_session_event(
             // Mark session as actively processing so the ▶ indicator appears.
             // Applies to every session including interactive agents (tend/rummage/jog).
             app.running_sessions.entry(goal_id.clone()).or_insert(None);
-            app.append_goal_log(&goal_id, &text);
             // Suppress tend's startup output from the conversation pane until
             // the user has typed their first message.
             if goal_id != "tend" || app.user_has_interacted {
@@ -1766,8 +1754,6 @@ fn handle_mouse(app: &mut App, ev: MouseEvent, area: ratatui::layout::Rect) {
                 app.goal_list_scroll.scroll_up(MOUSE_SCROLL_STEP);
             } else if in_rect(rects.goal_text) {
                 app.goal_text_scroll.scroll_up(MOUSE_SCROLL_STEP);
-            } else if in_rect(rects.log) {
-                app.log_scroll.scroll_up(MOUSE_SCROLL_STEP);
             }
         }
         MouseEventKind::ScrollDown => {
@@ -1777,8 +1763,6 @@ fn handle_mouse(app: &mut App, ev: MouseEvent, area: ratatui::layout::Rect) {
                 app.goal_list_scroll.scroll_down(MOUSE_SCROLL_STEP);
             } else if in_rect(rects.goal_text) {
                 app.goal_text_scroll.scroll_down(MOUSE_SCROLL_STEP);
-            } else if in_rect(rects.log) {
-                app.log_scroll.scroll_down(MOUSE_SCROLL_STEP);
             }
         }
         _ => {}
@@ -2193,17 +2177,18 @@ mod tests {
         let area = ratatui::layout::Rect { x: 0, y: 0, width: 80, height: 100 };
         let rects = tui::pane_rects(area);
 
-        // Seed every scroll pane with enough content that ScrollDown can move them.
+        // Seed every scroll pane with enough content that scrolling can move them.
         let mut app = App::new();
-        for s in [&mut app.repl_scroll, &mut app.log_scroll,
+        for s in [&mut app.repl_scroll,
                   &mut app.goal_text_scroll, &mut app.goal_list_scroll] {
             s.record_render(200, 10, 0);
         }
-        // Use ScrollDown (from the tail) so None → Some transition is observable.
+        // goal_text_scroll defaults to reset_to_top (Some(0)); nudge it to the
+        // tail so ScrollUp is observable (scroll_up from 0 is a no-op).
+        app.goal_text_scroll.y = None;
 
         // Capture each pane's y before the test event.
         let y_repl_before    = app.repl_scroll.y;
-        let y_log_before     = app.log_scroll.y;
         let y_text_before    = app.goal_text_scroll.y;
         let y_list_before    = app.goal_list_scroll.y;
 
@@ -2217,27 +2202,22 @@ mod tests {
         handle_mouse(&mut app, ev, area);
         assert_ne!(app.repl_scroll.y, y_repl_before,
             "repl_scroll must move on ScrollUp in REPL pane");
-        assert_eq!(app.log_scroll.y, y_log_before,
-            "log_scroll must not move when cursor is in REPL pane");
         assert_eq!(app.goal_text_scroll.y, y_text_before,
             "goal_text_scroll must not move when cursor is in REPL pane");
         assert_eq!(app.goal_list_scroll.y, y_list_before,
             "goal_list_scroll must not move when cursor is in REPL pane");
 
-        // Cursor inside the log pane — only log_scroll must move.
-        let y_log_before2 = app.log_scroll.y;
+        // Cursor inside the goal-text pane — only goal_text_scroll must move.
         let y_text_before2 = app.goal_text_scroll.y;
         let ev = MouseEvent {
             kind: MouseEventKind::ScrollUp,
-            column: rects.log.x + 1,
-            row: rects.log.y + 1,
+            column: rects.goal_text.x + 1,
+            row: rects.goal_text.y + 1,
             modifiers: KeyModifiers::NONE,
         };
         handle_mouse(&mut app, ev, area);
-        assert_ne!(app.log_scroll.y, y_log_before2,
-            "log_scroll must move on ScrollUp in log pane");
-        assert_eq!(app.goal_text_scroll.y, y_text_before2,
-            "goal_text_scroll must not move when cursor is in log pane");
+        assert_ne!(app.goal_text_scroll.y, y_text_before2,
+            "goal_text_scroll must move on ScrollUp in goal-text pane");
     }
 
     // spec (goal-structure-standard, compact-goal-context): the compact goal
@@ -3700,9 +3680,9 @@ mod tests {
     }
 
     // spec (tui, goal-agents): tend's startup chunks (before the user's first
-    // message) must NOT appear in the conversation pane (app.messages) but MUST
-    // still land in the session log (app.goal_logs). After the user interacts,
-    // chunks from tend flow into the conversation pane normally.
+    // message) must NOT appear in the conversation pane (app.messages). After
+    // the user interacts, chunks from tend flow into the conversation pane
+    // normally.
     #[test]
     fn test_spec_tend_startup_chunks_suppressed_until_user_interacted() {
         use crate::app::Role;
@@ -3722,11 +3702,6 @@ mod tests {
         handle_session_event(&mut app, ev, &spawn_tx, &senders_guard, &RealFilesystem, &log);
         drop(senders_guard);
 
-        // Must land in goal_logs (session log pane).
-        assert!(
-            app.goal_logs.get("tend").map(|s| s.contains("hello startup")).unwrap_or(false),
-            "startup chunk must appear in goal_logs (log pane)",
-        );
         // Must NOT appear in messages (conversation pane).
         assert!(
             !app.messages.iter().any(|m| matches!(&m.role, Role::Agent(id) if id == "tend")),

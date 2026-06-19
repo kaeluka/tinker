@@ -28,7 +28,6 @@ pub struct QueueEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ScrollOffsets {
     pub repl: usize,
-    pub log: usize,
     pub goal_list: usize,
     pub goal_text: usize,
 }
@@ -382,7 +381,6 @@ fn apply_to_state(entry: &LogEntry, state: &mut StateSnapshot) -> bool {
         LogEvent::TuiScrollChanged { pane, y } => {
             match pane.as_str() {
                 "repl" => state.scroll_offsets.repl = *y,
-                "log" => state.scroll_offsets.log = *y,
                 "goal_list" => state.scroll_offsets.goal_list = *y,
                 "goal_text" => state.scroll_offsets.goal_text = *y,
                 _ => {}
@@ -1064,7 +1062,7 @@ mod tests {
     }
 
     // spec (tend-introspection): TuiScrollChanged updates the correct
-    // pane in the state snapshot's scroll_offsets. All four pane names are handled;
+    // pane in the state snapshot's scroll_offsets. All three pane names are handled;
     // unknown pane names are silently ignored (open extension point).
     #[test]
     fn test_spec_tui_scroll_changed_updates_correct_pane() {
@@ -1081,12 +1079,6 @@ mod tests {
         );
         assert!(changed, "TuiScrollChanged must mark state dirty");
         assert_eq!(state.scroll_offsets.repl, 42);
-
-        apply_to_state(
-            &entry(LogEvent::TuiScrollChanged { pane: "log".to_string(), y: 7 }),
-            &mut state,
-        );
-        assert_eq!(state.scroll_offsets.log, 7);
 
         apply_to_state(
             &entry(LogEvent::TuiScrollChanged { pane: "goal_list".to_string(), y: 3 }),

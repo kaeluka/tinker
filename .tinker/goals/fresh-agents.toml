@@ -37,8 +37,7 @@ at every level: a coordinator that can decompose its task further
 should do so.
 
 The harness-only constraint exists because the visibility the user
-experiences — sub-sessions nested in the goals pane, log access,
-result routing back to the dispatcher — is only available when
+experiences — sub-sessions nested in the goals pane, result routing back to the dispatcher — is only available when
 spawning goes through the spawn-session tool. A native-tool call
 bypasses the harness and produces none of this. Without the
 constraint, models default to native tool calls because they are more
@@ -60,7 +59,7 @@ reason = "fresh sub-sessions run in the shared main working directory alongside 
 
 [[related]]
 id = "tui"
-reason = "tui governs fresh sub-session display: accurate nesting under the immediate dispatcher at all depths, appearance at dispatch time rather than at turn completion, log access via selection, pane-label normalization to the root permanent goal name, and label-first row display when an explicit label is provided."
+reason = "tui governs fresh sub-session display: accurate nesting under the immediate dispatcher at all depths, appearance at dispatch time rather than at turn completion, pane-label normalization to the root permanent goal name, and label-first row display when an explicit label is provided."
 
 [[related]]
 id = "tend-introspection"

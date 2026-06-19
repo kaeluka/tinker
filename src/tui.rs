@@ -1,6 +1,5 @@
 use crate::app::{App, Focus, GoalListItem, ModalField, Phase, Role};
 use crate::app::{session_base_id, session_parent_id};
-use crate::goal_session::TRIGGER_REASON_MARKER;
 use crate::goal::{build_tree, GoalNode};
 use std::time::Duration;
 
@@ -38,7 +37,7 @@ use ratatui::{
 
 pub struct PaneRects {
     pub repl: Rect,
-    /// Whole top-right pane (Goals), border + title included.
+    /// Whole right pane (Goals), border + title included.
     pub tree: Rect,
     /// Goal-list sub-area inside the Goals pane (selectable).
     pub goal_list: Rect,
@@ -46,7 +45,6 @@ pub struct PaneRects {
     pub goal_sep: Rect,
     /// Goal-description text sub-area inside the Goals pane (scrollable).
     pub goal_text: Rect,
-    pub log: Rect,
 }
 
 /// Pure function of the terminal area → per-pane rects. Called by both the
@@ -56,16 +54,12 @@ pub fn pane_rects(area: Rect) -> PaneRects {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
-    let right_rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(75), Constraint::Percentage(25)])
-        .split(columns[1]);
-    let tree_outer = right_rows[0];
+    let tree_outer = columns[1];
     let tree_inner = Block::default().borders(Borders::ALL).inner(tree_outer);
     let tree_splits = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(33),
+            Constraint::Percentage(50),
             Constraint::Length(1),
             Constraint::Min(0),
         ])
@@ -76,7 +70,6 @@ pub fn pane_rects(area: Rect) -> PaneRects {
         goal_list: tree_splits[0],
         goal_sep: tree_splits[1],
         goal_text: tree_splits[2],
-        log: right_rows[1],
     }
 }
 
@@ -91,7 +84,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         rects.goal_sep,
         rects.goal_text,
     );
-    draw_log(frame, app, rects.log);
     if app.modal.is_some() {
         draw_modal(frame, app);
     }
@@ -581,58 +573,6 @@ fn draw_goal_tree(
     frame.render_widget(p.scroll((scroll_y, 0)), text_area);
 }
 
-fn draw_log(frame: &mut Frame, app: &mut App, area: Rect) {
-    let selected_id = app.selected_item_id();
-    let title = log_pane_title(selected_id.as_deref());
-
-    let is_active_log = selected_id.as_deref().map(|id| app.running_sessions.contains_key(id)).unwrap_or(false);
-    let border_style = if is_active_log {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(border_style);
-
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let content: Paragraph = match &selected_id {
-        None => Paragraph::new(Span::styled(
-            "No goal selected.",
-            Style::default().fg(Color::DarkGray),
-        )),
-        Some(id) => match app.goal_logs.get(id) {
-            None => Paragraph::new(Span::styled(
-                "No output yet.",
-                Style::default().fg(Color::DarkGray),
-            )),
-            Some(log) if log.is_empty() => Paragraph::new(Span::styled(
-                "No output yet.",
-                Style::default().fg(Color::DarkGray),
-            )),
-            Some(log) => {
-                let lines: Vec<Line> = log.lines().flat_map(render_log_line).collect();
-                let p = Paragraph::new(lines).wrap(Wrap { trim: false });
-                let cache_key = inner.width as u64;
-                let total = if app.log_scroll.is_cache_valid(cache_key) {
-                    app.log_scroll.last_total
-                } else {
-                    p.line_count(inner.width)
-                };
-                app.log_scroll.record_render(total, inner.height, cache_key);
-                let scroll_y = app.log_scroll.effective_y().min(u16::MAX as usize) as u16;
-                p.scroll((scroll_y, 0))
-            }
-        },
-    };
-
-    frame.render_widget(content, inner);
-}
-
 fn flatten_tree(nodes: &[GoalNode]) -> Vec<(usize, &GoalNode)> {
     let mut result = vec![];
     for node in nodes {
@@ -801,25 +741,6 @@ fn normalize_list_marker(line: &str) -> String {
     line.to_string()
 }
 
-fn log_pane_title(id: Option<&str>) -> String {
-    match id {
-        Some(id) => format!(" Log: {} ", id),
-        None => " Log ".to_string(),
-    }
-}
-
-pub fn render_log_line(raw: &str) -> Vec<Line<'static>> {
-    let line = if let Some(reason) = raw.strip_prefix(TRIGGER_REASON_MARKER) {
-        Line::from(Span::styled(
-            reason.to_string(),
-            Style::default().add_modifier(Modifier::BOLD),
-        ))
-    } else {
-        Line::from(raw.to_string())
-    };
-    vec![line]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -841,9 +762,9 @@ mod tests {
         }
     }
 
-    /// Spec: "Tinker presents a terminal interface with three regions
-    /// visible at once" and the layout has a 50/50 horizontal split
-    /// (REPL on the left, Goals + Log stacked on the right).
+    /// Spec: "Tinker presents a terminal interface in two columns" with
+    /// a 50/50 horizontal split (REPL on the left, Goals on the right).
+    /// The Goals pane occupies the full height of the right column.
     #[test]
     fn test_spec_pane_rects_horizontal_split_is_fifty_fifty() {
         let area = Rect { x: 0, y: 0, width: 80, height: 100 };
@@ -853,31 +774,27 @@ mod tests {
         assert_eq!(r.repl.x, 0);
         assert_eq!(r.tree.x, 40);
         assert_eq!(r.tree.width, 40);
-        assert_eq!(r.log.x, 40);
-        assert_eq!(r.log.width, 40);
-        // Tree and log together cover the full right column height.
+        // Tree covers the full right column height.
         assert_eq!(r.tree.y, 0);
-        assert_eq!(r.tree.y + r.tree.height, r.log.y);
-        assert_eq!(r.log.y + r.log.height, 100);
+        assert_eq!(r.tree.y + r.tree.height, 100);
     }
 
-    /// Spec: "The layout proportions for the right side are fixed at
-    /// 25% height for the goal list, 50% for the goal text view, and
-    /// 25% for the session log." Asserts each region is within a small
-    /// tolerance of the requested proportion of total height.
+    /// Spec: "The right column stacks two bands at fixed proportions:
+    /// a selectable goal list (50% height) and the full goal text of
+    /// the currently selected goal beneath it (50%)." Asserts each
+    /// region is within a small tolerance of the requested proportion.
     #[test]
-    fn test_spec_pane_rects_right_column_quarter_half_quarter() {
+    fn test_spec_pane_rects_right_column_half_half() {
         let area = Rect { x: 0, y: 0, width: 80, height: 100 };
         let r = pane_rects(area);
         let total = area.height as i32;
         let list = r.goal_list.height as i32;
         let text = r.goal_text.height as i32;
-        let log = r.log.height as i32;
         // Tolerate small slack from the 1-row separator and the borders.
         let tol = 5;
         assert!(
-            (list - 25).abs() <= tol,
-            "goal list should be ~25% of height, got {} of {}",
+            (list - 50).abs() <= tol,
+            "goal list should be ~50% of height, got {} of {}",
             list,
             total
         );
@@ -885,12 +802,6 @@ mod tests {
             (text - 50).abs() <= tol,
             "goal text should be ~50% of height, got {} of {}",
             text,
-            total
-        );
-        assert!(
-            (log - 25).abs() <= tol,
-            "log should be ~25% of height, got {} of {}",
-            log,
             total
         );
         // Sub-areas live inside the tree pane and don't overlap.
@@ -1005,49 +916,6 @@ mod tests {
         s.scroll_down(1000);
         assert!(s.y.is_none(), "scrolling to the bottom must re-engage follow-tail");
         assert_eq!(s.effective_y(), 90);
-    }
-
-    /// Spec (tui): "When a goal session starts, the specific 'reason' it was
-    /// triggered must be rendered in the log pane in bold font."
-    /// Lines prefixed by TRIGGER_REASON_MARKER must render with BOLD modifier;
-    /// unmarked lines must not.
-    #[test]
-    fn test_spec_trigger_reason_rendered_bold_in_log() {
-        use crate::goal_session::TRIGGER_REASON_MARKER;
-
-        let mut app = App::new();
-        app.goals.push(mk_goal("alpha"));
-        let reason = "investigate the failing test";
-        let marked = format!("{}{}", TRIGGER_REASON_MARKER, reason);
-        let plain = "some normal log line";
-        app.goal_logs.insert("alpha".to_string(), format!("{}\n{}\n", marked, plain));
-
-        // draw_log uses the log text: extract rendered lines by calling the
-        // log-line rendering logic directly (we test the mapping, not the
-        // full draw call which requires a Frame).
-        let log = app.goal_logs.get("alpha").unwrap();
-        let lines: Vec<Line> = log.lines().flat_map(render_log_line).collect();
-
-        assert_eq!(lines.len(), 2);
-        // First line (trigger reason) must be bold.
-        let bold_span = &lines[0].spans[0];
-        assert_eq!(bold_span.content, reason);
-        assert!(
-            bold_span.style.add_modifier.contains(Modifier::BOLD),
-            "trigger reason line must carry BOLD modifier",
-        );
-        // Marker itself must not appear in the rendered text.
-        assert!(
-            !bold_span.content.contains(TRIGGER_REASON_MARKER),
-            "TRIGGER_REASON_MARKER sentinel must be stripped from rendered text",
-        );
-        // Second line (plain output) must NOT be bold.
-        let plain_span = &lines[1].spans[0];
-        assert_eq!(plain_span.content, plain);
-        assert!(
-            !plain_span.style.add_modifier.contains(Modifier::BOLD),
-            "normal log lines must not be bold",
-        );
     }
 
     /// Spec (tui): "The system message that lists the goals the orchestrator
@@ -1974,15 +1842,6 @@ plain trailing line";
         );
     }
 
-    /// Spec (tui — session log pane title): the log pane title must read
-    /// "Log: <goal-id>" when a goal is selected, using the id directly rather
-    /// than the truncated description.
-    #[test]
-    fn test_spec_log_pane_title_uses_goal_id() {
-        assert_eq!(log_pane_title(Some("my-goal")), " Log: my-goal ");
-        assert_eq!(log_pane_title(None), " Log ");
-    }
-
     /// Spec (tui — fresh sub-sessions): `session_base_id` strips the `~{counter}`
     /// suffix from a fresh sub-session ID, returning the parent goal ID unchanged
     /// for ordinary IDs.
@@ -2090,29 +1949,6 @@ plain trailing line";
         assert_eq!(app.selected_item_id(), Some("alpha~1".to_string()));
         assert!(app.selected_goal().is_none(),
             "selected_goal() must return None when an ephemeral is selected");
-    }
-
-    /// Spec (tui — fresh sub-sessions / log pane): the log pane must show
-    /// output for an ephemeral sub-session when that row is selected, using
-    /// the session ID as the lookup key (same as for permanent goals).
-    #[test]
-    fn test_spec_log_pane_uses_selected_item_id_for_ephemeral() {
-        let mut app = App::new();
-        app.goals = vec![
-            Goal { id: "alpha".to_string(), summary: String::new(), description: String::new(),
-                parent_id: String::new(), children: vec![], related: vec![], tier: None,
-                kind: None, source_path: None },
-        ];
-        app.ephemeral_sessions.insert("alpha~1".to_string());
-        app.ephemeral_sessions_ordered.push("alpha~1".to_string());
-        app.goal_logs.insert("alpha~1".to_string(), "sub-session output".to_string());
-
-        app.selected_goal = 1; // ephemeral row
-        // The ID used for log lookup must be "alpha~1", not "alpha".
-        let id = app.selected_item_id();
-        assert_eq!(id.as_deref(), Some("alpha~1"));
-        assert!(app.goal_logs.contains_key("alpha~1"),
-            "log lookup by ephemeral session ID must find the sub-session output");
     }
 
 

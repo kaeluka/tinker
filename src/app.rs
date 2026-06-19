@@ -180,7 +180,6 @@ pub struct App {
     pub selected_goal: usize,
     /// Goal sessions currently running, mapped to the reason they were triggered.
     pub running_sessions: HashMap<String, Option<String>>,
-    pub goal_logs: HashMap<String, String>,
     pub user_has_interacted: bool,
     pub phase: Phase,
     /// How many times we've asked tend to fix a parse error in this
@@ -192,7 +191,6 @@ pub struct App {
     /// Retained REPL line cache that survives across frames. Invalidated when
     /// the active session changes or the pane width changes.
     pub repl_buffer: ReplBuffer,
-    pub log_scroll: ScrollState,
     pub goal_text_scroll: ScrollState,
     pub goal_list_scroll: ScrollState,
     pub modal: Option<ModalState>,
@@ -236,7 +234,6 @@ impl App {
             parse_errors: vec![],
             selected_goal: 0,
             running_sessions: HashMap::new(),
-            goal_logs: HashMap::new(),
             user_has_interacted: false,
             phase: Phase::Initializing,
             correction_attempts: 0,
@@ -244,7 +241,6 @@ impl App {
             should_quit: false,
             repl_scroll: ScrollState::new(),
             repl_buffer: ReplBuffer::new(),
-            log_scroll: ScrollState::new(),
             goal_text_scroll: {
                 let mut s = ScrollState::new();
                 s.reset_to_top();
@@ -332,10 +328,6 @@ impl App {
         }
         self.goal_id_collisions = new;
         added
-    }
-
-    pub fn append_goal_log(&mut self, goal_id: &str, text: &str) {
-        self.goal_logs.entry(goal_id.to_string()).or_default().push_str(text);
     }
 
     /// Append agent text to the REPL message list. The first chunk for a new

@@ -126,7 +126,7 @@ reason = "goal-storage defines the four-tier goal discovery model (project-local
 
 [[related]]
 id = "tui"
-reason = "the session registry, unified event stream, and tier field change what the TUI renders; /<goal-id> switching, session log rendering, full ownership of the suppression of tend's startup output (the sole suppression mechanism, now that the startup-silence instruction is gone), and the detail-pane tier/kind tag are governed by tui."
+reason = "the session registry, unified event stream, and tier field change what the TUI renders; /<goal-id> switching, full ownership of the suppression of tend's startup output (the sole suppression mechanism, now that the startup-silence instruction is gone), and the detail-pane tier/kind tag are governed by tui."
 
 [[related]]
 id = "backends"

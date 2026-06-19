@@ -101,10 +101,10 @@ defaults.
 tinker
 ```
 
-You get a three-pane terminal: a conversation pane where you talk to
-the active agent, a list of your goals with the full text of the
-selected goal below it, and a log of whatever goal session is currently
-running. The prompt line shows which agent is active.
+You get a two-column terminal. On the left, a conversation pane where
+you talk to the active agent. On the right, a list of your goals with
+the full text of the selected goal below it. The prompt line shows
+which agent is active.
 
 ---
 
@@ -133,8 +133,8 @@ The three agents consult each other directly. When rummage needs to
 know what you intended, it sends a message to tend. When tend needs to
 know what the code actually does, it sends a message to rummage. When
 jog wants to read the spec, it asks tend; when it wants to read the
-code, it asks rummage. These exchanges appear in the session logs. You
-can see them; you do not manage them.
+code, it asks rummage. These exchanges surface as messages in the
+conversation pane. You can see them; you do not manage them.
 
 Switch between agents with the matching slash command — `/tend`,
 `/rummage`, `/jog`. Every goal session is also addressable the same
@@ -164,7 +164,7 @@ commands; goal sessions get the full tool set. A goal that oversteps
 its boundary hits a code barrier, not a guideline.
 
 The consequence for you: you stay informed about the current feature
-set through tend's reports and the session logs, without ever having
+set through tend's reports and the conversation pane, without ever having
 to read the code. Cognitive debt stays low because the goals —
 which you write and approve — are the whole story. Manual
 documentation rots as AI-built projects evolve; this README is itself

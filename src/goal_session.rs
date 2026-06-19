@@ -25,11 +25,6 @@ pub use crate::prompts::{
 #[cfg(test)]
 pub use crate::prompts::SUMMARY_REQUEST;
 
-/// Sentinel prefix written as the first byte of a log line to signal that the
-/// line carries the trigger reason and must be rendered in bold. The SOH
-/// control character (\x01) never appears in normal LLM output.
-pub const TRIGGER_REASON_MARKER: char = '\x01';
-
 /// Unified session event type. Replaces the former per-agent event enums
 /// (`GoalEvent` and the implicit TendEvent coupling). All sessions — tend,
 /// rummage, jog, and any goal agent — emit these through the single
@@ -287,15 +282,6 @@ pub async fn run_goal(
     let goal_id = goal.id.clone();
     let message = session_init_message(&goal, reason.as_deref(), &compact_index);
 
-    // Emit the trigger reason as the very first log line, marked for bold
-    // rendering by the TUI.
-    if let Some(r) = &reason {
-        let _ = tx.try_send(SessionEvent::Chunk {
-            goal_id: goal_id.clone(),
-            text: format!("{}{}\n", TRIGGER_REASON_MARKER, r),
-        });
-    }
-
     // Accumulate full output for the logger's goal_session_finished observable.
     let full_output: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let full_output_clone = full_output.clone();
@@ -504,28 +490,6 @@ mod tests {
             s.contains("MUST") || s.contains("must"),
             "test_spec_ listing must be expressed as a hard requirement"
         );
-    }
-
-    // spec (tui): "When a goal session starts, the specific 'reason' it was
-    // triggered must be rendered in the log pane in bold font." The log
-    // rendering relies on the TRIGGER_REASON_MARKER prefix being the first
-    // line emitted. This test verifies the marker is defined, distinct, and
-    // that the log-line sentinel format strips cleanly.
-    #[test]
-    fn test_spec_trigger_reason_marker_is_non_printing() {
-        // The marker must be a non-printing character so it can never appear
-        // in normal LLM streaming output.
-        assert!(
-            !TRIGGER_REASON_MARKER.is_alphanumeric()
-                && !TRIGGER_REASON_MARKER.is_whitespace()
-                && !TRIGGER_REASON_MARKER.is_ascii_punctuation(),
-            "TRIGGER_REASON_MARKER must be a non-printing control character",
-        );
-        // Stripping the marker must expose the reason text unchanged.
-        let reason = "implement the thing";
-        let marked = format!("{}{}", TRIGGER_REASON_MARKER, reason);
-        let stripped = marked.strip_prefix(TRIGGER_REASON_MARKER).unwrap();
-        assert_eq!(stripped, reason, "strip_prefix must recover the raw reason string");
     }
 
     // spec: goal-sessions decision — "Every goal session starts fresh —

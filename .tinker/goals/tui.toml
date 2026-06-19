@@ -1,13 +1,13 @@
 id = "tui"
 kind = "feature"
-summary = "This goal owns the terminal interface rendering: the two-column layout, goal-list row format including ephemeral sub-sessions accurately nested under their immediate dispatcher at all depths with label-first display when a label is provided and pane-label normalization to the root permanent goal name, per-category visual styling, pane-label animation, the goal-detail header, goal-ID visual consistency, per-session conversation views, active-session switching, session log access for both permanent and ephemeral sessions, the options dialog, queue and trigger-reason display, and scroll behavior."
+summary = "This goal owns the terminal interface rendering: the two-column layout, goal-list row format including ephemeral sub-sessions accurately nested under their immediate dispatcher at all depths with label-first display when a label is provided and pane-label normalization to the root permanent goal name, per-category visual styling, pane-label animation, the goal-detail header, goal-ID visual consistency, per-session conversation views, active-session switching, the options dialog, queue and trigger-reason display, and scroll behavior."
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left
 column** carries the live conversation. The **right column** stacks
-three bands at fixed proportions: a selectable **goal list** (25%
-height), the full **goal text** of the currently selected goal
-beneath it (50%), and the **session log** at the bottom (25%).
+two bands at fixed proportions: a selectable **goal list** (50%
+height) and the full **goal text** of the currently selected goal
+beneath it (50%).
 
 In the conversation, an input-prompt tag names the active session
 (e.g. `tend> `, `goal-id> `); input routes to that session.
@@ -44,12 +44,6 @@ and model tier readable at a glance without parsing the body.
 In the goal text, list items (markdown bullet points) render with a dash (`-`)
 as the marker — the dash carries less visual weight and keeps the prose
 as the surface.
-
-In the session log, the reason a session was triggered renders in
-bold at the top. The session log pane title shows the selected goal's
-id. The session log is independent of the active conversation: it
-shows passive output from whichever goal is selected in the goal list,
-even when the left-pane conversation is active on a different session.
 
 Any text region scrolls with the mouse wheel — whichever region is
 under the cursor. New content keeps the view pinned to the bottom;
@@ -95,14 +89,15 @@ opens options.
 Tinker is meant to be watched while it works. A single REPL would
 hide too much — the user wants to see the conversation, the
 standing intent, and what the goal sessions are actually doing, all
-at once. The three-region layout keeps all of that visible without
-configuration.
+at once. The two-band
+layout gives maximum space to the goal list — navigating goals,
+reading their text, and seeing running activity at a glance — while
+agent output is on-demand via session switching.
 
 The per-session conversation view keeps the REPL focused: if output
 from all background sessions accumulated together, the thread the
 user is following would be buried. The conversation pane is a chat
-with one agent at a time; the session log pane is where background
-activity is observable. Switching sessions loads the full history so
+with one agent at a time. Switching sessions loads the full history so
 the user never loses context when returning to a previous thread.
 User inputs belong to the session they were sent to — not to a global
 transcript — because a message typed in the `tend>` context has no
@@ -110,9 +105,7 @@ meaning in a `rummage>` thread.
 
 The `/<goal-id>` switching mechanism extends naturally from the
 original three named agents to the whole registry — any goal is
-directly addressable from the keyboard. The session log pane stays
-independent so the user can monitor a goal agent passively while
-conversing with a different session.
+directly addressable from the keyboard.
 
 Tend's startup output is not rendered because it is internal
 scaffolding, not conversation. The user opened tinker to type
@@ -146,9 +139,7 @@ goal session may start outside the user's active focus — the detail
 pane is what they turn to, and the summary delivers scope before the
 body text arrives. The tier tag is there because a wrong tier degrades
 output quality or inflates cost silently for the whole session; the
-only check is seeing the assigned value while work runs. The session
-log title uses the selected item's id (goal or ephemeral sub-session) — consistent with the goal-ID identity
-principle above.
+only check is seeing the assigned value while work runs.
 
 """
 parent_id = ""
@@ -175,7 +166,7 @@ reason = "This goal produces code, which follows `coding-standards` (capability-
 
 [[related]]
 id = "shared-language"
-reason = "tui renders every user-facing text surface (conversation, goal text, session logs); `shared-language` governs the vocabulary of what's shown. Pull it when producing or formatting user-facing output. Asymmetric: shared-language is a packaged goal and cannot carry a back-link to this project-local goal."
+reason = "tui renders every user-facing text surface (conversation, goal text); `shared-language` governs the vocabulary of what's shown. Pull it when producing or formatting user-facing output. Asymmetric: shared-language is a packaged goal and cannot carry a back-link to this project-local goal."
 
 [[related]]
 id = "tend-introspection"
