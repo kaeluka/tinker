@@ -32,9 +32,12 @@ system-prompt text plus a goal-list hash so persona/goal drift is
 detectable across sessions. The log format carries a `kind` discriminator, supports
 `jq`-style aggregation, and lets tend retrieve a single event at low
 token cost. The log appends forever — no rotation; the user
-clears it manually if it grows. Specific event-kind names, shape,
-and retrieval tooling are implementation's call within these
-constraints.
+clears it manually if it grows. On startup, token-usage events are
+replayed from the log to reconstruct per-goal totals, seeding both
+the state snapshot and the TUI's in-memory metrics — so historic
+data survives restarts and deleting the log is the reset action.
+Specific event-kind names, shape, and retrieval tooling are
+implementation's call within these constraints.
 
 Capture stops at the message level; tend's own dialectic moves stay
 in pane content and `notes.md`.

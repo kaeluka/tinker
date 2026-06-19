@@ -2266,8 +2266,9 @@ plain trailing line";
 
     /// Spec (tui — token-usage metrics): the metrics block is right-aligned to
     /// the pane edge so metrics form neat columns across goal rows regardless
-    /// of summary length. Two goals with different-length summaries must render
-    /// their metrics spans starting at the same character offset.
+    /// of summary length (when the summary fits its budget). Two goals with
+    /// different-length summaries must render their metrics spans starting at
+    /// the same character offset — the padding absorbs the difference.
     #[test]
     fn test_spec_goal_list_row_metrics_right_aligned_across_rows() {
         let mut app = App::new();
@@ -2286,7 +2287,7 @@ plain trailing line";
             },
             Goal {
                 id: "beta".to_string(),
-                summary: "a much much longer summary text to widen the row".to_string(),
+                summary: "a longer summary here".to_string(),
                 description: String::new(),
                 parent_id: String::new(),
                 children: vec![],
@@ -2316,6 +2317,8 @@ plain trailing line";
         let running = std::collections::HashSet::new();
         let item_a = GoalListItem::Goal(app.goals[0].clone());
         let item_b = GoalListItem::Goal(app.goals[1].clone());
+        // Pane wide enough that both summaries fit their budget (≥ 21 chars):
+        // beta's max_preview = 50 - 6 - 3 - 15 = 26 ≥ 21, so no truncation.
         let line_a = goal_list_row_line(&item_a, &depth_by_id, None, &running, &app, 50);
         let line_b = goal_list_row_line(&item_b, &depth_by_id, None, &running, &app, 50);
 
@@ -2336,9 +2339,14 @@ plain trailing line";
         }
         let off_a = metrics_offset(&line_a).expect("alpha must render metrics");
         let off_b = metrics_offset(&line_b).expect("beta must render metrics");
+        // Both must align at pane_width - METRICS_WIDTH (50 - 15 = 35).
         assert_eq!(
             off_a, off_b,
             "metrics must start at the same column across rows (right-aligned to pane edge)",
+        );
+        assert_eq!(
+            off_a, 35,
+            "right-aligned metrics must sit at pane_width - METRICS_WIDTH = 35",
         );
     }
 

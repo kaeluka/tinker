@@ -338,9 +338,125 @@ pub fn noop_sender() -> LogSender {
 
 // ── Startup ──────────────────────────────────────────────────────────────────
 
+/// Per-goal token-usage stats reconstructed by replaying the event log on
+/// startup. This is the durable-persistence surface: the event log is the
+/// source of truth, and this function reconstructs the in-memory state from
+/// it. Deleting the log file = clean slate (the user's reset mental model).
+///
+/// `session_count` is derived from `goal_session_finished` events;
+/// `total_prompt_tokens` / `total_completion_tokens` / `total_cached_tokens`
+/// are accumulated from `api_token_usage` events.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HistoricTokenStats {
+    pub session_count: u64,
+    pub total_prompt_tokens: u64,
+    pub total_completion_tokens: u64,
+    pub total_cached_tokens: u64,
+}
+
+/// Replay the event log to reconstruct per-goal token-usage stats for
+/// restart persistence. Reads `runtime.jsonl` line-by-line, parsing each
+/// line as JSON and extracting the `kind` discriminator to decide which
+/// events contribute to token metrics.
+///
+/// Only two event kinds matter:
+/// - `api_token_usage` → accumulate prompt/completion/cached tokens
+/// - `goal_session_finished` → increment session_count
+///
+/// Malformed lines and unknown event kinds are silently skipped — the log
+/// is append-only and may contain lines from older schema versions.
+///
+/// Returns an empty map when the log file doesn't exist (fresh install)
+/// or contains no token-related events (pre-feature logs).
+pub fn load_historic_token_metrics(log_path: &std::path::Path) -> std::io::Result<HashMap<String, HistoricTokenStats>> {
+    let mut metrics: HashMap<String, HistoricTokenStats> = HashMap::new();
+
+    let file = match std::fs::File::open(log_path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(metrics);
+        }
+        Err(e) => return Err(e),
+    };
+
+    use std::io::BufRead;
+    for line in std::io::BufReader::new(file).lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        // Parse as a generic JSON value — we don't need the full typed
+        // enum, just the kind discriminator and the token fields. This
+        // is robust against schema changes (new fields are ignored,
+        // removed fields just return None from .get()).
+        let val: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let kind = val.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+
+        match kind {
+            "api_token_usage" => {
+                let goal_id = match val.get("goal_id").and_then(|g| g.as_str()) {
+                    Some(g) => g.to_string(),
+                    None => continue,
+                };
+                let stats = metrics.entry(goal_id).or_default();
+                if let Some(pt) = val.get("prompt_tokens").and_then(|v| v.as_u64()) {
+                    stats.total_prompt_tokens += pt;
+                }
+                if let Some(ct) = val.get("completion_tokens").and_then(|v| v.as_u64()) {
+                    stats.total_completion_tokens += ct;
+                }
+                if let Some(cached) = val.get("cached_tokens").and_then(|v| v.as_u64()) {
+                    stats.total_cached_tokens += cached;
+                }
+            }
+            "goal_session_finished" => {
+                let goal_id = match val.get("goal_id").and_then(|g| g.as_str()) {
+                    Some(g) => g.to_string(),
+                    None => continue,
+                };
+                let stats = metrics.entry(goal_id).or_default();
+                stats.session_count += 1;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(metrics)
+}
+
+/// Convert `HistoricTokenStats` (the replay result) into the logger's
+/// `GoalTokenMetrics` (the state-snapshot type). Used to seed the logger
+/// task's initial `StateSnapshot.token_metrics` on startup.
+fn historic_to_metrics(stats: &HistoricTokenStats) -> GoalTokenMetrics {
+    let mut m = GoalTokenMetrics {
+        session_count: stats.session_count as usize,
+        total_prompt_tokens: stats.total_prompt_tokens,
+        total_completion_tokens: stats.total_completion_tokens,
+        ..GoalTokenMetrics::default()
+    };
+    m.recalc();
+    m
+}
+
 pub fn start_logger(log_path: PathBuf, state_path: PathBuf) -> LogSender {
     let (tx, rx) = mpsc::unbounded_channel::<LogEntry>();
-    tokio::spawn(logger_task(rx, log_path, state_path));
+
+    // Replay the event log to seed initial token metrics so historic data
+    // survives restarts. The state snapshot's token_metrics start populated
+    // from the log rather than empty. Deleting the log file = clean slate
+    // (the user's reset mental model). A non-existent or empty log produces
+    // an empty map (fresh install).
+    let initial_metrics = load_historic_token_metrics(&log_path)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(goal_id, stats)| (goal_id, historic_to_metrics(&stats)))
+        .collect::<HashMap<String, GoalTokenMetrics>>();
+
+    tokio::spawn(logger_task(rx, log_path, state_path, initial_metrics));
     LogSender {
         inner: LogSenderInner::Async(tx),
     }
@@ -377,9 +493,13 @@ async fn logger_task(
     mut rx: mpsc::UnboundedReceiver<LogEntry>,
     log_path: PathBuf,
     state_path: PathBuf,
+    initial_token_metrics: HashMap<String, GoalTokenMetrics>,
 ) {
     let mut batch: Vec<String> = Vec::new();
-    let mut state = StateSnapshot::default();
+    let mut state = StateSnapshot {
+        token_metrics: initial_token_metrics,
+        ..StateSnapshot::default()
+    };
     let mut state_dirty = false;
     let mut last_state_change: Option<std::time::Instant> = None;
 
@@ -1688,5 +1808,102 @@ mod tests {
             m.get("total_completion_tokens").is_none(),
             "total_completion_tokens must be serde(skip)"
         );
+    }
+
+    // ── Historic replay tests ─────────────────────────────────────────────────
+
+    // spec (tend-introspection): load_historic_token_metrics reads the
+    // event log and reconstructs per-goal token stats from api_token_usage
+    // and goal_session_finished events.
+    #[test]
+    fn test_spec_load_historic_token_metrics_replays_log() {
+        let tmp = std::env::temp_dir().join(format!(
+            "tinker_test_replay_{}.jsonl",
+            std::process::id()
+        ));
+
+        // Write a log with mixed events.
+        let lines = [
+            r#"{"ts":"2026-01-01T00:00:00Z","source":"harness","kind":"tinker_system_message_received","content":"start"}"#,
+            r#"{"ts":"2026-01-01T00:01:00Z","source":"backend","kind":"api_token_usage","goal_id":"tui","prompt_tokens":1000,"completion_tokens":200,"total_tokens":1200,"cached_tokens":null}"#,
+            r#"{"ts":"2026-01-01T00:02:00Z","source":"backend","kind":"api_token_usage","goal_id":"tui","prompt_tokens":1500,"completion_tokens":300,"total_tokens":1800,"cached_tokens":500}"#,
+            r#"{"ts":"2026-01-01T00:03:00Z","source":"goal_session","kind":"goal_session_finished","goal_id":"tui","exit_status":"clean","duration_ms":5000,"files_modified_count":0,"files_modified":[],"tool_calls":2,"summary_chars":0,"full_output":"...","backend":"native"}"#,
+            r#"{"ts":"2026-01-01T00:04:00Z","source":"backend","kind":"api_token_usage","goal_id":"backends","prompt_tokens":5000,"completion_tokens":1000,"total_tokens":6000,"cached_tokens":null}"#,
+        ];
+        let content = lines.join("\n");
+        std::fs::write(&tmp, &content).unwrap();
+
+        let metrics = load_historic_token_metrics(&tmp).expect("replay must succeed");
+
+        assert_eq!(metrics.len(), 2, "two goals must be tracked");
+
+        let tui = &metrics["tui"];
+        assert_eq!(tui.session_count, 1);
+        assert_eq!(tui.total_prompt_tokens, 2500);
+        assert_eq!(tui.total_completion_tokens, 500);
+        assert_eq!(tui.total_cached_tokens, 500);
+
+        let backends = &metrics["backends"];
+        assert_eq!(backends.session_count, 0);
+        assert_eq!(backends.total_prompt_tokens, 5000);
+        assert_eq!(backends.total_completion_tokens, 1000);
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    // spec (tend-introspection): load_historic_token_metrics returns an
+    // empty map for a non-existent log file (fresh install).
+    #[test]
+    fn test_spec_load_historic_token_metrics_missing_file() {
+        let path = std::path::Path::new("/nonexistent/tinker_test_does_not_exist.jsonl");
+        let metrics = load_historic_token_metrics(path).expect("missing file must return Ok(empty)");
+        assert!(metrics.is_empty(), "missing log file must produce empty metrics");
+    }
+
+    // spec (tend-introspection): load_historic_token_metrics skips
+    // malformed lines silently — the log is append-only and may contain
+    // lines from older schema versions or corrupted entries.
+    #[test]
+    fn test_spec_load_historic_token_metrics_skips_malformed() {
+        let tmp = std::env::temp_dir().join(format!(
+            "tinker_test_replay_malformed_{}.jsonl",
+            std::process::id()
+        ));
+
+        let content = [
+            r#"{"ts":"2026-01-01T00:00:00Z","source":"backend","kind":"api_token_usage","goal_id":"tui","prompt_tokens":1000,"completion_tokens":200,"total_tokens":1200,"cached_tokens":null}"#,
+            "this is not valid json at all",
+            "",
+            r#"{"incomplete":"json"}"#,
+            r#"{"ts":"2026-01-01T00:01:00Z","source":"backend","kind":"api_token_usage","goal_id":"tui","prompt_tokens":500,"completion_tokens":100,"total_tokens":600,"cached_tokens":null}"#,
+        ]
+        .join("\n");
+        std::fs::write(&tmp, &content).unwrap();
+
+        let metrics = load_historic_token_metrics(&tmp).expect("replay must succeed despite malformed lines");
+
+        let tui = &metrics["tui"];
+        assert_eq!(tui.total_prompt_tokens, 1500, "must accumulate across valid lines, skipping malformed");
+        assert_eq!(tui.total_completion_tokens, 300);
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    // spec (tend-introspection): historic_to_metrics converts the replay
+    // result into GoalTokenMetrics with correct derived averages.
+    #[test]
+    fn test_spec_historic_to_metrics_derives_averages() {
+        let stats = HistoricTokenStats {
+            session_count: 2,
+            total_prompt_tokens: 40000,
+            total_completion_tokens: 6000,
+            total_cached_tokens: 10000,
+        };
+        let metrics = historic_to_metrics(&stats);
+        assert_eq!(metrics.session_count, 2);
+        assert_eq!(metrics.total_prompt_tokens, 40000);
+        assert_eq!(metrics.total_completion_tokens, 6000);
+        assert_eq!(metrics.avg_input_tokens_per_session, 20000);
+        assert_eq!(metrics.avg_output_tokens_per_session, 3000);
     }
 }

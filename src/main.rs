@@ -535,12 +535,32 @@ async fn main() -> Result<()> {
     );
 
     let backend_name = "native";
+    let log_path = primary_tinker_dir.join("logs").join("runtime.jsonl");
     let log = logger::start_logger(
-        primary_tinker_dir.join("logs").join("runtime.jsonl"),
+        log_path.clone(),
         primary_tinker_dir.join("state").join("runtime.json"),
     );
 
     let app = Arc::new(Mutex::new(App::new()));
+
+    // Replay the event log to seed historic token metrics so the TUI
+    // displays data from before this restart. The logger's state snapshot
+    // is seeded inside `start_logger` (same replay); this seeds App's
+    // in-memory stats for TUI rendering. Deleting the log file = clean
+    // slate (the user's reset mental model).
+    {
+        let mut a = app.lock().unwrap();
+        if let Ok(historic) = logger::load_historic_token_metrics(&log_path) {
+            for (goal_id, stats) in historic {
+                a.token_usage.insert(goal_id, app::GoalTokenStats {
+                    session_count: stats.session_count,
+                    total_prompt_tokens: stats.total_prompt_tokens,
+                    total_completion_tokens: stats.total_completion_tokens,
+                    total_cached_tokens: stats.total_cached_tokens,
+                });
+            }
+        }
+    }
 
     {
         let mut a = app.lock().unwrap();
