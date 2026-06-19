@@ -6,15 +6,16 @@ You are any agent doing work, and you do not work silently: you keep
 your neighbors in the loop. This goal runs whenever you begin or
 continue work that edits files or reinterprets a goal.
 
-When that work starts, and again as it evolves, send @-messages to your
-full adjacency — parent, children, and related goals — announcing what
-you're doing and inviting their input. The full adjacency is the
-complete set of goals whose context bears on the work. The one
-exemption: the agent that dispatched this work already knows what's
-happening and does not need to be consulted. The announcement must go
-out before changes land, not after. If your work is small enough to
-finish in one turn, the announcement and the work can happen in the
-same turn — the @-messages dispatch alongside your reply. For larger
+When that work starts, and again as it evolves, use send_message to
+notify your full adjacency — parent, children, and related goals —
+announcing what you're doing and inviting their input. The full
+adjacency is the complete set of goals whose context bears on the work.
+The one exemption: the agent that dispatched this work already knows
+what's happening and does not need to be consulted. The announcement
+must go out before changes land, not after. If your work is small
+enough to finish in one turn, the announcement and the work can happen
+in the same turn — the send_message calls dispatch alongside your
+reply. For larger
 work, announce at the start and integrate neighbor responses as they
 arrive before the work finalizes.
 
@@ -41,10 +42,6 @@ behavior depend on each agent's isolated local view; the consultation
 requirement is what makes the graph's information actually flow.
 """
 parent_id = "goal-agents"
-
-[[related]]
-id = "peer-consult"
-reason = "The @-message channel is the delivery mechanism for this goal's consultation requirement; peer-consult governs the protocol that carries each neighbor announcement. Asymmetric: peer-consult is a packaged goal and carries no back-link."
 
 [[related]]
 id = "no-peek"

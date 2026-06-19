@@ -39,9 +39,9 @@ pub enum SessionEvent {
     /// A streamed text chunk from the LLM.
     Chunk { goal_id: String, text: String },
     /// The session has finished processing the current message.
-    /// `full_output` is the complete assembled reply from the LLM — used by the
-    /// harness for envelope extraction at Done time, bypassing the chunk-reconstructed
-    /// `current_session_text` which can have gaps when the event channel is under load.
+    /// `full_output` is the complete assembled reply from the LLM — the
+    /// authoritative output, free of chunk-delivery gaps that can occur when
+    /// the event channel is under load.
     Done { goal_id: String, full_output: String },
     /// Cleanup of tinker-test-case markers failed before this goal session
     /// could start. `dirty_files` lists files still containing markers;
@@ -63,7 +63,7 @@ pub fn build_neighborhood_table(goal: &Goal) -> String {
     if !goal.parent_id.is_empty() {
         rows.push((
             goal.parent_id.clone(),
-            "parent goal — ask @tend for broader context and framing".to_string(),
+            "parent goal — ask tend for broader context and framing".to_string(),
         ));
     }
 
@@ -98,7 +98,7 @@ pub fn build_neighborhood_table(goal: &Goal) -> String {
 /// The message includes:
 /// 1. Identity — "You are the agent for goal `<id>`."
 /// 2. Navigation — compact goal index and on-demand pull path.
-/// 3. Message-passing semantics — how @goal-id routing works.
+/// 3. Message-passing semantics — how send_message routing works.
 /// 4. The goal's own description (WHAT/WHY).
 /// 5. Rules (VCS, directory writes, ownership mandate).
 /// 6. Neighbor goals — mandatory consultation table (agent-collaboration).
@@ -148,16 +148,15 @@ pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &s
 }
 
 /// Builds the init message for an ephemeral fresh sub-session. Used by the
-/// run loop when spawning a sub-session in response to a `<@goal-id|label>`
-/// fresh-dispatch envelope.
+/// run loop when spawning a sub-session via the spawn_session tool.
 ///
 /// The message includes:
 /// 1. Ephemeral identity — session ID and actual dispatcher ID.
 /// 2. Label (if provided) — correlation tag the dispatcher used when dispatching.
-/// 3. Reply instruction — reply via `<@{dispatcher_id}>`.
+/// 3. Reply instruction — reply via `send_message` to the dispatcher.
 /// 4. Fresh-dispatch capability — same as the dispatcher; sub-sessions may act
-///    as coordinators, using their own `session_id` in dispatch envelopes.
-/// 5. Task — the message the dispatcher enclosed in the fresh-dispatch envelope.
+///    as coordinators, using `spawn_session` for their own sub-dispatches.
+/// 5. Task — the subgoal the dispatcher enclosed in the spawn_session call.
 /// 6. Navigation — compact goal index.
 /// 7. Message-passing and progress sections.
 /// 8. Goal context — the permanent dispatcher goal's description.
@@ -362,7 +361,7 @@ mod tests {
 
     // spec (agent-liveness): the framework preamble must include a Progress
     // guarantee section instructing agents to route denied tool calls via
-    // @-message, retry transient errors, and never silently abort.
+    // send_message, retry transient errors, and never silently abort.
     #[test]
     fn test_spec_session_init_includes_progress_guarantee() {
         let goal = make_goal("test", "do something");
@@ -451,7 +450,7 @@ mod tests {
     // spec: tend exemption — tend is the goal tree's keeper and owns no source
     // code. Its preamble must omit both the directory access restriction (it
     // legitimately reads/writes .tinker/) and the implementation-ownership
-    // mandate (it delegates code changes to goal sessions via <@rummage>).
+    // mandate (it delegates code changes to goal sessions via send_message to rummage).
     #[test]
     fn test_spec_tend_preamble_omits_dir_and_ownership_rules() {
         let mut tend = make_goal("tend", "manage the goal tree");
@@ -734,8 +733,8 @@ mod tests {
     }
 
     // spec: no-peek — agents do not read goal files to understand neighbors.
-    // The init message must direct agents to consult @tend when the compact
-    // index and edge reasons aren't sufficient — not to fetch TOML files.
+    // The init message must direct agents to ask tend (via send_message) when
+    // the compact index and edge reasons aren't sufficient — not to fetch TOML files.
     #[test]
     fn test_spec_goal_init_escalates_to_tend_for_neighbor_context() {
         let mut goal = make_goal("calc", "build calc");
@@ -744,8 +743,8 @@ mod tests {
         let msg = goal_init_message(&goal, None);
 
         assert!(
-            msg.contains("@tend"),
-            "init message must name @tend as the escalation path for neighbor context"
+            msg.contains("send_message") && msg.contains("tend"),
+            "init message must name send_message to tend as the escalation path for neighbor context"
         );
         assert!(
             !msg.contains("read `.tinker/goals/"),
@@ -774,10 +773,10 @@ mod tests {
         );
     }
 
-    // spec: goal-agents preamble — before @-messaging another agent, an agent must
+    // spec: goal-agents preamble — before messaging another agent, an agent must
     // understand the recipient's role via the compact index and edge reasons (no-peek:
-    // no goal-file reads). If the index isn't sufficient, @tend is the escalation
-    // path. The preamble must encode this dialog-first model.
+    // no goal-file reads). If the index isn't sufficient, tend via send_message is the
+    // escalation path. The preamble must encode this dialog-first model.
     #[test]
     fn test_spec_preamble_includes_read_before_message_mandate() {
         let goal = make_goal("widget", "build a widget");
@@ -793,7 +792,7 @@ mod tests {
     }
 
     // spec: goal-agents preamble — completion reports go to the dispatcher (the
-    // agent whose @-message initiated the task), not always to @tend. The preamble
+    // agent whose message initiated the task), not always to tend. The preamble
     // must name the dispatcher as the recipient and require test_spec_ listing.
     #[test]
     fn test_spec_preamble_reports_to_dispatcher_not_always_tend() {
@@ -804,8 +803,8 @@ mod tests {
             "preamble must name the dispatcher as the completion-report target"
         );
         assert!(
-            !msg.contains("send `@tend` a structured summary"),
-            "preamble must not hardcode @tend as the mandatory report target"
+            !msg.contains("@tend"),
+            "preamble must not use @-notation routing to tend"
         );
         assert!(
             msg.contains("test_spec_"),
@@ -837,8 +836,8 @@ mod tests {
         );
     }
 
-    // spec (fresh-agents): the fresh-dispatch section must describe the @-envelope
-    // syntax, label semantics, and the coordinator model.
+    // spec (fresh-agents): the fresh-dispatch section must describe the
+    // spawn_session tool, label semantics, and the coordinator model.
     #[test]
     fn test_spec_preamble_includes_fresh_dispatch_instructions() {
         let goal = make_goal("widget", "build a widget");
@@ -848,8 +847,8 @@ mod tests {
             "preamble must include Fresh dispatch section header"
         );
         assert!(
-            msg.contains("<@") && msg.contains("|label>"),
-            "fresh dispatch section must include envelope syntax"
+            msg.contains("spawn_session"),
+            "fresh dispatch section must include the spawn_session tool"
         );
     }
 

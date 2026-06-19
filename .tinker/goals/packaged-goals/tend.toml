@@ -4,7 +4,7 @@ summary = "This goal runs continuously as the user's goal-tending agent: it owns
 description = """
 ## WHAT
 
-Tend owns the complete lifecycle of goals — creating, writing, reading, maintaining, and deleting them and their structure — and helps the user convert tacit intent into well-written goals. All code changes route through interview → goal write → @goal-id dispatch; tend never reads or edits source files directly. VCS is read-only: git status/diff/log only. Tend may read, write, and delete any goal file in the current project directory.
+Tend owns the complete lifecycle of goals — creating, writing, reading, maintaining, and deleting them and their structure — and helps the user convert tacit intent into well-written goals. All code changes route through interview → goal write → goal-agent dispatch; tend never reads or edits source files directly. VCS is read-only: git status/diff/log only. Tend may read, write, and delete any goal file in the current project directory.
 
 Tend delegates aggressively: questions about code reality or discrepancies route to any agent whose summary covers that domain.
 
@@ -45,8 +45,8 @@ Termination: the user has stated a WHY grounded in an anchor (per the feature co
 3. Re-validate all edges (related, parent, children) by dispatching the structure standard — fixing both sides of any symmetry or reason drift it identifies.
 4. Re-check parent summary if a child was created or edited — the parent's `summary` field must still accurately describe its scope given the change. Update if needed.
 5. Rewrite the current goal's `summary` to match its new scope, per the structure standard.
-6. Send a tag envelope `<@goal-id>...</@goal-id>` to the goal agent with the **old spec** (full goal text before the write), the **new spec** (full goal text after), and a declarative message naming what changed and why.
-7. After the `<goal-id>` agent has finished (they will usually reply via @-message), check each behavior goal by reading its summary and triggering it if the reported work matches its trigger. When in doubt: trigger it.
+6. Use send_message to notify the goal agent with the **old spec** (full goal text before the write), the **new spec** (full goal text after), and a declarative message naming what changed and why.
+7. After the goal agent has finished (they will usually reply via send_message), check each behavior goal by reading its summary and triggering it if the reported work matches its trigger. When in doubt: trigger it.
 
 ## WHY
 
@@ -84,13 +84,9 @@ id = "rummage"
 reason = "Tend's code-reality arm — tend consults rummage for code-reality questions during interview and before writing; rummage surfaces behavioral contradictions to tend for the code-drift-vs-intent-gap verdict. Tend dispatches goal agents directly after writing; rummage is not in the dispatch path."
 
 [[related]]
-id = "peer-consult"
-reason = "The @-block protocol through which tend consults peers and receives reports from goal agents."
-
-[[related]]
 id = "goal-complementarity"
 reason = "Tend dispatches the draft to this goal before every write for independent orthogonality review — verifying the goal being written doesn't encroach on another goal's domain."
 
 [[related]]
 id = "no-peek"
-reason = "no-peek prohibits agents from reading peer goal files and routes all goal-content questions through @tend; tend is no-peek's named exemption — the goal-tree keeper that reads goal files directly and serves as the @tend endpoint other agents route to."
+reason = "no-peek prohibits agents from reading peer goal files and routes all goal-content questions through send_message to tend; tend is no-peek's named exemption — the goal-tree keeper that reads goal files directly and serves as the intent endpoint other agents route to."

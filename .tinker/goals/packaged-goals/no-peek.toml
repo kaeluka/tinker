@@ -1,11 +1,11 @@
 id = "no-peek"
 kind = "behavior"
-summary = "This goal runs whenever an agent needs context another agent holds: it ensures the agent asks via an @-message rather than reading the peer goal's file, so the edge graph stays the complete coupling map, with tend exempt as the goal-tree keeper that reads files directly."
+summary = "This goal runs whenever an agent needs context another agent holds: it ensures the agent asks via send_message rather than reading the peer goal's file, so the edge graph stays the complete coupling map, with tend exempt as the goal-tree keeper that reads files directly."
 description = """
 Whenever you need context another agent holds, you are a
-message-sender, not a file-reader: ask for it with an `@`-message
+message-sender, not a file-reader: ask for it with send_message
 rather than opening the peer goal's file. Every goal is an agent, and
-all information flow between agents goes through `@`-messages — you
+all information flow between agents goes through send_message — you
 send a message, the recipient answers and asks follow-ups to ground
 the exchange. The compact index — goal IDs, summaries, and edge
 reasons — is usually enough to decide whom to consult and how to frame
@@ -13,7 +13,8 @@ the first message; when it isn't, you ask.
 
 **Tend is exempt.** Tend is the goal tree's keeper — it holds the full
 tree and reads goal files directly. Every other agent routes
-goal-content questions through `@tend` rather than opening files.
+goal-content questions through send_message to tend rather than
+opening files.
 
 This keeps the edge graph — `[[related]]` and `[[children]]` links
 with their reasons — as the complete, navigable coupling map. Adding
@@ -24,22 +25,22 @@ otherwise would. File reads break this: every agent that reads a peer
 must know its ID and open its file, so as the tree grows those
 enumerations multiply, the same content is re-read everywhere, and
 coupling lives in goal prose instead of the edge structure — the graph
-stops being the source of truth. The `@`-message model has no such
+stops being the source of truth. The send_message model has no such
 failure mode: coupling is a property of the graph, not of what each
 node has memorized about its neighbors, so goals can be added, split,
 or retired without touching every agent that might have read them. At
 scale this is the difference between a system that stays navigable and
 one that drowns in redundant enumeration.
 """
-parent_id = "peer-consult"
+parent_id = ""
 
 [[related]]
 id = "goal-complementarity"
-reason = "The compositionality argument here — adding one edge propagates connectivity through the graph — is the communication-layer form of `goal-complementarity`'s domain-orthogonality principle. Both say the same thing at different levels: coupling lives in the graph structure, not in what each node enumerates."
+reason = "The compositionality argument here — adding one edge propagates connectivity through the graph — is the communication-layer form of goal-complementarity's domain-orthogonality principle. Both say the same thing at different levels: coupling lives in the graph structure, not in what each node enumerates."
 
 [[related]]
 id = "tend"
-reason = "no-peek exempts tend by name: tend is the goal-tree keeper, the one agent that reads goal files directly while every other agent routes goal-content questions through @tend. tend's direct-read access and its @tend intent-endpoint role are the operational form of that exemption."
+reason = "no-peek exempts tend by name: tend is the goal-tree keeper, the one agent that reads goal files directly while every other agent routes goal-content questions through send_message to tend. tend's direct-read access and its intent-endpoint role are the operational form of that exemption."
 
 [[related]]
 id = "goal-structure-standard"

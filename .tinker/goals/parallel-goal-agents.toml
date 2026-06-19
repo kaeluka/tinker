@@ -8,7 +8,7 @@ Goal agents run directly in the main working directory. Multiple agents can be a
 
 ## WHY
 
-Coordination via `@`-messages keeps the model simple: no merge infrastructure, and the conflict-resolution protocol agents already use for goal-level coordination doubles as the parallel-write guard.
+Coordination via send_message calls keeps the model simple: no merge infrastructure, and the conflict-resolution protocol agents already use for goal-level coordination doubles as the parallel-write guard.
 
 """
 parent_id = "goal-agents"

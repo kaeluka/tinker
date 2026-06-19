@@ -20,7 +20,7 @@ reply (full text, tool calls and results inline), and
 tend-injected system messages (full content plus a `source` field
 naming the emitting component — dispatcher, harness);
 goal-session lifecycle (dispatched, started, finished) with
-observable facts; `@`-dispatch emissions; cleanup-hook results;
+observable facts; dispatch emissions; cleanup-hook results;
 goal-file changes; TUI structural state changes (selection,
 focus, scroll, queue); and **batch state transitions** — when the
 system moves from idle to active and back — as first-class events,
@@ -93,7 +93,7 @@ reason = "tend-introspection's substrate captures tui's structural state (select
 
 [[related]]
 id = "goal-agents"
-reason = "tend-introspection logs goal-session lifecycle events (dispatched/started/finished), @-dispatch emissions, a session-start system-prompt and goal-list-hash capture, and cross-tier goal collision events (goal id, contributing tiers and paths) — all produced by goal-agents' session registry and its startup diagnostics."
+reason = "tend-introspection logs goal-session lifecycle events (dispatched/started/finished), dispatch emissions, a session-start system-prompt and goal-list-hash capture, and cross-tier goal collision events (goal id, contributing tiers and paths) — all produced by goal-agents' session registry and its startup diagnostics."
 
 [[related]]
 id = "goal-storage"
@@ -105,12 +105,10 @@ reason = "fresh-agents owns the batch concept (active/idle system state and the 
 
 [[related]]
 id = "spawn-session"
-reason = "spawn-session dispatches produce a new event type in the runtime event log — dispatcher (parent) session, label, sub-session id, dispatch time — alongside the existing envelope-based dispatch emission."
+reason = "spawn-session dispatches produce a new event type in the runtime event log — dispatcher (parent) session, label, sub-session id, dispatch time."
 
 [[related]]
 id = "send-message"
-reason = "send-message dispatches produce a new event type in the runtime event log — sender, target, dispatch time — alongside the existing envelope-based dispatch emission."
+reason = "send-message dispatches produce a new event type in the runtime event log — sender, target, dispatch time."
 
-[[related]]
-id = "binary-relative-tier-loading"
-reason = "the binary-relative tier's establishment that adds a fourth tier to the loader's spec, on which the runtime-event log's tier-identification fields and the startup-diagnostic capture depend"
+

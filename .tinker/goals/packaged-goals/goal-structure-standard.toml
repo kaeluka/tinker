@@ -102,8 +102,8 @@ extensibility of the goal system: new agents cannot be layered at
 parity with named ones. In packaged goals — which using projects
 cannot edit — this privilege is permanent, and the goal system's
 generic lookup mechanisms (summary scan over behavior goals, owned by
-tend; edge-reason scan over `[[related]]` tables, owned by peer-consult
-and agent-collaboration) degrade to second-class behind hardcoded
+tend; edge-reason scan over `[[related]]` tables, owned by
+agent-collaboration) degrade to second-class behind hardcoded
 names. When goal text directs a consultation or dispatch, it must
 describe a lookup pattern — "the agent whose summary covers the
 domain," "the content standard matching the goal's kind," "the
@@ -115,7 +115,7 @@ instructions** (explaining what exists). Declarative sentences about
 other agents are fine (*"rummage establishes what the running system
 actually does"* names a domain boundary); imperative sentences are the
 tell (*"consult rummage for code reality"* is routing, regardless of
-whether the agent id is `@`-prefixed or spelled out in prose). "Goal
+how the agent id is written in prose). "Goal
 text" for this rule means the TOML prose fields (`summary` and the
 body text); structured link fields (`[[children]]`, `[[related]]`) are
 link data and may contain agent ids. A goal may reference its own id —

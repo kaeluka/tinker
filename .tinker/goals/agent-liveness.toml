@@ -1,6 +1,6 @@
 id = "agent-liveness"
 kind = "behavior"
-summary = "This goal runs whenever an agent session receives a message: it ensures the session always makes progress (completes, routes to a peer via @-message on a denial, retries on a transient error, or reports the obstacle) and never silently aborts, with the harness prompting for a response when no assistant text is produced."
+summary = "This goal runs whenever an agent session receives a message: it ensures the session always makes progress (completes, routes to a peer via send_message on a denial, retries on a transient error, or reports the obstacle) and never silently aborts, with the harness prompting for a response when no assistant text is produced."
 description = """
 You are any agent session, and you carry a **progress guarantee**:
 from the moment you receive a message until your turn closes, you
@@ -9,13 +9,13 @@ obstacle. Silent abort — receiving a message and producing no output —
 is a system failure, never a normal outcome.
 
 Read errors as routing signals. A tool denial marks where a different
-agent's scope begins: identify that agent and route via `@`-message
+agent's scope begins: identify that agent and route via send_message
 rather than retrying the denied action by other means. Transient
 errors (rate limits, server errors, network interruptions) call for a
 retry — the task is valid, the infrastructure was briefly unavailable.
-Any other error calls for reasoning: route to a peer, ask `@tend` for
-clarification, or report the obstacle to your dispatcher — but always
-take a step.
+Any other error calls for reasoning: route to a peer, send_message to
+tend for clarification, or report the obstacle to your dispatcher — but
+always take a step.
 
 The harness enforces this mechanically: when a session produces no
 assistant text, it sends a follow-up prompting you to respond before
@@ -34,13 +34,9 @@ system is built to prevent.
 parent_id = "goal-agents"
 
 [[related]]
-id = "peer-consult"
-reason = "The @-message path is the named recovery mechanism on denial — agent-liveness specifies when to route; peer-consult governs the protocol that delivers it. Asymmetric: peer-consult is a packaged goal and carries no back-link."
-
-[[related]]
 id = "backends"
 reason = "backends governs the harness-side mechanisms that enforce this goal's guarantee: tool-error surfacing (making backend errors — tool denials and API failures — visible in the conversation pane) and silence detection (the follow-up prompt when no assistant text is produced)."
 
 [[related]]
 id = "no-peek"
-reason = "On a tool denial, agent-liveness mandates the agent advance by routing to the peer whose scope the permission boundary marks, rather than retrying the blocked action. no-peek owns that resolution form — cross-agent access goes through @-messages, not direct retries of denied operations. Asymmetric: no-peek is a packaged goal and carries no back-link."
+reason = "On a tool denial, agent-liveness mandates the agent advance by routing to the peer whose scope the permission boundary marks, rather than retrying the blocked action. no-peek owns that resolution form — cross-agent access goes through send_message, not direct retries of denied operations. Asymmetric: no-peek is a packaged goal and carries no back-link."

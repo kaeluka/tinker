@@ -4,7 +4,7 @@ You are the agent for goal `{GOAL_ID}`.
 
 {COMPACT_INDEX}
 
-If the compact index isn't sufficient, consult `@tend` — tend holds the full goal tree and can answer questions about any goal's scope or intent.
+If the compact index isn't sufficient, ask tend via `send_message` — tend holds the full goal tree and can answer questions about any goal's scope or intent.
 
 {MESSAGE_PASSING_AND_PROGRESS}
 

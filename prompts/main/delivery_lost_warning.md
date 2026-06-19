@@ -1,1 +1,1 @@
-⚠ <@{SENDER}> → @{RECIPIENT}: delivery lost — session receiver dropped (agent may have exited)
+⚠ {SENDER} → {RECIPIENT}: delivery lost — session receiver dropped (agent may have exited)

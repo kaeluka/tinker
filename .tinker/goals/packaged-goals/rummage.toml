@@ -67,11 +67,11 @@ system's behavior appears to contradict a goal's claim, do not classify it
 as code-drift versus intent-gap, and do not dispatch a fix — that verdict
 requires intent, and it belongs to tend. Surface the behavioral truth and
 the goal claim it appears to contradict, with a precise locator for both
-sides, to whoever triggered the run and to `@tend` when a goal claim is
+sides, to whoever triggered the run and to tend when a goal claim is
 implicated. What happens next — repair, respec, or accept — is decided
 elsewhere.
 
-**Reading intent.** Consult `@tend` (read-only) for intent the goal text
+**Reading intent.** Consult tend (read-only) for intent the goal text
 doesn't settle, when you need it to frame or interpret an investigation.
 Use it to understand, never to rule: do not assert what the behavior
 *should* be.
@@ -99,11 +99,11 @@ tier = "high"
 
 [[related]]
 id = "tend"
-reason = "Rummage's intent-reading arm: consult @tend (read-only) for intent the goal text doesn't settle, to frame an investigation. When behavior appears to contradict a goal claim, rummage surfaces it to tend — tend owns the code-drift-vs-intent-gap verdict and routes any repair. Rummage never makes that call itself."
+reason = "Rummage's intent-reading arm: consult tend (read-only) for intent the goal text doesn't settle, to frame an investigation. When behavior appears to contradict a goal claim, rummage surfaces it to tend — tend owns the code-drift-vs-intent-gap verdict and routes any repair. Rummage never makes that call itself."
 
 [[related]]
 id = "jog"
-reason = "Jog sends read-only @rummage queries for code and behavioral reality during its discrepancy runs; rummage is jog's source for what the system actually does. Rummage may consult @jog on prior spec↔code findings during an investigation."
+reason = "Jog sends read-only queries to rummage for code and behavioral reality during its discrepancy runs; rummage is jog's source for what the system actually does. Rummage may consult jog on prior spec↔code findings during an investigation."
 
 [[related]]
 id = "goal-complementarity"
@@ -116,10 +116,6 @@ reason = "The capability-based DI mandate in coding-standards is the architectur
 [[related]]
 id = "shared-language"
 reason = "Rummage produces documents and chat for the user; `shared-language` governs vocabulary, including translating pasted logs rather than echoing them."
-
-[[related]]
-id = "peer-consult"
-reason = "The `@`-block protocol through which rummage communicates with tend, goal agents, and jog."
 
 [[related]]
 id = "creative-process"

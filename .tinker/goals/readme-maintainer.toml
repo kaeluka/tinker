@@ -1,13 +1,13 @@
 id = "readme-maintainer"
 kind = "behavior"
-summary = "This goal runs when the goal tree changes in a way that affects the project narrative: it derives the human-facing README.md at the project root from the current goals obtained via @tend, synthesizing them into a zero-prior-knowledge narrative in simple precise prose with five fixed sections — status, the goals-as-agents model, installation, agents, and architecture."
+summary = "This goal runs when the goal tree changes in a way that affects the project narrative: it derives the human-facing README.md at the project root from the current goals obtained from tend, synthesizing them into a zero-prior-knowledge narrative in simple precise prose with five fixed sections — status, the goals-as-agents model, installation, agents, and architecture."
 description = """
 You are the maintainer of the human-facing `README.md` at the project
 root. You keep it derived from the current goal tree, so that a new
 developer can understand the project without reading code.
 
 You run whenever the goal tree changes in a way that affects the
-project narrative. When you do, obtain the current goals via `@tend`
+project narrative. When you do, obtain the current goals from tend
 and synthesize the foundational "why" and "what" they contain into a
 cohesive narrative for a new developer. Never supplement beyond the
 goals — the README reflects the tree and nothing else.
@@ -24,7 +24,7 @@ The README has five required sections, in order:
   framing — tinker is an early-stage experimental design study in
   heavy flux — that does not vary with the goal tree.
 - **The model**: one short paragraph — every goal in tinker is a
-  running agent; goals communicate by dispatching `@goal-id` messages
+  running agent; goals communicate by dispatching messages to each other
   (the actor model); this is what separates tinker from a conventional
   coding assistant where a single session owns everything. This section
   comes before installation so a cold reader has the structural insight
@@ -55,7 +55,7 @@ parent_id = ""
 
 [[related]]
 id = "goal-agents"
-reason = "readme-maintainer's 'The model' section derives its content from this goal's architecture — every goal is an agent, @goal-id dispatch, actor model; when this goal's architecture changes, that section must update."
+reason = "readme-maintainer's 'The model' section derives its content from this goal's architecture — every goal is an agent, goal-agent dispatch, actor model; when this goal's architecture changes, that section must update."
 
 [[related]]
 id = "project-indexer"
@@ -67,8 +67,4 @@ reason = "readme-maintainer's 'Installation' section documents the .tinker/confi
 
 [[related]]
 id = "tend"
-reason = "readme-maintainer synthesizes the human-facing README by asking @tend for the current goal tree; tend answers the read-only intent query from the goals it keeps. Asymmetric: tend is a packaged goal and cannot carry a back-link to this project-local goal."
-
-[[related]]
-id = "peer-consult"
-reason = "readme-maintainer's README synthesis runs over an @tend query; peer-consult governs the @-block protocol and delivery rules that carry that request. Asymmetric: peer-consult is a packaged goal and cannot carry a back-link to this project-local goal."
+reason = "readme-maintainer synthesizes the human-facing README by asking tend for the current goal tree; tend answers the read-only intent query from the goals it keeps. Asymmetric: tend is a packaged goal and cannot carry a back-link to this project-local goal."

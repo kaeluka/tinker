@@ -186,7 +186,6 @@ pub struct App {
     /// How many times we've asked tend to fix a parse error in this
     /// edit cycle. Reset on a fresh user message or a clean Done.
     pub correction_attempts: u8,
-    pub current_session_text: HashMap<String, String>,
     pub focus: Focus,
     pub should_quit: bool,
     pub repl_scroll: ScrollState,
@@ -210,9 +209,10 @@ pub struct App {
     /// Entries stay until `retire_completed_ephemeral_sessions` removes them.
     pub ephemeral_sessions_ordered: Vec<String>,
     /// Correlation labels for ephemeral sessions, keyed by session ID.
-    /// Populated when a fresh dispatch is pre-announced or registered at Done
-    /// time; cleaned up when the session is retired. The TUI goal-list renders
-    /// this label instead of the raw session ID when present.
+    /// Populated when the `spawn_session` tool dispatcher creates a new
+    /// sub-session; cleaned up when the session is retired. The TUI
+    /// goal-list renders this label instead of the raw session ID when
+    /// present.
     pub ephemeral_labels: HashMap<String, Option<String>>,
     /// Monotone counter used to assign unique IDs to fresh sub-sessions.
     pub fresh_session_counter: u64,
@@ -220,13 +220,6 @@ pub struct App {
     /// watcher diffs the load result against this on each cycle to drive
     /// startup-diagnostic system messages — see `update_goal_id_collisions`.
     pub goal_id_collisions: Vec<GoalCollision>,
-    /// Pre-announced ephemeral sessions indexed by their base goal ID.
-    /// Values are vecs of `(session_id, label)` in detection order, each
-    /// corresponding to an opening `<@base_id|label>` tag seen while the
-    /// session was still streaming.  Consumed at Done time: complete
-    /// envelopes are matched to pre-announced entries in order; unmatched
-    /// entries (incomplete envelopes) are removed from the goal list.
-    pub pending_fresh_announcements: HashMap<String, Vec<(String, Option<String>)>>,
     /// Index into the WERKELN_VERBS list; advanced every ~2 s while sessions run.
     pub werkeln_verb_idx: usize,
     /// When the verb index was last advanced.
@@ -247,7 +240,6 @@ impl App {
             user_has_interacted: false,
             phase: Phase::Initializing,
             correction_attempts: 0,
-            current_session_text: HashMap::new(),
             focus: Focus::Repl,
             should_quit: false,
             repl_scroll: ScrollState::new(),
@@ -271,7 +263,6 @@ impl App {
             ephemeral_labels: HashMap::new(),
             fresh_session_counter: 0,
             goal_id_collisions: Vec::new(),
-            pending_fresh_announcements: HashMap::new(),
             werkeln_verb_idx: 0,
             werkeln_last_advance: Instant::now(),
         }

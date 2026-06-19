@@ -1,29 +1,54 @@
 id = "fresh-agents"
 kind = "feature"
-summary = "This goal owns the fresh-dispatch mechanism: goal agents dispatch to ephemeral sub-sessions whenever possible; sub-sessions receive full dispatch capability and may act as coordinators, depth is unbounded, all sub-sessions are retired when the batch ends, and the harness provides two surfaces for sub-session spawning — the @-envelope and the spawn-session tool — to the exclusion of any built-in LLM-backend spawn capability."
+summary = "This goal owns the fresh-dispatch mechanism: goal agents dispatch to ephemeral sub-sessions whenever possible; sub-sessions receive full dispatch capability and may act as coordinators, depth is unbounded, all sub-sessions are retired when the batch ends, and the harness provides the spawn-session tool as the sole sub-session spawning surface to the exclusion of any built-in LLM-backend spawn capability."
 description = """
 ## WHAT
 
-Goal agents can dispatch to ephemeral sub-sessions of themselves. A spawning agent addresses a fresh dispatch to its own goal id and an optional label; the label lets the dispatcher correlate incoming replies. The fresh sub-session receives the same startup context as the dispatcher — including fresh-dispatch capability — and replies via ordinary @-messages. A sub-session may itself dispatch further sub-sessions, acting as a coordinator: it remains reachable for replies until the batch ends. Each dispatched sub-task must be a genuine decomposition — narrower than the problem the dispatcher received, with the LLM deciding when a task is atomic enough not to decompose further. The system carries a global batch state — **active** whenever any work is in flight (a session is processing, a reply is being routed, or a user message is pending), **idle** when nothing is outstanding. A continuous period of activity constitutes a batch; continued user input extends it. Completed sub-sessions remain inspectable until the next batch starts, when they are silently retired.
+Goal agents can dispatch to ephemeral sub-sessions of themselves via
+the spawn-session tool. A spawning agent provides a subgoal (the task
+description) and an optional label (a correlation tag for routing
+replies). The fresh sub-session receives the same startup context as
+the dispatcher — including fresh-dispatch capability — and replies via
+send_message. A sub-session may itself dispatch further sub-sessions,
+acting as a coordinator: it remains reachable for replies until the
+batch ends. Each dispatched sub-task must be a genuine decomposition —
+narrower than the problem the dispatcher received, with the LLM
+deciding when a task is atomic enough not to decompose further. The
+system carries a global batch state — **active** whenever any work is
+in flight (a session is processing, a reply is being routed, or a user
+message is pending), **idle** when nothing is outstanding. A
+continuous period of activity constitutes a batch; continued user
+input extends it. Completed sub-sessions remain inspectable until the
+next batch starts, when they are silently retired.
 
-Sub-session spawning goes through two harness-provided surfaces: the @-envelope (`<@this-agents-id|label>...subgoal...</@this-agents-id|label>`) and the `spawn-session` tool (which will eventually succeed the @-envelope). Both deposit into the same dispatch substrate and are indistinguishable to the sub-session. This excludes any built-in agent-creation capability the LLM backend may offer — native-tool calls bypass the harness, losing result routing, sub-session visibility, and batch tracking.
+Sub-session spawning goes through the spawn-session tool exclusively.
+This excludes any built-in agent-creation capability the LLM backend
+may offer — native-tool calls bypass the harness, losing result
+routing, sub-session visibility, and batch tracking.
 
 ## WHY
 
-The right default is to distribute work into fresh sub-sessions whenever possible. All work accumulating in one session degrades quality as context grows and burdens the dispatching session with content it doesn't need. Fresh dispatches keep each session clean and focused; results return via the normal reply channel. The same rationale applies at every level: a coordinator that can decompose its own task further should do so.
+The right default is to distribute work into fresh sub-sessions
+whenever possible. All work accumulating in one session degrades
+quality as context grows and burdens the dispatching session with
+content it doesn't need. Fresh dispatches keep each session clean and
+focused; results return via send_message. The same rationale applies
+at every level: a coordinator that can decompose its task further
+should do so.
 
-The harness-only constraint exists because the visibility the user experiences — sub-sessions nested in the goals pane, log access, result routing back to the dispatcher — is only available when spawning goes through a harness-provided surface. A native-tool call bypasses the harness and produces none of this. Without the constraint, models default to native tool calls because they are more familiar from training, silently losing all tracking and routing. The spawn-session tool complements the envelope because the two surfaces share a dispatch substrate — tool calls route through the same infrastructure that extracts envelopes from finalized replies.
-
+The harness-only constraint exists because the visibility the user
+experiences — sub-sessions nested in the goals pane, log access,
+result routing back to the dispatcher — is only available when
+spawning goes through the spawn-session tool. A native-tool call
+bypasses the harness and produces none of this. Without the
+constraint, models default to native tool calls because they are more
+familiar from training, silently losing all tracking and routing.
 """
 parent_id = ""
 
 [[related]]
 id = "spawn-session"
-reason = "spawn-session is a harness-provided tool-call surface for sub-session spawning — a sibling delivery surface onto the same dispatch substrate this goal owns. This goal owns the mechanism (decomposition discipline, coordinator role, ephemeral lifecycle, batch retirement); spawn-session owns the tool-call parameters and call accounting. spawn-session's self-only target constraint keeps the domain distinct from send-message's lazy-spawn of permanent goals."
-
-[[related]]
-id = "peer-consult"
-reason = "peer-consult owns the @-block envelope detection and routing protocol; fresh-agents extends that protocol with a new address class that routes to an ephemeral sub-session of the sender rather than an existing registry entry. peer-consult is authoritative for detection and delivery; this goal owns the fresh routing variant. Asymmetric: peer-consult is a packaged goal and cannot carry a back-link to this project-local goal."
+reason = "spawn-session is the sole harness-provided tool-call surface for sub-session spawning. This goal owns the mechanism (decomposition discipline, coordinator role, ephemeral lifecycle, batch retirement); spawn-session owns the tool-call parameters and call accounting. spawn-session's self-only target constraint keeps the domain distinct from send-message's lazy-spawn of permanent goals."
 
 [[related]]
 id = "goal-agents"

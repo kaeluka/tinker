@@ -1,48 +1,53 @@
 id = "send-message"
 kind = "feature"
-summary = "This goal owns the send-message tool available to every agent session — a schema-enforced, target-validated outbound message that delivers into the same routing substrate as @-block envelopes but fires the recipient immediately during the turn rather than at turn completion, lazily spawning permanent goals on first contact and failing outright on invalid targets."
+summary = "This goal owns the send-message tool — the sole agent-to-agent communication mechanism, available to every agent session. A schema-enforced, target-validated message that fires the recipient immediately during the turn, lazily spawning permanent goals on first contact, failing outright on invalid targets. The self-send restriction is session-scoped so sub-sessions can reply to their parent."
 description = """
 ## WHAT
-All agent sessions have a send-message tool that dispatches a message to a named target. The tool lazily spawns permanent goals the same way @-dispatch does: when the target is a known goal in the goal tree (the full set of goals registered in the system, whether or not currently running) but has no active session, the tool requests the runtime spawn the recipient's session and delivers the message into it. The recipient fires immediately once spawned, during the turn — not deferred to turn completion.
+All agent sessions have a send-message tool that dispatches a message
+to a named target. The tool lazily spawns permanent goals on first
+contact: when the target is a known goal in the goal tree but has no
+active session, the tool requests the runtime spawn the recipient's
+session and delivers the message into it. The recipient fires
+immediately once spawned, during the turn.
 
-The tool validates that the target is not the sender itself. It returns an error when self-send is detected (to prevent unbounded recursion), or when the target is unknown (not recognized as a goal and not present as a running session). From the recipient's view, a tool-delivered message is indistinguishable from an envelope-delivered one: both paths deposit the same message type into the same routing substrate.
-
-The envelope mechanism (@-block tags) continues working alongside the tool until its retirement — send-message is the successor, and envelopes are temporary.
+The tool validates that the target is not the sender's own session.
+The self-send restriction is session-scoped: a sub-session may send to
+its parent (same goal, different session), and a parent may send to a
+sub-session. This is the reply path for dispatched agents and
+sub-sessions. The tool returns an error only when the sender and
+recipient are the same session (to prevent unbounded recursion), or
+when the target is unknown (not recognized as a goal and not present
+as a running session).
 
 ## WHY
-Envelopes serve their role but leave gaps the tool closes. Three failure modes in the envelope path:
-
-- **Format fragility.** Envelopes embed address and content in free-form output. Agents forget the tag format or malform it, and the message is lost. A structured tool with schema-enforced parameters removes the failure mode.
-
-- **Discoverability.** Envelopes are an implicit convention. Agents conflate the reply envelope (unnamed, wraps the outgoing reply) with outbound sends, and try to embed named addresses in envelope text that the harness does not parse. When the send is an explicit tool, the capability is legible in the tool schema.
-
-- **Turn-end latency.** Envelopes extract at turn completion. The recipient sits idle until the sender finishes. A tool call fires during the turn — the recipient dispatches immediately, increasing parallelism between sessions.
-
-The tool validates target identity. Self-targeting would spawn an unbounded chain of turns; the explicit error cues the agent to course-correct. Unknown targets would be silent loss; the error prevents it. Envelopes already guarantee "never silently drops" at the extraction layer; the tool extends that to target resolution in schema.
-
+Agent-to-agent communication needs to be reliable, discoverable, and
+immediate. Schema enforcement makes every send well-formed by
+construction — no text convention to forget or malform. The
+capability is legible in the tool list every agent already reads, and
+the recipient fires during the caller's turn. The self-send
+restriction is session-scoped: a sub-session may reply to its parent
+(same goal, different session), and a parent may address its
+sub-sessions. This prevents unbounded recursion without blocking the
+parent-child reply path that all dispatched work depends on.
 """
 parent_id = ""
-
-[[related]]
-id = "peer-consult"
-reason = "sibling messaging mechanism — same domain (agent-to-agent messaging), different delivery path. peer-consult owns @-block extraction, routing, the 'never silently drops' guarantee for envelopes, and user-visible rendering. send-message owns the tool-call path: schema-enforced format, goal-tree and registry validation including lazy-spawn of permanent goals, in-turn dispatch, and tool error semantics. peer-consult is authoritative for detection and delivery on the @-block path; this goal is authoritative for the tool-call path. Asymmetric: peer-consult is a packaged goal and cannot carry a back-link."
 
 [[related]]
 id = "backends"
 reason = "send-message is a tool registered in backends' tool policy layer; its parameters, error semantics, and call accounting are subject to backends' framework constraints."
 
 [[related]]
-id = "reply-compliance"
-reason = "send-message handles outbound sends via tool calls, subsuming the outbound prompting that reply-compliance ensures for the envelope path. reply-compliance remains the compliance guarantee for envelopes while both mechanisms coexist; send-message is the successor and envelopes are temporary."
+id = "goal-agents"
+reason = "send-message validates targets against goal-agents' session registry and goal tree, firing recipient sessions immediately into the registry. The registry identifies running sessions; the goal tree identifies known goals the tool can lazy-spawn."
 
 [[related]]
-id = "goal-agents"
-reason = "send-message validates targets against goal-agents' session registry and goal tree, firing recipient sessions immediately into the same routing substrate envelopes use. The registry identifies running sessions; the goal tree identifies known goals the tool can lazy-spawn."
+id = "goal-complementarity"
+reason = "Consultation quality depends on the domain gap the message crosses — routing to a goal with a stronger domain for the workload produces better output. goal-complementarity governs whether the routing is worth making; send-message is the runtime mechanism. Asymmetric: goal-complementarity is a packaged goal and cannot carry a back-link."
 
 [[related]]
 id = "tend-introspection"
-reason = "send-message dispatches produce a new event type in the runtime event log — sender, target, dispatch time — alongside the existing envelope-based dispatch emission."
+reason = "send-message dispatches produce events in the runtime event log — sender, target, dispatch time."
 
 [[related]]
 id = "spawn-session"
-reason = "sibling tool surface on the shared dispatch substrate. send-message routes to existing or lazy-spawned permanent sessions; spawn-session routes to fresh ephemeral sub-sessions of the caller's own goal. Both tools are registered in backends' tool policy layer and coexist with their envelope predecessors during the transition."
+reason = "sibling tool surface on the shared dispatch substrate. send-message routes to existing or lazy-spawned permanent sessions; spawn-session routes to fresh ephemeral sub-sessions of the caller's own goal. Both tools are registered in backends' tool policy layer. The domain split (send-to-existing/lazy-permanent vs spawn-ephemeral-of-self) is what keeps the two tools orthogonal."

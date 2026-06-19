@@ -8,10 +8,9 @@ structurally identical, process-scoped, addressable agent.** The
 session registry maps each goal-id to the sending half of that
 agent's message channel; the agent's goal and its resumable LLM
 session id live in the persistent per-goal loop the runtime spawns,
-not in the registry. `send_message` is the primary user-facing dispatch path; the `<@goal-id>`
-envelope (@-block protocol) remains the underlying routing substrate and
-spawning primitive for fresh sub-sessions. Both deliver to the same
-session registry.
+not in the registry. `send_message` is the primary dispatch path for
+agent-to-agent messaging; `spawn-session` is the sub-session spawning
+surface. Both deliver to the same session registry.
 
 Tend has exactly **two structural exceptions**, and no others are
 justified — everything else is identical across all agents:
@@ -19,7 +18,7 @@ justified — everything else is identical across all agents:
    before the user types anything. The TUI suppresses tend's response
    to this startup message in the conversation pane — tend produces
    output but the user sees canned startup text instead. All other
-   sessions start lazily on first `@goal-id` message and receive no
+   sessions start lazily on first dispatch and receive no
    startup message.
 2. **Handles goal-file parse corrections** — when a goal write
    produces a malformed file, tend is re-queued with correction
@@ -29,10 +28,10 @@ justified — everything else is identical across all agents:
 **Framework preamble.** Before its goal description, every session
 receives a standard runtime-injected preamble; its authoritative text
 lives in the runner, not here. It covers goal-tree navigation (the
-compact index plus `@tend` for full text — the goal IS the agent's
-role and operating instructions); the `@goal-id` message-passing
-protocol and actor-model semantics (`peer-consult`); the
-`@tend`/`@rummage` split along intent/*should* vs code/*is*
+compact index plus send_message to tend for full text — the goal IS the agent's
+role and operating instructions); the send_message tool for
+inter-agent messaging and actor-model semantics; the
+tend/rummage split along intent/*should* vs code/*is*
 (`the-cycles`' producer/skeptic axis); the progress guarantee
 (`agent-liveness`); and the neighbor-consultation mandate
 (`agent-collaboration`). The one rule this goal owns directly: on
@@ -48,7 +47,7 @@ additional section beyond the standard preamble and goal text:
   added, computed from the old spec and new spec tend holds.
 
 Goal agents needing a code inventory of what currently exists in
-their scope should consult `@rummage`.
+their scope should send_message to rummage.
 
 **Tier.** Every goal TOML may carry an optional `tier` field:
 `"high"`, `"mid"`, `"low"`, or absent. Absent defaults to `"high"` for
@@ -67,7 +66,7 @@ carrying the dirty files.
 
 Sessions never read or write `.tinker/goals/`, `.tinker/notes/`, or
 `.tinker/state/` (tend-owned); goal content reaches a session via
-`@tend` and the init message (see `no-peek`).
+send_message to tend and the init message (see `no-peek`).
 
 ## WHY
 A uniform registry eliminates the distinction between "named agents"
@@ -86,7 +85,7 @@ The spec diff closes the information gap that makes large refactors
 fail: without it, agents receive only the desired end state and must
 infer what to remove — inference that fails systematically for
 deletions and the deletion half of every change. Code inventory is
-available on demand via `@rummage`.
+available on demand from rummage.
 
 The structured summary and `test_spec_` listing exist because a
 session is an unreliable narrator about its own work — the summary
@@ -120,9 +119,6 @@ reason = "pre-session cleanup — removes tinker-test-case: investigation marker
 id = "parallel-goal-agents"
 reason = "execution model — concurrent agents in shared main tree, coordination-based conflict avoidance via agent-collaboration"
 
-[[related]]
-id = "peer-consult"
-reason = "peer-consult governs the @-block protocol and delivery rules, including the no-drop delivery guarantee for recognised IDs; goal-agents implements the session registry that is the source of truth for recognition and makes @-dispatch universal."
 
 [[related]]
 id = "goal-storage"
@@ -150,15 +146,15 @@ reason = "implementation-ownership's source-ownership mandate (override the LLM 
 
 [[related]]
 id = "no-peek"
-reason = "This goal's .tinker/ read/write prohibition (sessions never read goal files; content arrives via @tend and the init message) is the agent-architecture expression of no-peek's rule that agents access peer context through @-messages, never by reading other goals' files. Asymmetric: no-peek is a packaged goal and carries no back-link."
+reason = "This goal's .tinker/ read/write prohibition (sessions never read goal files; content arrives via send_message to tend and the init message) is the agent-architecture expression of no-peek's rule that agents access peer context through send_message, never by reading other goals' files. Asymmetric: no-peek is a packaged goal and carries no back-link."
 
 [[related]]
 id = "tend-introspection"
-reason = "tend-introspection records observables of this goal's session lifecycle (dispatched/started/finished), @-dispatch emissions, and the session-start framework-preamble plus goal-list hash; its capture schema depends on what goal-agents' registry emits."
+reason = "tend-introspection records observables of this goal's session lifecycle (dispatched/started/finished), send_message dispatch emissions, and the session-start framework-preamble plus goal-list hash; its capture schema depends on what goal-agents' registry emits."
 
 [[related]]
 id = "readme-maintainer"
-reason = "readme-maintainer's 'The model' section derives its content from this goal's architecture — every goal is an agent, @goal-id dispatch, actor model; when this goal's architecture changes, that section must update."
+reason = "readme-maintainer's 'The model' section derives its content from this goal's architecture — every goal is an agent, goal-agent dispatch, actor model; when this goal's architecture changes, that section must update."
 
 [[related]]
 id = "tier-edit"
@@ -170,20 +166,18 @@ reason = "fresh-agents adds an ephemeral entry type to the session registry — 
 
 [[related]]
 id = "prompt-storage"
-reason = "prompt-storage owns the raw prompt text this goal's builder functions assemble into messages — session init templates, framework preamble constants, delivery messages, silence nudges, reply-compliance templates, and parse-correction prompts are loaded from prompt-storage rather than hardcoded."
+reason = "prompt-storage owns the raw prompt text this goal's builder functions assemble into messages — session init templates, framework preamble constants, delivery messages, silence nudges, and parse-correction prompts are loaded from prompt-storage rather than hardcoded."
 
 [[related]]
 id = "send-message"
-reason = "send-message validates targets against goal-agents' session registry and goal tree, firing recipient sessions immediately into the same routing substrate envelopes use. The registry identifies running sessions; the goal tree identifies known goals the tool can lazy-spawn."
+reason = "send-message validates targets against goal-agents' session registry and goal tree, firing recipient sessions immediately into the registry. The registry identifies running sessions; the goal tree identifies known goals the tool can lazy-spawn."
 
 [[related]]
 id = "spawn-session"
-reason = "spawn-session fires the new sub-session immediately into goal-agents' session registry; the dispatched session is visible in the registry alongside the dispatching session and participates in batch accounting the same way envelope-spawned sub-sessions do."
+reason = "spawn-session fires the new sub-session immediately into goal-agents' session registry; the dispatched session is visible in the registry alongside the dispatching session and participates in batch accounting."
 
 [[related]]
 id = "recursive-subdivision"
 reason = "recursive-subdivision runs within this goal's session registry and lifecycle; each recursive dispatch creates a new sub-session entry, exercising the full depth the registry supports."
 
-[[related]]
-id = "binary-relative-tier-loading"
-reason = "build-time population of the binary-relative tier and the diagnostic's emitted text that the eager-start invariant depends on — the loader's four-tier result and the diagnostic content this goal produces"
+

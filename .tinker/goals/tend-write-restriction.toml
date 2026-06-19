@@ -16,11 +16,7 @@ Path-equivalence recognition matters because `backends` enforces the permission 
 
 Tend owns the complete lifecycle of goal files — creating, editing, and deleting them. The structural operations Merge and Retire both require deleting a goal file, so deletion is the inverse of writing within the same boundary.
 """
-parent_id = ""
-
-[[related]]
-id = "backends"
-reason = "backends owns the ToolPolicy implementation; this goal defines what the policy should permit."
+parent_id = "backends"
 
 [[related]]
 id = "goal-storage"

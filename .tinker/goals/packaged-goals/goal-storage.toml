@@ -164,6 +164,4 @@ reason = "goal-structure-standard defines the semantics of the id+reason link fi
 id = "goal-complementarity"
 reason = "goal-complementarity enforces the packaging distinction this goal implements at the storage layer."
 
-[[related]]
-id = "binary-relative-tier-loading"
-reason = "binary-relative-tier-loading owns the build-time copy (`build.rs`) and compile-time embedded fallback (`include_dir!`) that populate the binary-relative packaged tier; goal-storage owns the runtime contract those delivery surfaces honor — the on-disk path convention, the same-tier silent dedupe between file-based and embedded copies, the four-tier label set, and the malformed-file recovery path."
+

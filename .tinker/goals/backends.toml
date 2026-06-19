@@ -50,9 +50,6 @@ reason = "agent-liveness defines the progress guarantee this goal's harness mech
 id = "goal-agents"
 reason = "goal-agents defines the uniform session registry and unified runner task this goal's backend abstraction must support; per-tier model resolution for every goal agent is wired through the backend at the application entry point. Changes to the registry or the tier field affect what the abstraction must provide. goal-agents also owns the framework preamble text that forms part of the system prompt the backend delivers."
 
-[[related]]
-id = "peer-consult"
-reason = "peer-consult's envelope extraction and no-drop delivery guarantee operate on the finalized output this goal's backend delivers; when output buffering or delivery changes, the complete-output invariant peer-consult's scanning depends on must be preserved."
 
 [[related]]
 id = "prompt-storage"

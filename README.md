@@ -8,8 +8,8 @@ ongoing.
 
 ## The model
 
-Every goal in tinker is an agent you reach by name (`@goal-id`) — and
-the agents reach each other the same way you reach them. Specifications
+Every goal in tinker is an agent you reach by name — and the
+agents reach each other the same way you reach them. Specifications
 are not passive documents: they are live participants in the same
 address space you sit in. This is what separates tinker from a
 conventional coding assistant, where one session owns everything and
@@ -151,7 +151,7 @@ for a human to notice conflicts — they are live sessions that converse
 to resolve ambiguity and ensure compliance. This is an actor model
 applied to specification documents.
 
-The conversation happens through `@goal-id` messages: when one goal
+The conversation happens through the `send_message` tool: when one goal
 needs another's input, it sends a message to that goal by name. There
 is no central dispatcher. Delivery to any recognised agent is
 guaranteed; an unknown target fails outright. When a goal needs to

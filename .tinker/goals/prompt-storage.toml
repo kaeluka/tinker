@@ -29,7 +29,7 @@ parent_id = ""
 
 [[related]]
 id = "goal-agents"
-reason = "goal-agents is the primary consumer: session init templates, framework preamble constants, delivery messages, silence nudges, reply-compliance templates, and parse-correction prompts are all assembled by goal-agents' builder functions."
+reason = "goal-agents is the primary consumer: session init templates, framework preamble constants, delivery messages, silence nudges, and parse-correction prompts are all assembled by goal-agents' builder functions."
 
 [[related]]
 id = "backends"

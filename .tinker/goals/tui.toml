@@ -28,7 +28,7 @@ that session going forward.
 Tend's startup output is not rendered in the conversation pane — the
 TUI suppresses it. The model produces output eagerly on startup but
 the user sees canned startup text instead. All other sessions start
-lazily on first `@goal-id` message.
+lazily on first dispatch.
 
 In the goal list, each row opens with a status prefix followed by the
 goal id in bold and the goal's summary. Idle goals use a dash (`-`);
@@ -78,7 +78,7 @@ invocation for that goal in queue order — running first, then queued
 — each line carrying its glyph or index and trigger reason. The queue
 surface is read-only.
 
-**Ephemeral sub-sessions.** Ephemeral sub-sessions appear in the goal list as soon as they are dispatched — not deferred until the dispatching turn completes. If the dispatching turn ends without a complete envelope for a pre-announced entry, that entry is removed. Sub-sessions nest visually under their immediate dispatcher at all depths: `jog~1~3` appears indented beneath `jog~1`, which appears beneath `jog`. The pane label normalizes to the root permanent goal name. When a sub-session was dispatched with an explicit label, the goal-list row displays the label instead of the auto-generated `root~N` index; unlabeled sub-sessions continue to display as `root~N`.
+**Ephemeral sub-sessions.** Ephemeral sub-sessions appear in the goal list as soon as they are dispatched — not deferred until the dispatching turn completes. Sub-sessions nest visually under their immediate dispatcher at all depths: `jog~1~3` appears indented beneath `jog~1`, which appears beneath `jog`. The pane label normalizes to the root permanent goal name. When a sub-session was dispatched with an explicit label, the goal-list row displays the label instead of the auto-generated `root~N` index; unlabeled sub-sessions continue to display as `root~N`.
 
 **Options dialog.** Pressing Enter on a goal in the goal list opens
 an options dialog with two fields: a trigger reason and the goal's
@@ -176,10 +176,6 @@ reason = "This goal produces code, which follows `coding-standards` (capability-
 [[related]]
 id = "shared-language"
 reason = "tui renders every user-facing text surface (conversation, goal text, session logs); `shared-language` governs the vocabulary of what's shown. Pull it when producing or formatting user-facing output. Asymmetric: shared-language is a packaged goal and cannot carry a back-link to this project-local goal."
-
-[[related]]
-id = "peer-consult"
-reason = "The `@` message stream between agents appears in the conversation pane; TUI owns the rendering details for agent-to-agent exchanges. Asymmetric: peer-consult is a packaged goal and cannot carry a back-link to this project-local goal."
 
 [[related]]
 id = "tend-introspection"

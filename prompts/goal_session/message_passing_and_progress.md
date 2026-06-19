@@ -32,11 +32,9 @@ When you need to spawn a fresh sub-session of your own goal — a new ephemeral 
 spawn_session(subgoal="...", label="...")
 ```
 
-`subgoal` is the task description (self-contained: include all the context the sub-session needs to complete the task without referring to "above" or "earlier"). `label` is an optional short correlation tag the sub-session echoes back in its reply envelope — pass an empty string or omit it when you don't need correlation. The tool fires the sub-session immediately during your turn (in-turn, not at end-of-turn) and returns the new sub-session id. Each fresh sub-session receives the same startup context as you, dispatches further sub-sessions via `spawn_session` (or the transitional envelope syntax below), and replies via `<@{your-goal-id}>your reply</@{your-goal-id}>` envelopes.
+`subgoal` is the task description (self-contained: include all the context the sub-session needs to complete the task without referring to "above" or "earlier"). `label` is an optional short correlation tag the sub-session echoes back in its reply — pass an empty string or omit it when you don't need correlation. The tool fires the sub-session immediately during your turn (in-turn, not at end-of-turn) and returns the new sub-session id. Each fresh sub-session receives the same startup context as you, dispatches further sub-sessions via `spawn_session`, and replies to you via `send_message`.
 
-The `<@{your-goal-id}|label>...</@{your-goal-id}|label>` envelope syntax continues to work alongside the tool during the transition — prefer the tool when available, the tool call cannot be malformed and fires in-turn.
-
-**Tool-level agent-spawning APIs offered by the LLM backend — such as an `Agent` tool — must not be used.** Such calls bypass the harness entirely: results are not delivered to the dispatcher, sub-sessions spawned that way are invisible to the goals pane and the event log, and batch accounting breaks. Use the `spawn_session` tool (or the transitional envelope syntax above) exclusively.
+**Tool-level agent-spawning APIs offered by the LLM backend — such as an `Agent` tool — must not be used.** Such calls bypass the harness entirely: results are not delivered to the dispatcher, sub-sessions spawned that way are invisible to the goals pane and the event log, and batch accounting breaks. Use the `spawn_session` tool exclusively.
 
 ## Progress guarantee
 

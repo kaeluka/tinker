@@ -37,8 +37,8 @@ that the goal tree stays internally consistent as it grows.
 parent_id = ""
 
 [[related]]
-id = "peer-consult"
-reason = "Peer consultation routes workloads across goal boundaries. The quality of a consultation is only as good as the domain gap it crosses — `peer-consult` governs the channel; this goal governs whether the routing is worth making."
+id = "no-peek"
+reason = "`no-peek` is the communication-layer expression of this goal's orthogonality principle: when coupling lives in edges rather than enumerated reads, domain orthogonality composes through the graph."
 
 [[related]]
 id = "tend"
@@ -56,9 +56,6 @@ reason = "Jog's domain (bidirectional discrepancy finding, read-only delegation 
 id = "goal-structure-standard"
 reason = "`goal-structure-standard` is where orthogonal placement is enforced structurally (Merge, Nest Down, Nest Up, New Root, Retire). This goal is the design rationale — why each goal should own a distinct domain."
 
-[[related]]
-id = "no-peek"
-reason = "`no-peek` is the communication-layer expression of this goal's orthogonality principle: when coupling lives in edges rather than enumerated reads, domain orthogonality composes through the graph."
 
 [[related]]
 id = "goal-storage"

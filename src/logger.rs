@@ -113,9 +113,6 @@ pub enum LogEvent {
     /// whether the dispatch reached the registry; `error` is set when
     /// `success` is false and names the failure reason (typically
     /// "unknown target" when the target is not in the session registry).
-    /// Tool-delivered dispatches share the same substrate as envelope
-    /// dispatches — the event exists separately so introspection can
-    /// distinguish the two delivery paths.
     SendMessageDispatched {
         sender: String,
         target: String,
@@ -131,10 +128,7 @@ pub enum LogEvent {
     /// provided; `success` reports whether the spawn was enqueued;
     /// `error` is set when `success` is false and names the failure
     /// reason (e.g. "no dispatcher configured" when the callback is `None`,
-    /// or the caller's goal was not found in the goal tree). Tool-delivered
-    /// fresh-spawns share the same substrate as envelope-delivered ones
-    /// — the event exists separately so introspection can distinguish
-    /// the two delivery paths.
+    /// or the caller's goal was not found in the goal tree).
     SpawnSessionDispatched {
         sender: String,
         sub_session_id: String,
@@ -829,11 +823,10 @@ mod tests {
         }
     }
 
-    // spec (send-message): the new `SendMessageDispatched` log event serializes
+    // spec (send-message): the `SendMessageDispatched` log event serializes
     // with `kind = "send_message_dispatched"` and carries the sender, target,
     // and success fields.  The optional `error` field is set on failure with
-    // the registry-miss reason.  This event is the introspection hook that
-    // distinguishes tool-delivered dispatches from envelope-delivered ones.
+    // the registry-miss reason.
     #[test]
     fn test_spec_send_message_dispatched_event_serializes() {
         // Success case

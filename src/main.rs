@@ -55,7 +55,7 @@ fn tend_init_prompt_full_context(goals_summary: &str, neighbor_section: &str) ->
 }
 
 /// Configuration for spawning an ephemeral fresh sub-session. Produced when
-/// a `<@{parent_id}|label>` envelope is detected in a goal agent's output.
+/// the `spawn_session` tool is called by a goal agent.
 struct FreshSessionConfig {
     /// Unique ID for the ephemeral session in the registry (e.g. "fresh-agents~1").
     session_id: String,
@@ -66,8 +66,9 @@ struct FreshSessionConfig {
     dispatcher_id: String,
 }
 
-/// Lazy-spawn request: sent when `@goal-id` arrives and that agent isn't in
-/// the session registry yet, or when the user triggers a goal via the tree UI.
+/// Lazy-spawn request: sent when a goal needs to be spawned or resumed —
+/// via `send_message` lazy-spawn, `spawn_session`, or the user triggering a
+/// goal via the tree UI.
 /// When `fresh_session` is `Some`, the request spawns an ephemeral sub-session
 /// rather than a persistent goal session.
 struct SpawnGoalRequest {
@@ -767,8 +768,8 @@ async fn run_loop(
                 // (3) the permanent dispatcher goal is not itself in running_sessions,
                 //     which would indicate a batch message from a completed sub-session
                 //     is still in transit to it ("pending delivery" in the spec's batch
-                //     definition).  dispatch_peer_consultations inserts the recipient
-                //     into running_sessions when a sub-session reply is dispatched;
+                //     definition).  The `send_message` tool dispatcher inserts the
+                //     recipient into running_sessions when a sub-session reply is dispatched;
                 //     the permanent goal leaves running_sessions only after processing
                 //     that reply.  Firing retirement while the delivery is still pending
                 //     would retire sub-sessions prematurely within the current batch.
@@ -1139,230 +1140,9 @@ async fn run_loop(
     Ok(())
 }
 
-/// Extracts `<@id>…</@id>` tag envelopes from a finalised agent reply.
-///
-/// Each envelope begins with `<@{id}>` and ends with `</@{id}>`, where `id`
-/// is a member of `known_ids`. The opening tag may carry inline content on
-/// the same line (`<@tend>message</@tend>`) or the body may span subsequent
-/// lines:
-///
-///   <@tend>
-///   message body — may span multiple lines
-///   </@tend>
-///
-/// **Scoping rule — top-level envelopes only.**
-/// Only envelopes where the opening tag begins at the start of the trimmed
-/// line are treated as live dispatches. An envelope appearing mid-line
-/// (e.g. `reply via <@tend>…</@tend>`) is explanatory prose and is silently
-/// ignored. Likewise, envelopes inside fenced code blocks (``` or ~~~) are
-/// illustrative and are not extracted. Both rules together ensure extraction
-/// applies exclusively to envelopes the agent itself is intentionally
-/// emitting, not to envelope syntax quoted or forwarded from an earlier
-/// delivery message.
-///
-/// Prose outside envelopes is not delivered to any agent.
-/// Empty envelopes (nothing between open and close tags) are silently dropped.
-/// A reply may contain multiple envelopes; each is extracted independently.
-///
-/// `known_ids` is the set of agent IDs that can receive `@`-routed messages.
-///
-/// Returns `(recipient, message)` pairs where `message` is the trimmed
-/// content between the opening and closing tags.
-fn parse_at_commands(text: &str, known_ids: &[&str]) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = Vec::new();
-    let lines: Vec<&str> = text.lines().collect();
-    let mut i = 0;
-    let mut in_code_fence = false;
-
-    while i < lines.len() {
-        let trimmed = lines[i].trim();
-
-        // Toggle fence state and skip the fence marker line itself.
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_code_fence = !in_code_fence;
-            i += 1;
-            continue;
-        }
-        // Inside a code fence — envelope syntax is quoted/illustrative, not live.
-        if in_code_fence {
-            i += 1;
-            continue;
-        }
-
-        let mut matched = false;
-
-        for id in known_ids {
-            let open_tag = format!("<@{}>", id);
-            let close_tag = format!("</@{}>", id);
-
-            // The opening tag must start the trimmed line — an envelope appearing
-            // mid-line is explanatory prose (e.g. "reply via <@id>…</@id>") and
-            // must not be extracted as a live dispatch.
-            if !trimmed.starts_with(open_tag.as_str()) {
-                continue;
-            }
-            let after_open = &trimmed[open_tag.len()..];
-
-            // Check if the closing tag appears on the same line.
-            if let Some(close_pos) = after_open.find(close_tag.as_str()) {
-                let content = after_open[..close_pos].trim().to_string();
-                if !content.is_empty() {
-                    out.push((id.to_string(), content));
-                }
-                i += 1;
-            } else {
-                // Multi-line envelope: collect body lines until closing tag.
-                let mut body_lines: Vec<String> = Vec::new();
-                let inline = after_open.trim().to_string();
-                if !inline.is_empty() {
-                    body_lines.push(inline);
-                }
-                i += 1;
-
-                while i < lines.len() {
-                    let inner_trimmed = lines[i].trim();
-                    if let Some(close_pos) = inner_trimmed.find(close_tag.as_str()) {
-                        let before = inner_trimmed[..close_pos].trim();
-                        if !before.is_empty() {
-                            body_lines.push(before.to_string());
-                        }
-                        i += 1;
-                        break;
-                    } else {
-                        body_lines.push(lines[i].to_string());
-                        i += 1;
-                    }
-                }
-
-                let msg = body_lines.join("\n").trim().to_string();
-                if !msg.is_empty() {
-                    out.push((id.to_string(), msg));
-                }
-            }
-            matched = true;
-            break;
-        }
-
-        if !matched {
-            i += 1;
-        }
-    }
-
-    out
-}
-
-/// Extracts `<@{sender_id}|{label}>…</@{sender_id}|{label}>` fresh-dispatch
-/// envelopes from a finalised agent reply.
-///
-/// A fresh-dispatch envelope is addressed to the sender's own goal ID with a
-/// `|label` suffix — this distinguishes it from a normal peer-consult message.
-/// The label may be empty (`<@my-goal|>`) when correlation is not needed.
-///
-/// Returns `(label, message)` pairs where `label` is `None` for an empty label
-/// and `Some("tag")` otherwise. Multi-line bodies are collected just like the
-/// normal @-command parser.
-fn parse_fresh_dispatches(text: &str, sender_id: &str) -> Vec<(Option<String>, String)> {
-    let open_prefix = format!("<@{}|", sender_id);
-    let mut out: Vec<(Option<String>, String)> = Vec::new();
-    let lines: Vec<&str> = text.lines().collect();
-    let mut i = 0;
-    let mut in_code_fence = false;
-
-    while i < lines.len() {
-        let trimmed = lines[i].trim();
-
-        // Toggle fence state and skip the fence marker line itself.
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_code_fence = !in_code_fence;
-            i += 1;
-            continue;
-        }
-        // Inside a code fence — dispatch syntax is quoted/illustrative, not live.
-        if in_code_fence {
-            i += 1;
-            continue;
-        }
-
-        if let Some(rest) = trimmed.strip_prefix(open_prefix.as_str()) {
-            // Extract the label from rest up to the first '>'.
-            if let Some(label_end) = rest.find('>') {
-                let label_str = &rest[..label_end];
-                let label = if label_str.is_empty() { None } else { Some(label_str.to_string()) };
-                let close_tag = format!("</@{}|{}>", sender_id, label_str);
-                let after_open = &rest[label_end + 1..];
-
-                if let Some(close_pos) = after_open.find(close_tag.as_str()) {
-                    let content = after_open[..close_pos].trim().to_string();
-                    if !content.is_empty() {
-                        out.push((label, content));
-                    }
-                    i += 1;
-                } else {
-                    // Multi-line: collect body lines until close tag.
-                    let mut body_lines: Vec<String> = Vec::new();
-                    let inline = after_open.trim().to_string();
-                    if !inline.is_empty() {
-                        body_lines.push(inline);
-                    }
-                    i += 1;
-                    while i < lines.len() {
-                        let inner = lines[i].trim();
-                        if let Some(close_pos) = inner.find(close_tag.as_str()) {
-                            let before = inner[..close_pos].trim();
-                            if !before.is_empty() {
-                                body_lines.push(before.to_string());
-                            }
-                            i += 1;
-                            break;
-                        } else {
-                            body_lines.push(lines[i].to_string());
-                            i += 1;
-                        }
-                    }
-                    let msg = body_lines.join("\n").trim().to_string();
-                    if !msg.is_empty() {
-                        out.push((label, msg));
-                    }
-                }
-                continue;
-            }
-        }
-        i += 1;
-    }
-    out
-}
-
-/// Scans `text` for opening `<@{base_id}|label>` tags (one per line) and
-/// returns the label list in document order.  Unlike `parse_fresh_dispatches`,
-/// this does NOT require the closing tag to be present — it is used during
-/// streaming to detect dispatches as early as possible so the TUI can show
-/// them before the turn completes.
-fn scan_opening_tags(text: &str, base_id: &str) -> Vec<Option<String>> {
-    let open_prefix = format!("<@{}|", base_id);
-    let mut labels = Vec::new();
-    let mut in_code_fence = false;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_code_fence = !in_code_fence;
-            continue;
-        }
-        if in_code_fence {
-            continue;
-        }
-        if let Some(rest) = trimmed.strip_prefix(open_prefix.as_str())
-            && let Some(label_end) = rest.find('>')
-        {
-            let label_str = &rest[..label_end];
-            labels.push(if label_str.is_empty() { None } else { Some(label_str.to_string()) });
-        }
-    }
-    labels
-}
-
-/// Outcome of routing a dispatch to a target. Used by both the
-/// `send_message` tool dispatcher and the @-envelope dispatch path so
-/// they share the same registry-then-lazy-spawn decision.
+/// Outcome of routing a dispatch to a target. Used by the
+/// `send_message` tool dispatcher to share the same registry-then-lazy-spawn
+/// decision inline.
 enum RouteOutcome {
     /// Sent via the session channel — the message reached (or is queued
     /// for) the recipient's input.
@@ -1378,38 +1158,6 @@ enum RouteOutcome {
     Unknown,
 }
 
-/// Look up `target` in the session registry; if absent, attempt lazy
-/// spawn via the goal tree (the same path the @-envelope uses). The
-/// caller decides what user-visible surface to produce on each outcome
-/// (system message, log event, running_sessions entry). This is the
-/// shared infrastructure that lets the `send_message` tool and the
-/// @-envelope path deliver to a goal whether or not it has a running
-/// session yet.
-fn route_or_lazy_spawn(
-    target: &str,
-    formatted_message: String,
-    session_senders: &HashMap<String, mpsc::UnboundedSender<String>>,
-    app: &App,
-    goal_spawn_tx: &mpsc::UnboundedSender<SpawnGoalRequest>,
-) -> RouteOutcome {
-    if let Some(tx) = session_senders.get(target) {
-        return if tx.send(formatted_message).is_err() {
-            RouteOutcome::ChannelClosed
-        } else {
-            RouteOutcome::Delivered
-        };
-    }
-    if app.goals.iter().any(|g| g.id == target) {
-        let _ = goal_spawn_tx.send(SpawnGoalRequest {
-            goal_id: target.to_string(),
-            message: formatted_message,
-            fresh_session: None,
-        });
-        return RouteOutcome::LazySpawned;
-    }
-    RouteOutcome::Unknown
-}
-
 /// Build the `send_message` dispatcher closure for one goal session. The
 /// closure captures the sender's identity, the shared session registry, the
 /// shared `goal_spawn_tx` (for lazy-spawn on first contact), the app handle
@@ -1419,7 +1167,7 @@ fn route_or_lazy_spawn(
 /// Contract:
 /// - `target` is checked against both the session registry and the goal
 ///   tree. The tool succeeds when the target is in either, mirroring
-///   @-dispatch: a known goal in the tree is lazy-spawned on first
+///   the lazy-spawn contract: a known goal in the tree is lazy-spawned on first
 ///   contact so the message can be delivered into its fresh session.
 ///   The tool fails outright when the target is unknown — not
 ///   recognized as a goal and not present as a running session.
@@ -1438,8 +1186,8 @@ fn route_or_lazy_spawn(
 ///   event with `success: false` and the rejection reason is emitted
 ///   for introspection symmetry with the unknown-target path.
 /// - On success (registry hit or lazy-spawn): format the message (same
-///   `delivery_message` framing as the envelope path), push a
-///   `<@{sender}> → <@{target}>` system message so the user can see
+///   `delivery_message` framing), push a
+///   `{sender} → {target}` system message so the user can see
 ///   the exchange, insert the target into `running_sessions` so the
 ///   batch is correctly active (and the batch-end retirement check
 ///   holds off while the lazy-spawned session is being drained), and
@@ -1497,13 +1245,12 @@ fn build_send_message_dispatcher(
         // system message. Truncating at the first line keeps the visible
         // exchange legible in the conversation pane.
         let first_line = message.lines().next().unwrap_or("").to_string();
-        // Format the message with the same delivery framing the envelope
-        // path uses, so a recipient cannot tell which delivery mechanism
-        // put the message in its inbox.
+        // Format the message with the uniform delivery framing so the
+        // recipient sees a consistent sender-attributed body regardless
+        // of which code path delivered it.
         let formatted = prompts::delivery_message(&sender, message);
 
-        // Route via the shared registry-then-lazy-spawn decision so the
-        // tool mirrors the @-envelope path's behavior. Take the senders
+        // Route via the registry-then-lazy-spawn decision. Take the senders
         // lock briefly, drop it, then take the app lock to consult the
         // goal tree — never hold both at once, in any order.
         let outcome = {
@@ -1519,15 +1266,13 @@ fn build_send_message_dispatcher(
                 let a = app.lock().unwrap();
                 if a.goals.iter().any(|g| g.id == target) {
                     // Lazy-spawn: hand the runtime a SpawnGoalRequest with
-                    // the formatted message, exactly the way the @-envelope
-                    // path does. The runtime drains the request, spawns the
+                    // the formatted message,  The runtime drains the request, spawns the
                     // goal_agent_loop, and delivers the message into the
                     // new session's channel — all before the sender's turn
                     // completes. If the runtime is shutting down
                     // (goal_spawn_tx closed) we still report success here
                     // and let the shutdown error surface from the run loop;
-                    // dispatch_peer_consultations ignores the same failure
-                    // for the same reason.
+
                     let _ = goal_spawn_tx.send(SpawnGoalRequest {
                         goal_id: target.to_string(),
                         message: formatted,
@@ -1543,17 +1288,15 @@ fn build_send_message_dispatcher(
         match outcome {
             RouteOutcome::Delivered | RouteOutcome::LazySpawned => {
                 // Surface the exchange in the conversation pane and the log.
-                // The format matches the envelope path's system message so
-                // the user sees a single uniform "→" line regardless of
-                // whether the dispatch was tool-delivered or envelope-delivered.
-                let sys = format!("<@{}> → <@{}>: {}", sender, target, message);
+                // The user sees a uniform "→" line for the dispatch.
+                let sys = format!("{} → {}: {}", sender, target, message);
                 {
                     let mut a = app.lock().unwrap();
                     a.push_system_message(&sys);
                     // Mark the recipient as running so the batch is active.
                     // The recipient's own chunk will replace this entry's
                     // reason; on its Done event running_sessions drops the
-                    // entry, matching the envelope path. For the
+                    // entry, matching the Done-event lifecycle. For the
                     // LazySpawned case the entry is inserted BEFORE the
                     // SpawnGoalRequest drains, which is exactly the gap the
                     // batch-end retirement check must wait through.
@@ -1636,7 +1379,7 @@ fn build_send_message_dispatcher(
 ///   the new id is `{caller_session_id}~{counter}`. The caller session id
 ///   is used verbatim as the prefix (not the base permanent goal id), so
 ///   a coordinator's sub-session is nested under the coordinator in the
-///   TUI — mirroring the envelope-spawned path at `handle_session_event`.
+///   TUI — mirroring the spawn_session tool's nesting.
 /// - Looks up the caller's permanent goal in `app.goals` (resolving
 ///   ephemeral coordinators to their base id via `app::session_base_id`).
 ///   If the caller's goal is not in the goal tree, returns `Err(reason)`
@@ -1648,11 +1391,9 @@ fn build_send_message_dispatcher(
 ///   message for user visibility, emits a `SpawnSessionDispatched` log
 ///   event, and returns the pre-assigned session id + label.
 /// - The actual `goal_agent_loop` task is created by the run-loop drain
-///   handler at `goal_spawn_rx` time (the same handler that creates
-///   envelope-spawned sub-sessions), so this dispatcher does NOT
+///   handler at `goal_spawn_rx` time, so this dispatcher does NOT
 ///   duplicate the channel/init/spawn plumbing — it only does the
-///   pre-id-assignment and registry bookkeeping the envelope path does
-///   in `handle_session_event`.
+///   pre-id-assignment and registry bookkeeping.
 ///
 /// Returns an `Arc` so the closure can be cloned cheaply and shared across
 /// every `run()` call of the runner that serves this goal session.
@@ -1727,7 +1468,7 @@ fn build_spawn_session_dispatcher(
         // Enqueue the spawn request. The run-loop drain handler picks it
         // up, does the batch-start retirement, registers the channel,
         // builds the lean init message, and spawns a `goal_agent_loop`
-        // task — exactly the path envelope-spawned sub-sessions take.
+        // task.
         let _ = goal_spawn_tx.send(SpawnGoalRequest {
             goal_id: permanent_base.clone(),
             message: subgoal.to_string(),
@@ -1739,16 +1480,15 @@ fn build_spawn_session_dispatcher(
         });
 
         // Surface the dispatch in the conversation pane so the user can
-        // see tool-spawned sub-sessions in the same way envelope-spawned
-        // ones appear (the format mirrors handle_session_event's
-        // `<@{dispatcher}> → fresh sub-session ...` line so the two
-        // delivery paths produce visually equivalent output).
+        // see tool-spawned sub-sessions. The format mirrors the
+        // `{dispatcher} → fresh sub-session ...` line used elsewhere so
+        // the delivery paths produce visually equivalent output.
         let label_clause = match &label_owned {
             Some(l) if !l.is_empty() => format!(" ({l})"),
             _ => String::new(),
         };
         let sys = format!(
-            "<@{}> → fresh sub-session `{}`{}: {}",
+            "{} → fresh sub-session `{}`{}: {}",
             caller, session_id, label_clause, first_line
         );
         {
@@ -1773,95 +1513,6 @@ fn build_spawn_session_dispatcher(
         Ok((session_id, label_owned))
     })
 }
-
-/// Deliver peer consultations collected from a completed agent reply.
-/// Routes to the session registry for known agents; triggers lazy spawn via
-/// `goal_spawn_tx` for goal IDs not yet in the registry.
-/// All dispatched recipients are tracked in running_sessions so the batch-end
-/// retirement check correctly waits for every pending delivery to be processed.
-///
-/// The formatted delivery message uses plain `@{sender}` (no angle-bracket
-/// envelope syntax) for the reply instruction. A live `<@id>…</@id>` envelope
-/// in the delivery message would be re-extracted by the harness on the next
-/// parse pass and route placeholder text as a spurious first message.
-fn dispatch_peer_consultations(
-    app: &mut App,
-    sender: &str,
-    consultations: &[(String, String)],
-    session_senders: &HashMap<String, mpsc::UnboundedSender<String>>,
-    goal_spawn_tx: &mpsc::UnboundedSender<SpawnGoalRequest>,
-    log: &logger::LogSender,
-) {
-    for (recipient, msg) in consultations {
-        let formatted = prompts::delivery_message(sender, msg);
-        let sys = format!("<@{}> → <@{}>: {}", sender, recipient, msg);
-        app.push_system_message(&sys);
-        log.emit(sender, logger::LogEvent::TinkerSystemMessageReceived { content: sys });
-        // Track ALL recipients in running_sessions — permanent goals, interactive
-        // agents (tend / rummage / jog), and ephemeral coordinators — so the
-        // batch-end retirement check sees any session with a pending delivery as
-        // still active.  Without tracking ephemeral coordinators, a sub-session
-        // that replies back to its coordinator (e.g. `fresh-agents~1`) creates a
-        // window where running_sessions does not contain the coordinator, the
-        // retirement guard fires, and the coordinator is retired before it can
-        // consume the buffered reply and respond to its own dispatcher.
-        let should_track = app.goals.iter().any(|g| &g.id == recipient)
-            || matches!(recipient.as_str(), "tend" | "rummage" | "jog")
-            || app.ephemeral_sessions.contains(recipient.as_str());
-
-        match route_or_lazy_spawn(recipient, formatted, session_senders, app, goal_spawn_tx) {
-            RouteOutcome::ChannelClosed => {
-                // The recipient's session task has exited and its channel
-                // is closed. Surface this as a system message so the user
-                // can see the lost delivery.
-                let warn = prompts::delivery_lost_warning(sender, recipient);
-                app.push_system_message(warn.trim_end());
-                log.emit(sender, logger::LogEvent::TinkerSystemMessageReceived {
-                    content: warn.trim_end().to_string(),
-                });
-            }
-            RouteOutcome::Delivered | RouteOutcome::LazySpawned => {
-                // Delivery is already handled inside route_or_lazy_spawn
-                // (channel send or SpawnGoalRequest enqueue). The system
-                // message push at the top of the loop and the
-                // running_sessions tracking below cover the user-visible
-                // surface for both outcomes.
-            }
-            RouteOutcome::Unknown => {
-                // The @-envelope path is permissive about unknown
-                // recipients — the consultation was extracted from a
-                // finalised reply, the user has already seen the
-                // attempted exchange via the system message, and there
-                // is no session to surface a delivery failure to. The
-                // registry/goal-tree lookups inside route_or_lazy_spawn
-                // have already concluded; nothing more to do here.
-            }
-        }
-        if should_track {
-            let reason = msg.lines().next().unwrap_or("").to_string();
-            app.running_sessions.entry(recipient.clone()).or_insert(Some(reason));
-        }
-    }
-}
-
-/// Collect all IDs the @-block parser should recognise: current registry entries
-/// plus all known goal IDs (so agents can address goals not yet spawned).
-/// The caller is responsible for holding the registry lock and passing a
-/// `&HashMap` view; the function only reads.
-fn known_agent_ids<'a>(
-    session_senders: &'a HashMap<String, mpsc::UnboundedSender<String>>,
-    goals: &'a [goal::Goal],
-) -> Vec<&'a str> {
-    let mut ids: Vec<&str> = session_senders.keys().map(|s| s.as_str()).collect();
-    for g in goals {
-        if !ids.contains(&g.id.as_str()) {
-            ids.push(g.id.as_str());
-        }
-    }
-    ids
-}
-
-
 
 /// Check whether the batch (active/idle) state has changed and emit a
 /// `BatchTransition` log event plus a user-visible system message if so.
@@ -1894,13 +1545,12 @@ fn check_and_emit_batch_transition(
 }
 
 /// Unified session event handler. Routes events from any agent session to the
-/// appropriate App state updates and peer consultations. The session registry
-/// is taken by `&HashMap` — the caller is responsible for holding the
-/// registry lock; the function only reads.
+/// appropriate App state updates. The session registry is taken by `&HashMap` —
+/// the caller is responsible for holding the registry lock; the function only reads.
 fn handle_session_event(
     app: &mut App,
     ev: SessionEvent,
-    goal_spawn_tx: &mpsc::UnboundedSender<SpawnGoalRequest>,
+    _goal_spawn_tx: &mpsc::UnboundedSender<SpawnGoalRequest>,
     session_senders: &HashMap<String, mpsc::UnboundedSender<String>>,
     fs: &dyn Filesystem,
     log: &logger::LogSender,
@@ -1917,51 +1567,11 @@ fn handle_session_event(
                 app.append_agent_message(&goal_id, &text);
             }
             // Use clone so goal_id remains usable after the entry borrow ends.
-            app.current_session_text.entry(goal_id.clone()).or_default().push_str(&text);
-            // Pre-announce ephemeral sub-sessions as soon as their opening tag
-            // appears in the stream.  The full task body is unavailable until
-            // Done; spawning still happens there.  If a pre-announced entry has
-            // no matching close tag at Done time it is silently removed.
-            // All sessions — including ephemeral coordinators — may spawn
-            // sub-sessions (unbounded depth).  The scan uses goal_id directly
-            // so coordinator tags `<@coord~1|label>` are recognised; the new
-            // session ID uses the dispatcher's own ID as prefix so depth is
-            // preserved: a child of `rummage~1` becomes `rummage~1~N`.
-            {
-                let accumulated = app.current_session_text
-                    .get(&goal_id)
-                    .cloned()
-                    .unwrap_or_default();
-                let all_opens = scan_opening_tags(&accumulated, &goal_id);
-                let already_announced = app
-                    .pending_fresh_announcements
-                    .get(&goal_id)
-                    .map(|v| v.len())
-                    .unwrap_or(0);
-                for label in all_opens.into_iter().skip(already_announced) {
-                    app.fresh_session_counter += 1;
-                    let counter = app.fresh_session_counter;
-                    let session_id = format!("{}~{}", goal_id, counter);
-                    app.running_sessions.insert(session_id.clone(), None);
-                    app.ephemeral_sessions.insert(session_id.clone());
-                    app.ephemeral_sessions_ordered.push(session_id.clone());
-                    app.ephemeral_labels.insert(session_id.clone(), label.clone());
-                    app.goal_list_scroll.last_total = app.flat_items().len();
-                    app.pending_fresh_announcements
-                        .entry(goal_id.clone())
-                        .or_default()
-                        .push((session_id, label));
-                }
-            }
         }
         SessionEvent::Done { goal_id, full_output } => {
             app.finalize_agent_message(&goal_id);
             // Clear the ▶ indicator for any session type, including interactive agents.
             app.running_sessions.remove(&goal_id);
-            // current_session_text was used during streaming for pre-announcement scanning;
-            // its content is not used here — full_output from the Done event is the authoritative
-            // complete assembled reply and is free of chunk-delivery gaps.
-            app.current_session_text.remove(&goal_id);
             let session_text = full_output;
             // Reload goals — any session may have written TOML files.
             if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
@@ -2041,102 +1651,6 @@ fn handle_session_event(
                     app.phase = Phase::Idle;
                 }
             }
-            let known_ids = known_agent_ids(session_senders, &app.goals);
-            let known_ids_refs: Vec<&str> = known_ids;
-            let consultations = parse_at_commands(&session_text, &known_ids_refs);
-            dispatch_peer_consultations(app, &goal_id, &consultations, session_senders, goal_spawn_tx, log);
-
-            // Fresh-dispatch: reconcile pre-announced ephemeral sessions
-            // (registered at Chunk time from opening tags) with the complete
-            // envelopes found in the finished turn text.
-            //
-            // • Pre-announced entry has a matching complete envelope → update
-            //   the running reason and spawn the sub-session using the
-            //   pre-assigned session ID (so the TUI row never flickers).
-            // • More complete envelopes than pre-announcements (e.g. when the
-            //   Done event fires without a preceding Chunk scan) → assign a
-            //   fresh ID and register as normal.
-            // • Pre-announced entry with no matching complete envelope →
-            //   remove it silently (the opening tag appeared but the body or
-            //   closing tag was never emitted).
-            //
-            // All sessions — including ephemeral coordinators — may spawn
-            // further sub-sessions (unbounded depth).  Coordinators use their
-            // own session ID in dispatch tags; dispatcher_id carries the actual
-            // sender, and the permanent base ID is used for new session IDs so
-            // TUI nesting stays under the permanent goal row.
-            {
-                let perm_base = app::session_base_id(&goal_id).to_string();
-                let fresh_dispatches = parse_fresh_dispatches(&session_text, &goal_id);
-                // Consume the pre-announcement list for this dispatcher's goal_id.
-                let pre_announced = app
-                    .pending_fresh_announcements
-                    .remove(&goal_id)
-                    .unwrap_or_default();
-
-                for (idx, (label, task)) in fresh_dispatches.iter().enumerate() {
-                    let session_id = if idx < pre_announced.len() {
-                        // Reuse the pre-assigned ID so the goal-list row is stable.
-                        let (pre_id, _) = &pre_announced[idx];
-                        let first_line = task.lines().next().unwrap_or("").to_string();
-                        app.running_sessions.insert(pre_id.clone(), Some(first_line));
-                        pre_id.clone()
-                    } else {
-                        // No pre-announcement for this envelope — register now.
-                        app.fresh_session_counter += 1;
-                        let counter = app.fresh_session_counter;
-                        let id = format!("{}~{}", goal_id, counter);
-                        let first_line = task.lines().next().unwrap_or("").to_string();
-                        app.running_sessions.insert(id.clone(), Some(first_line));
-                        app.ephemeral_sessions.insert(id.clone());
-                        app.ephemeral_sessions_ordered.push(id.clone());
-                        app.ephemeral_labels.insert(id.clone(), label.clone());
-                        app.goal_list_scroll.last_total = app.flat_items().len();
-                        id
-                    };
-                    let first_line = task.lines().next().unwrap_or("").to_string();
-                    let label_clause = match label {
-                        Some(l) if !l.is_empty() => format!(" ({})", l),
-                        _ => String::new(),
-                    };
-                    let sys = format!(
-                        "<@{}> → fresh sub-session `{}`{}: {}",
-                        goal_id, session_id, label_clause, first_line
-                    );
-                    app.push_system_message(&sys);
-                    log.emit(
-                        &goal_id,
-                        logger::LogEvent::TinkerSystemMessageReceived { content: sys },
-                    );
-                    let _ = goal_spawn_tx.send(SpawnGoalRequest {
-                        goal_id: perm_base.clone(),
-                        message: task.clone(),
-                        fresh_session: Some(FreshSessionConfig {
-                            session_id,
-                            label: label.clone(),
-                            // Carry the actual dispatcher ID (may be ephemeral) so
-                            // the spawn handler can route replies correctly and the
-                            // init message uses the right reply target.
-                            dispatcher_id: goal_id.clone(),
-                        }),
-                    });
-                }
-
-                // Remove pre-announced sessions that have no matching complete envelope.
-                for (idx, (pre_id, _)) in pre_announced.iter().enumerate() {
-                    if idx >= fresh_dispatches.len() {
-                        app.ephemeral_sessions.remove(pre_id);
-                        app.running_sessions.remove(pre_id);
-                        app.ephemeral_sessions_ordered.retain(|id| id != pre_id);
-                        app.ephemeral_labels.remove(pre_id);
-                    }
-                }
-                if !pre_announced.is_empty() {
-                    // Re-sync the scroll total after any removals.
-                    app.goal_list_scroll.last_total = app.flat_items().len();
-                }
-            }
-
             // Silence detection: if the session produced no output at all, prompt
             // the agent to surface what happened. Applies uniformly to all sessions.
             if session_text.trim().is_empty()
@@ -2469,36 +1983,25 @@ mod tests {
             .description
     }
 
-    fn make_test_session_senders(
-        msg_tx: &mpsc::UnboundedSender<String>,
-    ) -> (Arc<Mutex<HashMap<String, mpsc::UnboundedSender<String>>>>, mpsc::UnboundedReceiver<String>, mpsc::UnboundedReceiver<String>) {
-        let (rummage_tx, rummage_rx) = mpsc::unbounded_channel::<String>();
-        let (jog_tx, jog_rx) = mpsc::unbounded_channel::<String>();
-        let mut senders = HashMap::new();
-        senders.insert("tend".to_string(), msg_tx.clone());
-        senders.insert("rummage".to_string(), rummage_tx);
-        senders.insert("jog".to_string(), jog_tx);
-        (Arc::new(Mutex::new(senders)), rummage_rx, jog_rx)
-    }
-
     // REMOVED: test_spec_build_batch_summary_request_folds_per_goal_summaries
     // (build_batch_summary_request deleted — batch machinery retired)
     // REMOVED: test_spec_batch_summary_request_instructs_reactive_run_lines
     // (same reason)
 
     // REMOVED: test_spec_summary_routes_directly_to_tend_not_batched
-    // (SummaryReady variant retired — goal agents send <@tend> directly on completion)
+    // (SummaryReady variant retired — goal agents send_message to tend directly on completion)
 
     // spec: goal-agents — SummaryReady was a transitional SessionEvent variant
     // that routed goal-session summaries to tend via the event channel. Goal agents
-    // now send <@tend> directly, so the variant has been removed. LlmSessionId is likewise
-    // gone: the session id is captured from the runner's return value, not an event.
+    // now send_message to tend directly, so the variant has been removed.
+    // LlmSessionId is likewise gone: the session id is captured from the
+    // runner's return value, not an event.
     // This exhaustive-match test compiles only while both variants stay absent.
     #[test]
     fn test_spec_summary_ready_variant_removed() {
         // Exhaustive match ensures LlmSessionId and SummaryReady stay absent.
         // Done carries goal_id and full_output (the complete assembled reply for
-        // envelope extraction, bypassing chunk-reconstructed current_session_text).
+        // the complete assembled reply).
         let evt = SessionEvent::Done { goal_id: "x".into(), full_output: "".into() };
         match evt {
             SessionEvent::Chunk { .. } => {}
@@ -2955,7 +2458,7 @@ mod tests {
     }
 
     // spec (goal-agents): rummage and jog must NOT be pre-seeded in session_senders.
-    // They start lazily on the first @goal-id dispatch or user message, just like
+    // They start lazily on the first dispatch or user message, just like
     // every other goal agent. Tend is the only pre-populated entry.
     #[test]
     fn test_spec_rummage_jog_lazy_not_pre_seeded() {
@@ -3053,360 +2556,11 @@ mod tests {
         assert_eq!(app.active_session, "tend", "active_session must be unchanged after unknown slash");
     }
 
-    // spec (peer-consult): parse_at_commands extracts <@tend>, <@rummage>,
-    // <@jog> tag envelopes from agent output. Prose outside envelopes is
-    // silently dropped. The function takes a `known_ids` slice so routing
-    // works for any registered session ID, not just the three built-in agents.
-    const BUILTIN_IDS: &[&str] = &["tend", "rummage", "jog"];
-
-    #[test]
-    fn test_spec_peer_consult_parse_at_tinker() {
-        let r = parse_at_commands("<@tend>what does this module do?</@tend>", BUILTIN_IDS);
-        assert_eq!(r.len(), 1);
-        assert_eq!(r[0].0, "tend");
-        assert_eq!(r[0].1, "what does this module do?");
-    }
-
-    #[test]
-    fn test_spec_peer_consult_parse_at_rummage() {
-        let r = parse_at_commands("<@rummage>can you trace the call?</@rummage>", BUILTIN_IDS);
-        assert_eq!(r.len(), 1);
-        assert_eq!(r[0].0, "rummage");
-        assert_eq!(r[0].1, "can you trace the call?");
-    }
-
-    #[test]
-    fn test_spec_peer_consult_parse_at_jog() {
-        let r = parse_at_commands("<@jog>do you still mean X by this?</@jog>", BUILTIN_IDS);
-        assert_eq!(r.len(), 1);
-        assert_eq!(r[0].0, "jog");
-        assert_eq!(r[0].1, "do you still mean X by this?");
-    }
-
-    #[test]
-    fn test_spec_peer_consult_parse_prose_before_block_excluded() {
-        let input = "some prose\n<@tend>hello</@tend>\n<@rummage>check this</@rummage>";
-        let r = parse_at_commands(input, BUILTIN_IDS);
-        assert_eq!(r.len(), 2);
-        assert_eq!(r[0], ("tend".to_string(), "hello".to_string()));
-        assert_eq!(r[1], ("rummage".to_string(), "check this".to_string()));
-    }
-
-    #[test]
-    fn test_spec_peer_consult_parse_block_body_included() {
-        let input = "<@tend>\nhello\nbody line one\nbody line two\n</@tend>\n<@rummage>check</@rummage>";
-        let r = parse_at_commands(input, BUILTIN_IDS);
-        assert_eq!(r.len(), 2);
-        assert!(
-            r[0].1.contains("hello") && r[0].1.contains("body line one"),
-            "tag envelope must include all lines between open and close tags"
-        );
-        assert_eq!(r[1], ("rummage".to_string(), "check".to_string()));
-    }
-
-    #[test]
-    fn test_spec_peer_consult_parse_at_without_message_ignored() {
-        let r = parse_at_commands("<@tend></@tend>", BUILTIN_IDS);
-        assert_eq!(r.len(), 0, "empty tag envelope must not be delivered");
-    }
-
-    #[test]
-    fn test_spec_peer_consult_parse_multiline_body() {
-        let input = "<@rummage>\nfirst line\nsecond line\n</@rummage>";
-        let r = parse_at_commands(input, BUILTIN_IDS);
-        assert_eq!(r.len(), 1);
-        assert_eq!(r[0].0, "rummage");
-        assert!(
-            r[0].1.contains("first line") && r[0].1.contains("second line"),
-            "multi-line tag envelope body must include all lines between open and close tags"
-        );
-    }
-
-    #[test]
-    fn test_spec_peer_consult_parse_multiple_at_lines() {
-        let input = "<@tend>q1</@tend>\n<@rummage>q2</@rummage>\n<@jog>q3</@jog>";
-        let r = parse_at_commands(input, BUILTIN_IDS);
-        assert_eq!(r.len(), 3);
-        assert_eq!(r[0], ("tend".to_string(), "q1".to_string()));
-        assert_eq!(r[1], ("rummage".to_string(), "q2".to_string()));
-        assert_eq!(r[2], ("jog".to_string(), "q3".to_string()));
-    }
-
-    // spec (peer-consult): an envelope that starts mid-line (e.g. explanatory
-    // prose such as "reply via <@tend>…</@tend>") must NOT be extracted as a
-    // live dispatch — only envelopes whose opening tag begins the trimmed line
-    // are treated as real routing signals.
-    #[test]
-    fn test_spec_peer_consult_mid_line_envelope_not_extracted() {
-        let input = "reply via <@tend>placeholder text</@tend> once you are done";
-        let r = parse_at_commands(input, BUILTIN_IDS);
-        assert!(
-            r.is_empty(),
-            "mid-line envelope must not be extracted as a dispatch; got {:?}",
-            r
-        );
-    }
-
-    // spec (peer-consult): envelopes inside a fenced code block (``` or ~~~)
-    // are illustrative, not live — the parser must skip them entirely.
-    #[test]
-    fn test_spec_peer_consult_code_fence_envelope_not_extracted() {
-        let backtick_fence = "```\n<@tend>hello</@tend>\n```";
-        let r = parse_at_commands(backtick_fence, BUILTIN_IDS);
-        assert!(r.is_empty(), "envelope in backtick fence must not dispatch; got {:?}", r);
-
-        let tilde_fence = "~~~\n<@rummage>check this</@rummage>\n~~~";
-        let r2 = parse_at_commands(tilde_fence, BUILTIN_IDS);
-        assert!(r2.is_empty(), "envelope in tilde fence must not dispatch; got {:?}", r2);
-
-        // A real envelope after the fence must still fire.
-        let after_fence = "```\n<@tend>ignored</@tend>\n```\n<@rummage>real</@rummage>";
-        let r3 = parse_at_commands(after_fence, BUILTIN_IDS);
-        assert_eq!(r3.len(), 1);
-        assert_eq!(r3[0], ("rummage".to_string(), "real".to_string()));
-    }
-
-    // spec (goal-agents): dispatch_peer_consultations requests lazy spawn when
-    // the recipient is a known goal ID not yet in the session registry.
-    #[test]
-    fn test_spec_goal_agent_dispatch_triggers_lazy_spawn() {
-        let (msg_tx, _msg_rx) = mpsc::unbounded_channel::<String>();
-        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let (senders, _, _) = make_test_session_senders(&msg_tx);
-
-        let mut app = App::new();
-        app.goals.push(goal::Goal {
-            id: "goal-agents".into(),
-            summary: String::new(),
-            description: "build the registry".into(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            tier: None,
-            kind: None,
-            source_path: None,
-        });
-
-        let consultations = vec![("goal-agents".to_string(), "time to build".to_string())];
-        let senders_guard = senders.lock().unwrap();
-        dispatch_peer_consultations(
-            &mut app,
-            "tend",
-            &consultations,
-            &senders_guard,
-            &spawn_tx,
-            &logger::noop_sender(),
-        );
-        drop(senders_guard);
-
-        let req = spawn_rx.try_recv().expect("dispatch to unknown goal must enqueue spawn request");
-        assert_eq!(req.goal_id, "goal-agents");
-        assert!(req.message.contains("time to build"));
-        assert!(req.message.contains("[from tend]"), "message must carry sender attribution");
-    }
-
-    // spec (goal-agents): known_agent_ids includes both registry entries and
-    // all goal IDs from app.goals (so agents can address unspawned goals).
-    #[test]
-    fn test_spec_known_agent_ids_includes_goals_and_registry() {
-        let (msg_tx, _) = mpsc::unbounded_channel::<String>();
-        let (senders, _, _) = make_test_session_senders(&msg_tx);
-        let goals = vec![
-            goal::Goal { id: "tui".into(), summary: String::new(), description: String::new(),
-                parent_id: String::new(), children: vec![], related: vec![], kind: None, tier: None, source_path: None },
-            goal::Goal { id: "rummage".into(), summary: String::new(), description: String::new(),
-                parent_id: String::new(), children: vec![], related: vec![], kind: None, tier: None, source_path: None },
-        ];
-        let senders_guard = senders.lock().unwrap();
-        let ids = known_agent_ids(&senders_guard, &goals);
-        assert!(ids.contains(&"tend"), "registry agent must be included");
-        assert!(ids.contains(&"tui"), "goal not in registry must be included");
-        // rummage is in both registry and goals — must appear exactly once in practice
-        // (the dedup ensures it's not duplicated)
-        assert!(ids.iter().filter(|id| **id == "rummage").count() <= 1, "no duplicates");
-    }
-
-    // spec (peer-consult): parse_at_commands accepts arbitrary goal IDs,
-    // not just the three built-in agents.
-    #[test]
-    fn test_spec_peer_consult_parse_accepts_goal_id() {
-        let ids = &["tend", "rummage", "goal-agents"];
-        let r = parse_at_commands("<@goal-agents>start working on the registry</@goal-agents>", ids);
-        assert_eq!(r.len(), 1);
-        assert_eq!(r[0].0, "goal-agents");
-        assert_eq!(r[0].1, "start working on the registry");
-    }
-
-    // spec (peer-consult): dispatch_peer_consultations routes each consultation
-    // to the correct channel and formats the message with the sender name.
-    #[test]
-    fn test_spec_peer_consult_dispatch_routes_to_correct_channel() {
-        let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<String>();
-        let (rummage_tx, mut rummage_rx) = mpsc::unbounded_channel::<String>();
-        let (jog_tx, mut jog_rx) = mpsc::unbounded_channel::<String>();
-        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-
-        let mut senders = HashMap::new();
-        senders.insert("tend".to_string(), msg_tx.clone());
-        senders.insert("rummage".to_string(), rummage_tx);
-        senders.insert("jog".to_string(), jog_tx);
-        let senders = Arc::new(Mutex::new(senders));
-
-        let mut app = App::new();
-        let consultations = vec![
-            ("tend".to_string(), "question for tend".to_string()),
-            ("rummage".to_string(), "question for rummage".to_string()),
-            ("jog".to_string(), "question for jog".to_string()),
-        ];
-        let senders_guard = senders.lock().unwrap();
-        dispatch_peer_consultations(
-            &mut app,
-            "rummage",
-            &consultations,
-            &senders_guard,
-            &spawn_tx,
-            &logger::noop_sender(),
-        );
-        drop(senders_guard);
-
-        let tend_msg = msg_rx.try_recv().expect("tend must receive its consultation");
-        assert!(tend_msg.contains("[from rummage]"), "message must carry sender attribution");
-        assert!(tend_msg.contains("question for tend"));
-
-        let rummage_msg = rummage_rx.try_recv().expect("rummage must receive its consultation");
-        assert!(rummage_msg.contains("[from rummage]"));
-
-        let jog_msg = jog_rx.try_recv().expect("jog must receive its consultation");
-        assert!(jog_msg.contains("[from rummage]"));
-    }
-
-    // spec (peer-consult): dispatched messages carry an inline return-routing
-    // instruction naming the sender so the receiving agent knows who to reply
-    // to. The instruction must NOT use live <@id>…</@id> envelope syntax —
-    // any live envelope in the delivery message would be parsed by the harness
-    // as a real dispatch, routing placeholder text as a spurious first message
-    // and truncating the agent's actual reply.
-    #[test]
-    fn test_spec_peer_consult_dispatch_includes_reply_instruction() {
-        let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<String>();
-        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let mut senders = HashMap::new();
-        senders.insert("tend".to_string(), msg_tx);
-        let senders = Arc::new(Mutex::new(senders));
-        let mut app = App::new();
-        let consultations = vec![("tend".to_string(), "what does this mean?".to_string())];
-        let senders_guard = senders.lock().unwrap();
-        dispatch_peer_consultations(
-            &mut app,
-            "rummage",
-            &consultations,
-            &senders_guard,
-            &spawn_tx,
-            &logger::noop_sender(),
-        );
-        drop(senders_guard);
-        let msg = msg_rx.try_recv().expect("tend must receive the consultation");
-        assert!(
-            msg.contains("send_message(target=\"rummage\""),
-            "dispatched message must include reply instruction naming the sender via send_message"
-        );
-        // The delivery message must not contain a parseable live envelope — if
-        // it did, the harness would extract it on the next parse pass and route
-        // placeholder text back to the sender as a spurious message.
-        let ids: &[&str] = &["rummage"];
-        let spurious = parse_at_commands(&msg, ids);
-        assert!(
-            spurious.is_empty(),
-            "delivery message must not contain live <@id>…</@id> envelopes that the parser would pick up: found {:?}",
-            spurious
-        );
-    }
-
-    // spec (peer-consult): a system message is pushed for each consultation
-    // so the user can observe the exchange in real time.
-    #[test]
-    fn test_spec_peer_consult_pushes_system_message_for_visibility() {
-        let (msg_tx, _) = mpsc::unbounded_channel::<String>();
-        let (rummage_tx, mut rummage_rx) = mpsc::unbounded_channel::<String>();
-        let (jog_tx, _) = mpsc::unbounded_channel::<String>();
-        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-
-        let mut senders = HashMap::new();
-        senders.insert("tend".to_string(), msg_tx.clone());
-        senders.insert("rummage".to_string(), rummage_tx);
-        senders.insert("jog".to_string(), jog_tx);
-        let senders = Arc::new(Mutex::new(senders));
-
-        let mut app = App::new();
-        let consultations = vec![("rummage".to_string(), "trace the init flow".to_string())];
-        let senders_guard = senders.lock().unwrap();
-        dispatch_peer_consultations(
-            &mut app,
-            "tend",
-            &consultations,
-            &senders_guard,
-            &spawn_tx,
-            &logger::noop_sender(),
-        );
-        drop(senders_guard);
-
-        let sys = app.messages.iter().find(|m| m.role == app::Role::System);
-        assert!(sys.is_some(), "a system message must be pushed for the consultation");
-        let text = &sys.unwrap().text;
-        assert!(text.contains("<@tend>"), "system message must name the sender");
-        assert!(text.contains("<@rummage>"), "system message must name the recipient");
-        assert!(text.contains("trace the init flow"), "system message must include the message content");
-        let _ = rummage_rx.try_recv();
-    }
-
-    // spec (peer-consult): when a recipient's session task has exited (receiver
-    // dropped), dispatch_peer_consultations must surface a warning system message
-    // rather than silently discarding the delivery.
-    #[test]
-    fn test_spec_peer_consult_dropped_receiver_surfaces_warning() {
-        let (msg_tx, _) = mpsc::unbounded_channel::<String>();
-        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-
-        // Create a sender for "rummage" but immediately drop the receiver — simulates
-        // a session task that has exited.
-        let (rummage_tx, rummage_rx) = mpsc::unbounded_channel::<String>();
-        drop(rummage_rx);
-
-        let mut senders = HashMap::new();
-        senders.insert("tend".to_string(), msg_tx.clone());
-        senders.insert("rummage".to_string(), rummage_tx);
-        let senders = Arc::new(Mutex::new(senders));
-
-        let mut app = App::new();
-        let consultations = vec![("rummage".to_string(), "check the auth module".to_string())];
-        let senders_guard = senders.lock().unwrap();
-        dispatch_peer_consultations(
-            &mut app,
-            "tend",
-            &consultations,
-            &senders_guard,
-            &spawn_tx,
-            &logger::noop_sender(),
-        );
-        drop(senders_guard);
-
-        let warn = app.messages.iter().find(|m| {
-            m.role == app::Role::System && m.text.contains("delivery lost")
-        });
-        assert!(
-            warn.is_some(),
-            "a dropped-receiver must surface a 'delivery lost' system message"
-        );
-        let text = &warn.unwrap().text;
-        assert!(text.contains("tend"), "warning must name the sender");
-        assert!(text.contains("rummage"), "warning must name the recipient");
-    }
-
     // ── send_message dispatcher tests ────────────────────────────────────
 
     // spec (send-message): the dispatcher delivers to a registered target,
     // frames the message with the same delivery_message formatting the
-    // envelope path uses, pushes a system message for user visibility, and
+    // delivery_message template uses, pushes a system message for user visibility, and
     // returns Ok with a confirmation the model can act on.
     #[test]
     fn test_spec_send_message_dispatcher_delivers_to_known_target() {
@@ -3443,14 +2597,14 @@ mod tests {
             "rummage must not receive a tend-addressed dispatch",
         );
 
-        // A system message is pushed for user visibility.
+        // A system message is pushed for user visibility — a plain
+        // "sender → target" line (no envelope tag syntax).
         let a = app.lock().unwrap();
         let sys = a.messages.iter().find(|m| {
             m.role == app::Role::System
-                && m.text.contains("<@rummage>")
-                && m.text.contains("<@tend>")
+                && m.text.contains("rummage → tend")
         });
-        assert!(sys.is_some(), "a <@rummage> → <@tend> system message must be pushed");
+        assert!(sys.is_some(), "a `rummage → tend` system message must be pushed");
     }
 
     // spec (send-message): the dispatcher returns Err with the unknown-target
@@ -3546,10 +2700,9 @@ mod tests {
     }
 
     // spec (send-message): the dispatcher formats the dispatch with the
-    // SAME message envelope as the @-block path.  A recipient cannot
-    // distinguish a tool-delivered message from an envelope-delivered one
-    // — both arrive in the same `delivery_message` framing and use the
-    // same reply instruction.
+    // `delivery_message` template so a recipient cannot tell which
+    // dispatch mechanism delivered it — it arrives in standard framing
+    // with the same reply instruction.
     #[test]
     fn test_spec_send_message_dispatcher_uses_delivery_message_format() {
         let (tend_tx, mut tend_rx) = mpsc::unbounded_channel::<String>();
@@ -3578,12 +2731,12 @@ mod tests {
             msg.contains("what does this mean?"),
             "delivered message must include the body verbatim: {msg}"
         );
-        // The reply instruction uses plain @rummage (no envelope syntax)
-        // — the envelope parser must not extract a spurious dispatch.
-        let spurious = parse_at_commands(&msg, &["rummage"]);
+        // The reply instruction points back at the sender via
+        // send_message — the delivery message must never embed raw
+        // dispatch tag syntax.
         assert!(
-            spurious.is_empty(),
-            "delivery message must not contain live <@id>…</@id> envelopes: found {spurious:?}"
+            !msg.contains("</@rummage>"),
+            "delivery message must not contain dispatch tag syntax: {msg:?}"
         );
     }
 
@@ -3846,7 +2999,7 @@ mod tests {
     // spec (spawn-session): the new sub-session id prefix is the caller's
     // full session id — for an ephemeral coordinator (`rummage~1`), the
     // sub-session is nested under the coordinator (`rummage~1~N`), matching
-    // the envelope-spawned path's nesting pattern. This is what the TUI
+    // the tool's nesting pattern. This is what the TUI
     // uses to render sub-sessions under the immediate dispatcher.
     #[test]
     fn test_spec_spawn_session_dispatcher_nests_under_ephemeral_coordinator() {
@@ -3891,9 +3044,8 @@ mod tests {
     }
 
     // spec (spawn-session): the dispatcher pushes a system message in the
-    // same format the envelope path produces (`<@{dispatcher}> → fresh
-    // sub-session ...`). This keeps tool-spawned and envelope-spawned
-    // sub-sessions visually equivalent in the conversation pane.
+    // `{dispatcher} → fresh sub-session ...` format so tool-spawned
+    // sub-sessions are visually equivalent in the conversation pane.
     #[test]
     fn test_spec_spawn_session_dispatcher_pushes_system_message() {
         let (goal_spawn_tx, _goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
@@ -3920,11 +3072,11 @@ mod tests {
         let a = app.lock().unwrap();
         let sys = a.messages.iter().find(|m| {
             m.role == app::Role::System
-                && m.text.contains("<@rummage>")
+                && m.text.contains("rummage → fresh sub-session")
                 && m.text.contains("rummage~1")
                 && m.text.contains("trace the auth flow")
         });
-        assert!(sys.is_some(), "a <@rummage> → fresh sub-session system message must be pushed");
+        assert!(sys.is_some(), "a `rummage → fresh sub-session` system message must be pushed");
     }
 
     // spec (spawn-session): when the caller's goal is not in the goal tree,
@@ -3963,7 +3115,7 @@ mod tests {
 
     // spec (spawn-session): the dispatcher increments `fresh_session_counter`
     // monotonically across successive spawns so session ids are unique. The
-    // counter is shared across tool and envelope paths (it lives in the
+    // counter is shared across all spawn_session dispatchers (it lives in the
     // `app` state), which keeps id assignment central and avoids collisions.
     #[test]
     fn test_spec_spawn_session_dispatcher_counter_is_monotonic() {
@@ -4032,12 +3184,12 @@ mod tests {
         );
     }
 
-    // spec (peer-consult): the session message channels and the goal-spawn channel
+    // spec (send-message): the session message channels and the goal-spawn channel
     // must be unbounded so delivery never silently drops when a recipient is under
     // load.  A bounded try_send on capacity-16 or -32 channels silently discards
     // the message when the channel is full; unbounded senders never fail due to capacity.
     #[test]
-    fn test_spec_peer_consult_session_channels_are_unbounded() {
+    fn test_spec_send_message_session_channels_are_unbounded() {
         let src = include_str!("main.rs");
         // Use concat to prevent this test's own source from satisfying the negative patterns.
         // If the bounded capacity numbers reappear in production code these assertions fail.
@@ -4141,7 +3293,7 @@ mod tests {
     #[test]
     fn test_spec_tinker_proves_by_execution_not_reading_source() {
         let content = test_tend_description();
-        assert!(content.contains("code-reality questions to @rummage") || content.contains("delegates aggressively"),
+        assert!(content.contains("delegates aggressively"),
             "tend prompt must require delegating code-reality questions to rummage rather than reading source directly");
     }
 
@@ -4382,6 +3534,7 @@ mod tests {
             "goal_agent_loop must pass the system prompt to oc.run()"
         );
     }
+
 
     #[test]
     fn test_spec_shared_language_form_norm_minimum_viable_shape() {
@@ -4652,207 +3805,6 @@ mod tests {
         );
     }
 
-    // spec (parallel-goal-agents): when another goal agent is already running,
-    // a new @-dispatch must still go to spawn immediately — no serial queue.
-    #[test]
-    fn test_spec_at_dispatch_spawns_when_goal_agent_already_running() {
-        let (msg_tx, _msg_rx) = mpsc::unbounded_channel::<String>();
-        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let (senders, _, _) = make_test_session_senders(&msg_tx);
-
-        let mut app = App::new();
-        for id in ["goal-a", "goal-b"] {
-            app.goals.push(goal::Goal {
-                id: id.into(), summary: String::new(), description: String::new(),
-                parent_id: String::new(), children: vec![], related: vec![], kind: None, tier: None, source_path: None,
-            });
-        }
-        // Mark goal-a as already running.
-        app.running_sessions.insert("goal-a".into(), Some("first task".into()));
-
-        let consultations = vec![("goal-b".to_string(), "second task".to_string())];
-        let senders_guard = senders.lock().unwrap();
-        dispatch_peer_consultations(
-            &mut app, "tend", &consultations, &senders_guard, &spawn_tx, &logger::noop_sender(),
-        );
-        drop(senders_guard);
-
-        // goal-b must be dispatched immediately in parallel, not queued.
-        let req = spawn_rx.try_recv().expect("goal-b must be spawned immediately even though goal-a is running");
-        assert_eq!(req.goal_id, "goal-b");
-        assert!(
-            app.running_sessions.contains_key("goal-b"),
-            "goal-b must appear in running_sessions immediately on dispatch",
-        );
-    }
-
-    // spec (tui — queue visibility): @-dispatching to an autonomous goal agent
-    // must add it to running_sessions so the dim ▶ marker appears in the goal list.
-    #[test]
-    fn test_spec_at_dispatch_adds_goal_agent_to_running_sessions() {
-        let (msg_tx, _msg_rx) = mpsc::unbounded_channel::<String>();
-        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let (senders, _, _) = make_test_session_senders(&msg_tx);
-
-        let mut app = App::new();
-        app.goals.push(goal::Goal {
-            id: "tui".into(),
-            summary: String::new(),
-            description: String::new(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            tier: None,
-            kind: None,
-            source_path: None,
-        });
-
-        let consultations = vec![("tui".to_string(), "implement queue markers".to_string())];
-        let senders_guard = senders.lock().unwrap();
-        dispatch_peer_consultations(
-            &mut app, "rummage", &consultations, &senders_guard, &spawn_tx, &logger::noop_sender(),
-        );
-        drop(senders_guard);
-
-        assert!(
-            app.running_sessions.contains_key("tui"),
-            "autonomous goal agent dispatched via @ must appear in running_sessions",
-        );
-        let reason = app.running_sessions["tui"].as_deref().unwrap_or("");
-        assert!(
-            reason.contains("implement queue markers"),
-            "reason stored must reflect the dispatch message",
-        );
-    }
-
-    // spec (fresh-agents — batch retirement): @-dispatching to interactive chat
-    // agents (tend, rummage, jog) MUST add them to running_sessions via the
-    // dispatch path. This ensures the batch-end retirement check sees a pending
-    // delivery as still-active work and does not retire ephemeral sub-sessions
-    // before the interactive agent has processed its incoming reply.
-    #[test]
-    fn test_spec_at_dispatch_tracks_interactive_agents_in_running_sessions() {
-        let (msg_tx, _msg_rx) = mpsc::unbounded_channel::<String>();
-        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let (senders, _, _) = make_test_session_senders(&msg_tx);
-
-        let mut app = App::new();
-        // Add rummage as a goal (it has a goal file) to match the production
-        // scenario where rummage has a TOML file.
-        app.goals.push(goal::Goal {
-            id: "rummage".into(),
-            summary: String::new(),
-            description: String::new(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            tier: None,
-            kind: None,
-            source_path: None,
-        });
-
-        let consultations = vec![
-            ("tend".to_string(), "what does the user want".to_string()),
-            ("rummage".to_string(), "check the code".to_string()),
-            ("jog".to_string(), "verify alignment".to_string()),
-        ];
-        let senders_guard = senders.lock().unwrap();
-        dispatch_peer_consultations(
-            &mut app, "some-agent", &consultations, &senders_guard, &spawn_tx, &logger::noop_sender(),
-        );
-        drop(senders_guard);
-
-        assert!(
-            app.running_sessions.contains_key("tend"),
-            "tend must appear in running_sessions when dispatched via @ (pending delivery)",
-        );
-        assert!(
-            app.running_sessions.contains_key("rummage"),
-            "rummage must appear in running_sessions when dispatched via @ (pending delivery)",
-        );
-        assert!(
-            app.running_sessions.contains_key("jog"),
-            "jog must appear in running_sessions when dispatched via @ (pending delivery)",
-        );
-    }
-
-    // spec (fresh-agents — coordinator retirement): when a sub-session replies to
-    // its ephemeral coordinator via @, the coordinator must be added to
-    // running_sessions so the batch-end retirement guard sees it as still-active
-    // and does not retire it before it can consume the buffered reply.
-    #[test]
-    fn test_spec_at_dispatch_tracks_ephemeral_coordinator_in_running_sessions() {
-        let (msg_tx, _msg_rx) = mpsc::unbounded_channel::<String>();
-        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let (senders, _, _) = make_test_session_senders(&msg_tx);
-
-        let mut app = App::new();
-        // Register a live sender for the coordinator so the message is delivered.
-        let (coord_tx, _coord_rx) = mpsc::unbounded_channel::<String>();
-        let mut senders_with_coord = senders.lock().unwrap().clone();
-        senders_with_coord.insert("fresh-agents~1".to_string(), coord_tx);
-        let senders_with_coord = Arc::new(Mutex::new(senders_with_coord));
-        // Mark the coordinator as an ephemeral session (as the runtime does).
-        app.ephemeral_sessions.insert("fresh-agents~1".to_string());
-
-        let consultations = vec![
-            ("fresh-agents~1".to_string(), "sub-task result".to_string()),
-        ];
-        let senders_guard = senders_with_coord.lock().unwrap();
-        dispatch_peer_consultations(
-            &mut app, "fresh-agents~2", &consultations, &senders_guard, &spawn_tx, &logger::noop_sender(),
-        );
-        drop(senders_guard);
-
-        assert!(
-            app.running_sessions.contains_key("fresh-agents~1"),
-            "ephemeral coordinator must appear in running_sessions when a reply is dispatched to it",
-        );
-    }
-
-    // spec (parallel-goal-agents): dispatch_peer_consultations must NOT gate on
-    // any "is a goal agent already running?" check. Two concurrent non-interactive
-    // dispatches must both go to spawn immediately — neither is queued.
-    #[test]
-    fn test_spec_dispatch_no_queue_gating_two_concurrent_agents() {
-        let (msg_tx, _) = mpsc::unbounded_channel::<String>();
-        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let (senders, _, _) = make_test_session_senders(&msg_tx);
-
-        let mut app = App::new();
-        for id in ["goal-a", "goal-b"] {
-            app.goals.push(goal::Goal {
-                id: id.into(),
-                summary: String::new(),
-                description: "".into(),
-                parent_id: String::new(),
-                children: vec![],
-                related: vec![],
-                tier: None,
-                kind: None,
-                source_path: None,
-            });
-        }
-        // Simulate goal-a already running.
-        app.running_sessions.insert("goal-a".into(), Some("reason a".into()));
-
-        let consultations = vec![("goal-b".to_string(), "start b in parallel".to_string())];
-        let senders_guard = senders.lock().unwrap();
-        dispatch_peer_consultations(
-            &mut app,
-            "tend",
-            &consultations,
-            &senders_guard,
-            &spawn_tx,
-            &logger::noop_sender(),
-        );
-        drop(senders_guard);
-
-        // goal-b must be spawned immediately even though goal-a is running.
-        let req = spawn_rx.try_recv().expect("goal-b must be dispatched immediately, not queued");
-        assert_eq!(req.goal_id, "goal-b");
-        assert!(req.message.contains("start b in parallel"));
-    }
 
     // spec (goal-agents): when oc.run returns Ok("") (no session ID captured —
     // the runner exited without emitting any events, e.g. transient API outage),
@@ -4885,7 +3837,7 @@ mod tests {
 
     // spec (parallel-goal-agents): the ▶ indicator timing differs by session type:
     // for tend/rummage/jog it is set at message submission (SendToSession path);
-    // for goal agents it is set at dispatch time (ConfirmOptions / dispatch_peer_consultations).
+    // for goal agents it is set at dispatch time (send_message / spawn_session dispatcher).
     #[test]
     fn test_spec_submission_sets_running_for_repl_sessions() {
         let main_rs = include_str!("main.rs");
@@ -5083,243 +4035,6 @@ mod tests {
         assert_eq!(app.modal.as_ref().unwrap().tier, "mid", "Left on Tier must retreat to mid");
     }
 
-    // spec (fresh-agents): parse_fresh_dispatches extracts <@sender|label>…</@sender|label>
-    // inline envelopes from a completed agent reply.
-    #[test]
-    fn test_spec_fresh_agents_parse_fresh_dispatch_with_label() {
-        let text = "<@my-goal|analyze>do the analysis</@my-goal|analyze>";
-        let results = parse_fresh_dispatches(text, "my-goal");
-        assert_eq!(results.len(), 1, "one fresh dispatch must be extracted");
-        assert_eq!(results[0].0, Some("analyze".to_string()), "label must be extracted");
-        assert_eq!(results[0].1, "do the analysis", "task must be extracted");
-    }
-
-    // spec (fresh-agents): parse_fresh_dispatches handles an empty label (the |
-    // separator is present but the label part is empty) — label returns None.
-    #[test]
-    fn test_spec_fresh_agents_parse_fresh_dispatch_empty_label() {
-        let text = "<@my-goal|>do the thing</@my-goal|>";
-        let results = parse_fresh_dispatches(text, "my-goal");
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].0, None, "empty label must map to None");
-        assert_eq!(results[0].1, "do the thing");
-    }
-
-    // spec (fresh-agents): parse_fresh_dispatches collects multi-line bodies.
-    #[test]
-    fn test_spec_fresh_agents_parse_fresh_dispatch_multiline() {
-        let text = "<@my-goal|sub1>\nfirst line\nsecond line\n</@my-goal|sub1>";
-        let results = parse_fresh_dispatches(text, "my-goal");
-        assert_eq!(results.len(), 1);
-        assert!(results[0].1.contains("first line"), "multi-line body must include first line");
-        assert!(results[0].1.contains("second line"), "multi-line body must include second line");
-    }
-
-    // spec (fresh-agents): parse_fresh_dispatches only matches the sender's own
-    // goal ID — normal <@other-id> envelopes are ignored.
-    #[test]
-    fn test_spec_fresh_agents_parse_does_not_match_normal_at_commands() {
-        let text = "<@other-goal>some message</@other-goal>";
-        let results = parse_fresh_dispatches(text, "my-goal");
-        assert_eq!(results.len(), 0, "normal @-commands must not match fresh-dispatch parser");
-    }
-
-    // spec (fresh-agents): parse_fresh_dispatches ignores empty envelopes.
-    #[test]
-    fn test_spec_fresh_agents_parse_empty_envelope_ignored() {
-        let text = "<@my-goal|sub1></@my-goal|sub1>";
-        let results = parse_fresh_dispatches(text, "my-goal");
-        assert_eq!(results.len(), 0, "empty fresh dispatch envelope must be ignored");
-    }
-
-    // spec (fresh-agents, peer-consult): fresh dispatch envelopes inside fenced
-    // code blocks are illustrative and must not be extracted as live dispatches.
-    #[test]
-    fn test_spec_fresh_agents_code_fence_envelope_not_extracted() {
-        let fence = "```\n<@my-goal|sub1>task inside fence</@my-goal|sub1>\n```";
-        let results = parse_fresh_dispatches(fence, "my-goal");
-        assert!(
-            results.is_empty(),
-            "fresh dispatch inside code fence must not be extracted; got {:?}",
-            results
-        );
-
-        // A real dispatch after the fence must still be extracted.
-        let after = "```\n<@g|x>ignored</@g|x>\n```\n<@g|real>live task</@g|real>";
-        let r2 = parse_fresh_dispatches(after, "g");
-        assert_eq!(r2.len(), 1, "dispatch after fence must be extracted; got {:?}", r2);
-        assert_eq!(r2[0].1, "live task");
-    }
-
-    // spec (fresh-agents): multiple fresh dispatches in one reply are all extracted.
-    #[test]
-    fn test_spec_fresh_agents_parse_multiple_dispatches() {
-        let text = "<@g|a>task a</@g|a>\n<@g|b>task b</@g|b>";
-        let results = parse_fresh_dispatches(text, "g");
-        assert_eq!(results.len(), 2, "both fresh dispatches must be extracted");
-        assert_eq!(results[0].0, Some("a".to_string()));
-        assert_eq!(results[1].0, Some("b".to_string()));
-    }
-
-    // spec (fresh-agents): when a goal session done event contains a fresh dispatch,
-    // handle_session_event enqueues a SpawnGoalRequest with fresh_session set,
-    // adds the ephemeral session ID to app.ephemeral_sessions, and inserts it in
-    // running_sessions so it is visible in the TUI.
-    #[test]
-    fn test_spec_fresh_agents_done_event_spawns_ephemeral_session() {
-        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
-
-        let mut app = App::new();
-        app.goals.push(goal::Goal {
-            id: "my-goal".into(),
-            summary: String::new(),
-            description: "the goal".into(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            tier: None,
-            kind: None,
-            source_path: None,
-        });
-
-        handle_session_event(
-            &mut app,
-            SessionEvent::Done {
-                goal_id: "my-goal".into(),
-                // full_output carries the complete reply — envelope extraction uses this directly.
-                full_output: "<@my-goal|work>analyse the module</@my-goal|work>".into(),
-            },
-            &spawn_tx,
-            &*senders.lock().unwrap(),
-            &crate::realfs::RealFilesystem,
-            &logger::noop_sender(),
-        );
-
-        // A SpawnGoalRequest with fresh_session set must have been enqueued.
-        let req = spawn_rx.try_recv().expect("fresh dispatch must enqueue a spawn request");
-        let fresh = req.fresh_session.expect("spawn request must carry fresh_session config");
-        assert!(fresh.session_id.starts_with("my-goal~"), "ephemeral ID must start with dispatcher id + ~");
-        assert_eq!(fresh.label, Some("work".to_string()), "label must be preserved");
-        assert_eq!(fresh.dispatcher_id, "my-goal");
-
-        // The ephemeral session must be in both ephemeral_sessions and running_sessions.
-        assert!(
-            app.ephemeral_sessions.contains(&fresh.session_id),
-            "ephemeral session must be tracked in app.ephemeral_sessions",
-        );
-        assert!(
-            app.running_sessions.contains_key(&fresh.session_id),
-            "ephemeral session must appear in running_sessions for TUI visibility",
-        );
-    }
-
-    // spec (peer-consult): envelope extraction at Done uses full_output, not the
-    // chunk-reconstructed current_session_text. Chunks can be dropped when the
-    // session event channel is under load; full_output from the Done event is the
-    // authoritative complete reply.
-    #[test]
-    fn test_spec_peer_consult_done_uses_full_output_not_chunk_text() {
-        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
-
-        let mut app = App::new();
-        app.goals.push(goal::Goal {
-            id: "my-goal".into(),
-            summary: String::new(),
-            description: "the goal".into(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            tier: None,
-            kind: None,
-            source_path: None,
-        });
-
-        // current_session_text has partial/incomplete content — no envelope.
-        app.current_session_text.insert("my-goal".into(), "partial output without envelope".into());
-
-        handle_session_event(
-            &mut app,
-            SessionEvent::Done {
-                goal_id: "my-goal".into(),
-                // full_output is the authoritative reply and contains the envelope.
-                full_output: "<@my-goal|work>analyse the module</@my-goal|work>".into(),
-            },
-            &spawn_tx,
-            &*senders.lock().unwrap(),
-            &crate::realfs::RealFilesystem,
-            &logger::noop_sender(),
-        );
-
-        // current_session_text must be cleared on Done.
-        assert!(
-            !app.current_session_text.contains_key("my-goal"),
-            "current_session_text must be cleared on Done"
-        );
-
-        // Envelope from full_output must have been processed — spawn must be enqueued.
-        let req = spawn_rx.try_recv()
-            .expect("envelope in full_output must be processed even when current_session_text had no envelope");
-        assert!(req.fresh_session.is_some(), "spawn request must carry fresh_session config");
-    }
-
-    // spec (fresh-agents): ephemeral coordinators CAN spawn further fresh sub-sessions
-    // (unbounded depth). A coordinator uses its own session ID in dispatch tags so
-    // sub-sub-sessions reply to it rather than to the permanent goal agent.
-    #[test]
-    fn test_spec_fresh_agents_ephemeral_coordinator_can_spawn_sub_sessions() {
-        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
-
-        let mut app = App::new();
-        app.goals.push(goal::Goal {
-            id: "my-goal".into(),
-            summary: String::new(),
-            description: "the goal".into(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            tier: None,
-            kind: None,
-            source_path: None,
-        });
-
-        // A coordinator uses its OWN ephemeral ID in the dispatch tag so sub-sessions
-        // can reply to it via @-message routing.
-        handle_session_event(
-            &mut app,
-            SessionEvent::Done {
-                goal_id: "my-goal~1".into(),
-                full_output: "<@my-goal~1|sub>nested sub-task</@my-goal~1|sub>".into(),
-            },
-            &spawn_tx,
-            &*senders.lock().unwrap(),
-            &crate::realfs::RealFilesystem,
-            &logger::noop_sender(),
-        );
-
-        // A fresh spawn request must be enqueued.
-        let req = spawn_rx.try_recv()
-            .ok()
-            .filter(|r| r.fresh_session.is_some());
-        assert!(
-            req.is_some(),
-            "ephemeral coordinator must be able to spawn further fresh sub-sessions"
-        );
-        let fresh = req.unwrap().fresh_session.unwrap();
-        // The dispatcher_id must be the coordinator's own ID so the spawn handler
-        // constructs an init message that tells the sub-session to reply to it.
-        assert_eq!(
-            fresh.dispatcher_id, "my-goal~1",
-            "dispatcher_id must be the coordinator's session ID, not the permanent base"
-        );
-        // The new session ID must nest under the coordinator, not the permanent base.
-        assert!(
-            fresh.session_id.starts_with("my-goal~1~"),
-            "sub-sub-session ID must nest under the coordinator: my-goal~1~N"
-        );
-    }
 
     // spec (fresh-agents): batch detection — retirement must NOT fire when the
     // spec (tend-introspection): check_and_emit_batch_transition emits "— batch active —"
@@ -5413,114 +4128,6 @@ mod tests {
         );
     }
 
-    // spec (fresh-agents): interactive sessions (tend / rummage / jog) CAN spawn
-    // fresh sub-sessions. The is_interactive exclusion has been removed; the only
-    // remaining guard is the ephemeral-depth limit (sessions with '~' in their ID).
-    #[test]
-    fn test_spec_fresh_agents_interactive_agents_can_fresh_dispatch() {
-        for agent_id in &["tend", "rummage", "jog"] {
-            let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-            let (msg_tx, _) = mpsc::unbounded_channel::<String>();
-            let (senders, _, _) = make_test_session_senders(&msg_tx);
-
-            let mut app = App::new();
-            // An interactive agent emits a fresh-dispatch envelope in its output.
-            handle_session_event(
-                &mut app,
-                SessionEvent::Done {
-                    goal_id: agent_id.to_string(),
-                    full_output: format!("<@{}|sub>some task</@{}|sub>", agent_id, agent_id),
-                },
-                &spawn_tx,
-                &*senders.lock().unwrap(),
-                &crate::realfs::RealFilesystem,
-                &logger::noop_sender(),
-            );
-
-            let maybe_fresh = spawn_rx.try_recv().ok()
-                .filter(|r| r.fresh_session.is_some());
-            assert!(
-                maybe_fresh.is_some(),
-                "{agent_id} must trigger fresh dispatch (interactive sessions can now spawn sub-sessions)",
-            );
-        }
-    }
-
-    // spec (fresh-agents): the ephemeral session ID counter increments with each
-    // fresh dispatch, producing unique IDs for concurrent sub-sessions.
-    #[test]
-    fn test_spec_fresh_agents_counter_increments_per_dispatch() {
-        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
-
-        let mut app = App::new();
-        app.goals.push(goal::Goal {
-            id: "g".into(),
-            summary: String::new(),
-            description: "the goal".into(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            tier: None,
-            kind: None,
-            source_path: None,
-        });
-
-        handle_session_event(
-            &mut app,
-            SessionEvent::Done {
-                goal_id: "g".into(),
-                full_output: "<@g|a>task a</@g|a>\n<@g|b>task b</@g|b>".into(),
-            },
-            &spawn_tx,
-            &*senders.lock().unwrap(),
-            &crate::realfs::RealFilesystem,
-            &logger::noop_sender(),
-        );
-
-        let req1 = spawn_rx.try_recv().expect("first spawn request");
-        let req2 = spawn_rx.try_recv().expect("second spawn request");
-        let id1 = req1.fresh_session.unwrap().session_id;
-        let id2 = req2.fresh_session.unwrap().session_id;
-        assert_ne!(id1, id2, "each fresh sub-session must have a unique ID");
-        assert!(id1.starts_with("g~"), "id1 must use parent~ prefix");
-        assert!(id2.starts_with("g~"), "id2 must use parent~ prefix");
-    }
-
-    // spec (fresh-agents): the fresh session spawn request carries the task
-    // message from the dispatcher's fresh-dispatch envelope.
-    #[test]
-    fn test_spec_fresh_agents_spawn_request_carries_task() {
-        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
-
-        let mut app = App::new();
-        app.goals.push(goal::Goal {
-            id: "g".into(),
-            summary: String::new(),
-            description: "the goal".into(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            tier: None,
-            kind: None,
-            source_path: None,
-        });
-        handle_session_event(
-            &mut app,
-            SessionEvent::Done {
-                goal_id: "g".into(),
-                full_output: "<@g|check>review auth module</@g|check>".into(),
-            },
-            &spawn_tx,
-            &*senders.lock().unwrap(),
-            &crate::realfs::RealFilesystem,
-            &logger::noop_sender(),
-        );
-
-        let req = spawn_rx.try_recv().expect("spawn request must be enqueued");
-        assert_eq!(req.message, "review auth module", "spawn request must carry the task verbatim");
-    }
 
     // spec (fresh-agents): completed ephemeral sessions are removed from
     // ephemeral_sessions and their IDs returned for channel cleanup.
@@ -5604,294 +4211,6 @@ mod tests {
         assert!(snippet.contains("oc_goal.clone()"), "fresh tier match must fall back to oc_goal for mid");
     }
 
-    // spec (tui / fresh-agents): a Chunk event containing an opening tag
-    // `<@goal-id|label>` must pre-register the ephemeral session in
-    // ephemeral_sessions, running_sessions, ephemeral_sessions_ordered, and
-    // update goal_list_scroll.last_total — before the turn completes.
-    #[test]
-    fn test_spec_fresh_agents_chunk_pre_announces_ephemeral_session() {
-        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
-
-        let mut app = App::new();
-        app.goals.push(goal::Goal {
-            id: "my-goal".into(),
-            summary: String::new(),
-            description: "the goal".into(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            tier: None,
-            kind: None,
-            source_path: None,
-        });
-        // Simulate a prior render so last_total has a baseline.
-        app.goal_list_scroll.record_render(1, 8, 0);
-
-        // Fire a Chunk event with only the opening tag (no closing tag yet).
-        handle_session_event(
-            &mut app,
-            SessionEvent::Chunk {
-                goal_id: "my-goal".into(),
-                text: "<@my-goal|work>\n".into(),
-            },
-            &spawn_tx,
-            &*senders.lock().unwrap(),
-            &crate::realfs::RealFilesystem,
-            &logger::noop_sender(),
-        );
-
-        // A sub-session must have been pre-announced immediately.
-        assert_eq!(
-            app.ephemeral_sessions.len(), 1,
-            "one ephemeral session must be pre-announced on the opening tag",
-        );
-        let pre_id = app.ephemeral_sessions_ordered.first().expect("ordered list must contain the pre-announced entry").clone();
-        assert!(pre_id.starts_with("my-goal~"), "pre-announced ID must use the parent~ prefix");
-        assert!(
-            app.running_sessions.contains_key(&pre_id),
-            "pre-announced session must appear in running_sessions",
-        );
-        assert_eq!(
-            app.goal_list_scroll.last_total, 2,
-            "last_total must reflect the new goal-list row immediately",
-        );
-        // No spawn request yet — the task body arrives at Done time.
-        assert!(
-            spawn_rx.try_recv().is_err(),
-            "spawn request must NOT be enqueued at Chunk time — only at Done time",
-        );
-        // The pending map must track the pre-announced entry.
-        let pending = app.pending_fresh_announcements.get("my-goal").expect("pending_fresh_announcements must track my-goal");
-        assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].1, Some("work".to_string()), "label must be captured");
-    }
-
-    // spec (tui / fresh-agents): an opening tag seen during streaming that
-    // has no matching closing tag by turn-end must be removed from the goal
-    // list (not left as a dangling phantom entry).
-    #[test]
-    fn test_spec_fresh_agents_incomplete_envelope_removed_at_done() {
-        use crate::test_utils::MockFs;
-        use std::path::PathBuf;
-        use std::sync::Arc;
-
-        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
-
-        let fs = Arc::new(MockFs::new());
-        let tinker_dir = PathBuf::from("/.tinker");
-        let goals_dir = tinker_dir.join("goals");
-        fs.add_dir(&goals_dir);
-        let goal_path = goals_dir.join("my-goal.toml");
-        fs.add_file(
-            &goal_path,
-            "id = \"my-goal\"\nsummary = \"\"\ndescription = \"desc\"\nparent_id = \"\"\n",
-        );
-
-        let mut app = App::new();
-        app.tinker_dirs = vec![tinker_dir];
-        app.goals.push(goal::Goal {
-            id: "my-goal".into(),
-            summary: String::new(),
-            description: "desc".into(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            tier: None,
-            kind: None,
-            source_path: Some(goal_path),
-        });
-
-        // Opening tag appears in a Chunk — session is pre-announced.
-        handle_session_event(
-            &mut app,
-            SessionEvent::Chunk {
-                goal_id: "my-goal".into(),
-                text: "<@my-goal|orphan>\n".into(),
-            },
-            &spawn_tx,
-            &*senders.lock().unwrap(),
-            &*fs,
-            &logger::noop_sender(),
-        );
-        let pre_id = app.ephemeral_sessions_ordered.first().cloned().expect("session must be pre-announced");
-        assert!(app.ephemeral_sessions.contains(&pre_id), "pre-announced session must be in ephemeral_sessions");
-
-        // Turn ends without a closing tag — full_output has only the opening tag;
-        // envelope extraction finds no complete envelope → no spawn, pre-announced removed.
-        handle_session_event(
-            &mut app,
-            SessionEvent::Done {
-                goal_id: "my-goal".into(),
-                full_output: "<@my-goal|orphan>\n".into(),
-            },
-            &spawn_tx,
-            &*senders.lock().unwrap(),
-            &*fs,
-            &logger::noop_sender(),
-        );
-
-        // The phantom entry must have been removed.
-        assert!(
-            !app.ephemeral_sessions.contains(&pre_id),
-            "pre-announced session with no complete envelope must be removed at Done time",
-        );
-        assert!(
-            !app.ephemeral_sessions_ordered.contains(&pre_id),
-            "pre-announced session must also be removed from ephemeral_sessions_ordered",
-        );
-        assert!(
-            !app.running_sessions.contains_key(&pre_id),
-            "pre-announced session must be removed from running_sessions",
-        );
-        // No spawn request must have been enqueued.
-        let maybe_fresh = spawn_rx.try_recv().ok().filter(|r| r.fresh_session.is_some());
-        assert!(
-            maybe_fresh.is_none(),
-            "no spawn request must be enqueued for an incomplete envelope",
-        );
-    }
-
-    // spec (tui / fresh-agents): when Chunk pre-announces a session and Done
-    // finds the matching complete envelope, the spawn request must reuse the
-    // pre-announced session ID (no counter bump, no flicker).
-    #[test]
-    fn test_spec_fresh_agents_done_reuses_pre_announced_session_id() {
-        use crate::test_utils::MockFs;
-        use std::path::PathBuf;
-        use std::sync::Arc;
-
-        let (spawn_tx, mut spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
-
-        let fs = Arc::new(MockFs::new());
-        let tinker_dir = PathBuf::from("/.tinker");
-        let goals_dir = tinker_dir.join("goals");
-        fs.add_dir(&goals_dir);
-        let goal_path = goals_dir.join("my-goal.toml");
-        fs.add_file(
-            &goal_path,
-            "id = \"my-goal\"\nsummary = \"\"\ndescription = \"desc\"\nparent_id = \"\"\n",
-        );
-
-        let mut app = App::new();
-        app.tinker_dirs = vec![tinker_dir];
-        app.goals.push(goal::Goal {
-            id: "my-goal".into(),
-            summary: String::new(),
-            description: "desc".into(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            tier: None,
-            kind: None,
-            source_path: Some(goal_path),
-        });
-
-        // Opening tag appears during streaming — session pre-announced as my-goal~1.
-        handle_session_event(
-            &mut app,
-            SessionEvent::Chunk {
-                goal_id: "my-goal".into(),
-                text: "<@my-goal|label>\n".into(),
-            },
-            &spawn_tx,
-            &*senders.lock().unwrap(),
-            &*fs,
-            &logger::noop_sender(),
-        );
-        let pre_id = app.ephemeral_sessions_ordered.first().cloned().expect("pre-announced session must exist");
-
-        // The rest of the output arrives — closing tag present in the full turn text.
-        handle_session_event(
-            &mut app,
-            SessionEvent::Chunk {
-                goal_id: "my-goal".into(),
-                text: "do the work\n</@my-goal|label>\n".into(),
-            },
-            &spawn_tx,
-            &*senders.lock().unwrap(),
-            &*fs,
-            &logger::noop_sender(),
-        );
-
-        // Done fires — must reuse the pre-announced ID.
-        // full_output is the complete assembled reply; the pre-announced session is
-        // matched against the envelope found here.
-        handle_session_event(
-            &mut app,
-            SessionEvent::Done {
-                goal_id: "my-goal".into(),
-                full_output: "<@my-goal|label>\ndo the work\n</@my-goal|label>\n".into(),
-            },
-            &spawn_tx,
-            &*senders.lock().unwrap(),
-            &*fs,
-            &logger::noop_sender(),
-        );
-
-        let req = spawn_rx.try_recv().expect("spawn request must be enqueued at Done time");
-        let fresh = req.fresh_session.expect("spawn request must carry fresh_session config");
-        assert_eq!(
-            fresh.session_id, pre_id,
-            "Done must reuse the pre-announced session ID, not mint a new one",
-        );
-        assert_eq!(fresh.label, Some("label".to_string()), "label must be preserved");
-        assert!(
-            app.ephemeral_sessions.contains(&pre_id),
-            "session must remain in ephemeral_sessions after Done spawns it",
-        );
-    }
-
-    // spec (fresh-agents / tui): when an ephemeral coordinator fires a Chunk event
-    // containing an opening tag addressed to itself (e.g. `<@my-goal~1|sub>`), the
-    // pre-announced sub-session ID must be nested under the coordinator — it must
-    // start with `my-goal~1~`, not the permanent base `my-goal~`.  This ensures
-    // multi-level depth is preserved and the coordinator receives replies correctly.
-    #[test]
-    fn test_spec_fresh_agents_chunk_pre_announce_uses_coordinator_id_as_prefix() {
-        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
-
-        let mut app = App::new();
-        app.goals.push(goal::Goal {
-            id: "my-goal".into(),
-            summary: String::new(),
-            description: "the goal".into(),
-            parent_id: String::new(),
-            children: vec![],
-            related: vec![],
-            tier: None,
-            kind: None,
-            source_path: None,
-        });
-
-        // The dispatcher is an ephemeral coordinator (not the permanent base goal).
-        handle_session_event(
-            &mut app,
-            SessionEvent::Chunk {
-                goal_id: "my-goal~1".into(),
-                text: "<@my-goal~1|sub>\n".into(),
-            },
-            &spawn_tx,
-            &*senders.lock().unwrap(),
-            &crate::realfs::RealFilesystem,
-            &logger::noop_sender(),
-        );
-
-        assert_eq!(
-            app.ephemeral_sessions.len(), 1,
-            "one ephemeral session must be pre-announced",
-        );
-        let pre_id = app.ephemeral_sessions_ordered.first()
-            .cloned()
-            .expect("ordered list must contain the pre-announced entry");
-        assert!(
-            pre_id.starts_with("my-goal~1~"),
-            "pre-announced ID must nest under the coordinator (my-goal~1~N), got: {pre_id}",
-        );
-    }
 
     // spec (fresh-agents): completed ephemeral sessions must be retired from
     // session_senders when a `KeyAction::SendToSession` or `KeyAction::ConfirmOptions`
@@ -6006,29 +4325,9 @@ mod tests {
     // in the same frame (before the next draw call updates last_total).
     #[test]
     fn test_spec_ephemeral_insertion_updates_scroll_total() {
-        use crate::test_utils::MockFs;
-        use std::path::PathBuf;
-        use std::sync::Arc;
-
-        let (spawn_tx, _spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let (senders, _, _) = make_test_session_senders(&mpsc::unbounded_channel::<String>().0);
-
-        // Set up a MockFs with a goal TOML so that the Done event's goal-reload
-        // keeps the goal in app.goals (rather than wiping it).
-        // load_goals joins tinker_dir with "goals", so tinker_dir must be "/.tinker".
-        let fs = Arc::new(MockFs::new());
-        let tinker_dir = PathBuf::from("/.tinker");
-        let goals_dir = tinker_dir.join("goals");
-        fs.add_dir(&goals_dir);
-        let goal_path = goals_dir.join("my-goal.toml");
-        fs.add_file(
-            &goal_path,
-            "id = \"my-goal\"\nsummary = \"\"\ndescription = \"desc\"\nparent_id = \"\"\n",
-        );
-
-        let mut app = App::new();
-        app.tinker_dirs = vec![tinker_dir];
-        app.goals.push(goal::Goal {
+        let (goal_spawn_tx, _goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let app = Arc::new(Mutex::new(App::new()));
+        app.lock().unwrap().goals.push(goal::Goal {
             id: "my-goal".into(),
             summary: String::new(),
             description: "desc".into(),
@@ -6037,30 +4336,27 @@ mod tests {
             related: vec![],
             tier: None,
             kind: None,
-            source_path: Some(goal_path),
+            source_path: None,
         });
 
         // Simulate a prior render: last_total reflects 1 item (the goal itself).
-        app.goal_list_scroll.record_render(1, 8, 0);
-        assert_eq!(app.goal_list_scroll.last_total, 1, "precondition: last_total is 1 before insertion");
+        app.lock().unwrap().goal_list_scroll.record_render(1, 8, 0);
+        assert_eq!(app.lock().unwrap().goal_list_scroll.last_total, 1, "precondition: last_total is 1 before insertion");
 
-        // Fire a Done event with a fresh dispatch envelope — this inserts an ephemeral.
-        handle_session_event(
-            &mut app,
-            SessionEvent::Done {
-                goal_id: "my-goal".into(),
-                full_output: "<@my-goal|work>do the task</@my-goal|work>".into(),
-            },
-            &spawn_tx,
-            &*senders.lock().unwrap(),
-            &*fs,
-            &logger::noop_sender(),
+        let dispatcher = build_spawn_session_dispatcher(
+            "my-goal".to_string(),
+            goal_spawn_tx,
+            app.clone(),
+            logger::noop_sender(),
         );
+
+        dispatcher("do the task", Some("work"))
+            .expect("spawn_session must succeed for a goal in the tree");
 
         // After insertion the list has 2 items (1 goal + 1 ephemeral);
         // last_total must reflect that immediately, before the next render.
         assert_eq!(
-            app.goal_list_scroll.last_total, 2,
+            app.lock().unwrap().goal_list_scroll.last_total, 2,
             "last_total must be updated to 2 after ephemeral insertion so mouse scroll can reach it",
         );
     }
@@ -6154,7 +4450,7 @@ mod tests {
             "error must name unknown target and registry constraint: {err_ga}"
         );
 
-        // After lazy-spawning rummage (simulating the @envelope path), send_message works.
+        // After registering rummage in the session registry, send_message works.
         let (rummage_tx, mut rummage_rx) = mpsc::unbounded_channel::<String>();
         senders.lock().unwrap().insert("rummage".to_string(), rummage_tx);
 
@@ -6165,17 +4461,6 @@ mod tests {
         assert!(msg.contains("trace the flow"));
     }
 
-    // spec (send-message / goal-agents / peer-consult): send_message and
-    // the @-envelope path share the registry-then-lazy-spawn decision via
-    // `route_or_lazy_spawn`. Both paths:
-    //   1. deliver to a running session in the registry if present;
-    //   2. trigger a SpawnGoalRequest when the target is a known goal in
-    //      the goal tree but not yet a running session;
-    //   3. report failure (or silently drop, in the envelope case) when
-    //      the target is neither.
-    // This test pins the SHARED behavior — the asymmetry between the
-    // two paths is removed; both routes to a known-but-unspawned goal
-    // produce a SpawnGoalRequest the runtime will drain.
     fn make_goal_for_investigation(id: &str) -> goal::Goal {
         goal::Goal {
             id: id.to_string(),
@@ -6190,70 +4475,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_spec_send_message_and_envelope_share_lazy_spawn() {
-        let (tend_tx, _tend_rx) = mpsc::unbounded_channel::<String>();
-        let mut senders: HashMap<String, mpsc::UnboundedSender<String>> = HashMap::new();
-        senders.insert("tend".to_string(), tend_tx);
-        let senders_arc = Arc::new(Mutex::new(senders));
-
-        let mut app = App::new();
-        // Populate app.goals with rummage so both paths can find it.
-        app.goals = vec![make_goal_for_investigation("rummage")];
-
-        let (goal_spawn_tx, mut goal_spawn_rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
-        let log = logger::noop_sender();
-
-        // Path 1: dispatch_peer_consultations (the @-envelope path).
-        // Triggers a lazy spawn for rummage via SpawnGoalRequest.
-        dispatch_peer_consultations(
-            &mut app,
-            "tend",
-            &[("rummage".to_string(), "investigate this".to_string())],
-            &senders_arc.lock().unwrap(),
-            &goal_spawn_tx,
-            &log,
-        );
-
-        let req_envelope = goal_spawn_rx.try_recv()
-            .expect("@envelope path must trigger a lazy spawn for rummage");
-        assert_eq!(req_envelope.goal_id, "rummage");
-        assert!(req_envelope.fresh_session.is_none(), "not a fresh sub-session");
-        assert!(req_envelope.message.contains("investigate this"));
-
-        // Path 2: build_send_message_dispatcher (the send_message tool path).
-        // Must also trigger a lazy spawn — the asymmetry is gone. The
-        // app's running_sessions and session_senders still do not contain
-        // rummage because the runtime has not yet drained the requests.
-        let app_arc = Arc::new(Mutex::new(app));
-        let dispatcher = build_send_message_dispatcher(
-            "tend".to_string(),
-            senders_arc.clone(),
-            goal_spawn_tx.clone(),
-            app_arc.clone(),
-            logger::noop_sender(),
-        );
-        let ok = dispatcher("rummage", "second ping")
-            .expect("send_message must lazy-spawn a known-but-unspawned goal, not Err");
-        assert!(ok.contains("rummage"), "ok result must name the target: {ok}");
-
-        let req_send = goal_spawn_rx.try_recv()
-            .expect("send_message must also enqueue a SpawnGoalRequest for rummage");
-        assert_eq!(req_send.goal_id, "rummage");
-        assert!(req_send.fresh_session.is_none(), "not a fresh sub-session");
-        assert!(req_send.message.contains("second ping"));
-
-        // Both paths surfaced the dispatch to the user via running_sessions
-        // (the send_message path also pushes a system message). The
-        // batch-end retirement check sees a pending spawn for rummage and
-        // holds off retiring the prior batch.
-        let a = app_arc.lock().unwrap();
-        assert!(
-            a.running_sessions.contains_key("rummage"),
-            "rummage must be tracked in running_sessions after the lazy-spawn dispatch, \
-             so the batch-end retirement check waits for the runtime to drain the spawn"
-        );
-    }
 
     // spec (send-message): a known-but-unspawned goal's lazy-spawned
     // session is tracked in running_sessions BEFORE the SpawnGoalRequest
@@ -6313,7 +4534,7 @@ mod tests {
     // entry already exists), and the Done event handler must clear it.
     // This pins the full lifecycle for the send_message path, mirroring
     // `test_spec_at_dispatch_adds_goal_agent_to_running_sessions` for the
-    // envelope path and `test_spec_fresh_agents_batch_detection_guards_retirement`
+    // send_message dispatcher and `test_spec_fresh_agents_batch_detection_guards_retirement`
     // for the retirement-hold-off invariant.
     //
     // The load-bearing property: between the dispatcher's Ok return and
@@ -6400,10 +4621,8 @@ mod tests {
 
     // spec (send-message): when the target is in the session registry but
     // its channel receiver has been dropped (the session task exited), the
-    // send_message tool returns Err with a delivery-lost warning. This is
-    // the tool-path counterpart to
-    // test_spec_peer_consult_dropped_receiver_surfaces_warning (the
-    // envelope path). Both paths detect the closed channel and surface it
+    // send_message tool returns Err with a delivery-lost warning. The
+    // send_message dispatcher detects the closed channel and surfaces it
     // as an error rather than silently dropping the message.
     #[test]
     fn test_spec_send_message_dispatcher_closed_channel_returns_err() {
