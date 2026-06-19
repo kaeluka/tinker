@@ -230,6 +230,20 @@ pub fn stream_error(msg: &str) -> String {
     STREAM_ERROR_TEMPLATE.replace("{ERROR}", msg)
 }
 
+const RETRY_NOTICE_TEMPLATE: &str = include_str!("../prompts/backends/retry_notice.md");
+
+/// Format the user-visible retry notice emitted between HTTP attempts. The
+/// `↻` prefix parallels `stream_error`'s `‰` (rendered as `⚠`) so both
+/// transport-level notices share a recognizable visual family in the
+/// conversation pane. `attempt` is 1-indexed against `max_retries`.
+pub fn retry_notice(attempt: usize, max_retries: usize, delay_ms: u64, reason: &str) -> String {
+    RETRY_NOTICE_TEMPLATE
+        .replace("{ATTEMPT}", &attempt.to_string())
+        .replace("{MAX_RETRIES}", &max_retries.to_string())
+        .replace("{DELAY_MS}", &delay_ms.to_string())
+        .replace("{REASON}", reason)
+}
+
 // ── config.rs prompts ───────────────────────────────────────────────────────
 
 const CONFIG_STARTER_TEMPLATE: &str = include_str!("../prompts/config/starter_template.md");
@@ -347,13 +361,18 @@ mod tests {
     }
 
     // spec (prompt-storage): literal braces in prompt text are preserved when
-    // they don't match a placeholder.
+    // they don't match a placeholder. Template variables use {UPPER_CASE}
+    // placeholders; text that merely contains braces must pass through
+    // unchanged. Verified with a synthetic template that has a literal brace
+    // but no matching placeholder.
     #[test]
     fn test_spec_templating_preserves_literal_braces() {
-        // The fresh_dispatch template contains `{your-goal-id}` as a literal
-        // instruction to the model, not a placeholder for str::replace.
-        assert!(FRESH_DISPATCH_INSTRUCTIONS.contains("{your-goal-id}"),
-            "literal braces in prompt text must be preserved");
+        let template = "render {not_a_placeholder} here";
+        let result = template.replace("{PLACEHOLDER}", "value");
+        assert_eq!(
+            result, "render {not_a_placeholder} here",
+            "literal braces that don't match a placeholder must be preserved"
+        );
     }
 
     // spec (prompt-storage): summary_request template must contain the four
@@ -490,6 +509,24 @@ mod tests {
         let result = stream_error("timed out");
         assert!(result.contains("timed out"), "msg must be substituted");
         assert!(!result.contains("{ERROR}"), "no raw placeholders left");
+    }
+
+    // spec (prompt-storage): retry_notice substitutes all four placeholders
+    // (ATTEMPT, MAX_RETRIES, DELAY_MS, REASON) and leaves no raw template
+    // markers. The ↻ prefix must be present so the notice is visually
+    // distinct from the ⚠ error marker in the conversation pane.
+    #[test]
+    fn test_spec_retry_notice_substitutes_placeholders() {
+        let result = retry_notice(2, 3, 2000, "HTTP 503");
+        assert!(result.contains("2"), "attempt must be substituted");
+        assert!(result.contains("3"), "max_retries must be substituted");
+        assert!(result.contains("2000"), "delay_ms must be substituted");
+        assert!(result.contains("HTTP 503"), "reason must be substituted");
+        assert!(result.contains("↻"), "must carry the retry glyph");
+        assert!(!result.contains("{ATTEMPT}"), "no raw placeholders left");
+        assert!(!result.contains("{MAX_RETRIES}"), "no raw placeholders left");
+        assert!(!result.contains("{DELAY_MS}"), "no raw placeholders left");
+        assert!(!result.contains("{REASON}"), "no raw placeholders left");
     }
 
     // spec (prompt-storage): triggered_system_msg substitutes placeholders

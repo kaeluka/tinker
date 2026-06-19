@@ -12,17 +12,32 @@
 //! no Authorization header is sent — what local model servers expect.
 //!
 //! Context overflow fails visibly: the API error is surfaced as a ⚠ chunk,
-//! the session is dropped from the store, and `run` returns `Err` — which
-//! makes `goal_agent_loop` clear its session id and start the next dispatch
-//! as a fresh session (see the `Err` arm in `goal_agent_loop`).
+//! the session is dropped from the store, and `run` returns
+//! `RunError::lost(...)` (no preserved session id) — which makes
+//! `goal_agent_loop` clear its session id and start the next dispatch as a
+//! fresh session. Transient failures (network errors, unparseable responses,
+//! non-overflow API errors, missing-choices responses) save the session
+//! history before surfacing and return `RunError::transient(sid, ...)` — the
+//! caller resumes from `sid` on the next dispatch instead of starting fresh,
+//! so a single network blip no longer wipes every prior turn from the
+//! model's view (see the `Err` arm in `goal_agent_loop`).
+//!
+//! Transient HTTP failures are retried in-runner with exponential backoff
+//! (`MAX_RETRIES` attempts at 1s/2s/4s) before surfacing: connection errors,
+//! 429 rate limits, and 5xx server errors get up to three transparent
+//! retries with a user-visible `↻ retry` notice between attempts. Most
+//! blips never escape the runner. Non-retryable conditions (4xx except 429,
+//! context overflow, unparseable bodies) surface immediately so a broken
+//! server or an oversized prompt doesn't hang the session for ~7s per turn.
 
-use crate::cap::{Chunk, OpenCodeRunner};
+use crate::cap::{Chunk, OpenCodeRunner, RunError};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
 #[cfg(test)]
 use std::sync::Arc;
 use tokio::process::Command;
@@ -33,10 +48,39 @@ const MAX_TOOL_OUTPUT_CHARS: usize = 30_000;
 /// Hard cap on tool-loop iterations per `run` call — a runaway model that
 /// never stops calling tools is cut off visibly instead of looping forever.
 const MAX_TURNS: usize = 100;
+/// Maximum HTTP request retries on transient failures (connection errors,
+/// 429 rate limits, 5xx server errors) before surfacing the error. Total
+/// attempts per turn = 1 + MAX_RETRIES. Retries are transparent to the
+/// caller: the request body is rebuilt from `messages` each attempt and
+/// `messages` is only mutated after a successful response, so a retry
+/// neither duplicates turns nor corrupts the session history.
+const MAX_RETRIES: usize = 3;
+/// Base delay (ms) for exponential backoff between retries. Doubles each
+/// attempt: 1s, 2s, 4s — total worst-case wait ~7s before giving up. Kept
+/// modest so a genuinely-down endpoint surfaces quickly rather than hanging
+/// the session for minutes.
+const RETRY_BASE_DELAY_MS: u64 = 1000;
 /// Bash commands are killed after this long.
 const BASH_TIMEOUT_SECS: u64 = 300;
 /// Glob results are capped at this many paths.
 const MAX_GLOB_RESULTS: usize = 200;
+
+/// True for HTTP statuses worth retrying: 429 (Too Many Requests / rate
+/// limit) and 5xx (server errors — Internal Server Error, Bad Gateway,
+/// Service Unavailable, Gateway Timeout). 4xx (except 429) are not
+/// retryable: they indicate a client-side problem (auth, bad request, not
+/// found) that will not resolve by repeating the identical request.
+fn is_retryable_status(status: u16) -> bool {
+    status == 429 || (500..600).contains(&status)
+}
+
+/// Exponential backoff delay for retry `attempt` (1-indexed: the retry
+/// number about to start after attempt N failed). Returns base, 2×base,
+/// 4×base for attempts 1, 2, 3 — saturating shift guards against overflow
+/// if `max_retries` is ever raised beyond the bit-width of the base.
+fn retry_delay_ms(attempt: usize, base_ms: u64) -> u64 {
+    base_ms << attempt.saturating_sub(1)
+}
 
 /// Per-role capability policy, enforced in-process at the tool-call layer.
 /// This is the reason the native backend exists: the boundary is code, not
@@ -222,8 +266,7 @@ pub fn tool_definitions(policy: &ToolPolicy) -> Vec<Value> {
             &["command"],
         ));
     }
-    // send_message is the structured-tool successor to the @-envelope
-    // mechanism.  It is available to every session — including tend —
+    // send_message is available to every session — including tend —
     // because the spec mandates it for "all agent sessions".  The tool
     // does not touch the filesystem, so the policy layer is irrelevant;
     // the runtime enforces registry validation in the callback.  The
@@ -233,26 +276,25 @@ pub fn tool_definitions(policy: &ToolPolicy) -> Vec<Value> {
     // the model does not waste a turn attempting the call.
     tools.push(tool_schema(
         "send_message",
-        "Send a message to another agent session identified by its goal ID. The target is validated against both the session registry and the goal tree: a running session in the registry is delivered to directly; a known goal in the goal tree that is not yet running is lazy-spawned and the message is delivered into the new session. This tool does not spawn fresh sub-sessions of the caller (use the spawn_session tool for that). The recipient session starts processing the message immediately during this turn — it runs in parallel rather than waiting for this session to complete. Returns an error only when the target is unknown — not in the session registry and not in the goal tree — so the sender can route through a different agent. Also returns an error if the target is the sender's own id (a self-send would create a new turn in the same session and recurse without bound) — use spawn_session for sub-tasks of your own goal, address a different goal id for a different agent, or continue reasoning in the current turn. Prefer this over `<@id>...</@id>` envelopes: the tool call cannot be malformed and fires in-turn rather than at end-of-turn.",
+        "Send a message to another agent session identified by its goal ID. The target is validated against both the session registry and the goal tree: a running session in the registry is delivered to directly; a known goal in the goal tree that is not yet running is lazy-spawned and the message is delivered into the new session. This tool does not spawn fresh sub-sessions of the caller (use the spawn_session tool for that). The recipient session starts processing the message immediately during this turn — it runs in parallel rather than waiting for this session to complete. Returns an error only when the target is unknown — not in the session registry and not in the goal tree — so the sender can route through a different agent. Also returns an error if the target is the sender's own id (a self-send would create a new turn in the same session and recurse without bound) — use spawn_session for sub-tasks of your own goal, address a different goal id for a different agent, or continue reasoning in the current turn.",
         json!({
             "target": {"type": "string", "description": "Goal ID of the recipient (e.g. 'tend', 'rummage'). Validated against both the session registry and the goal tree: a running session is delivered to directly, a known-but-unspawned goal is lazy-spawned and the message is delivered into the new session. Must not be the sender's own id (self-send is rejected to prevent unbounded recursion)."},
             "message": {"type": "string", "description": "The message body to deliver to the recipient. May span multiple lines."}
         }),
         &["target", "message"],
     ));
-    // spawn_session is the structured-tool successor to the <@{goal-id}|label>
-    // fresh-dispatch envelope.  It is available to every session — including
-    // tend — for the same reason send_message is.  The tool does not touch
+    // spawn_session is available to every session — including tend —
+    // for the same reason send_message is.  The tool does not touch
     // the filesystem, so the policy layer is irrelevant; the runtime
     // enforces the self-only routing constraint (the new sub-session is
     // always of the *caller's* own goal) in the callback.  The schema has
     // no target parameter: the routing target is implicit in the caller.
     tools.push(tool_schema(
         "spawn_session",
-        "Spawn a fresh sub-session of your own goal. The new sub-session runs concurrently with your current turn (in-turn, not at end-of-turn) — it starts processing the task immediately while you keep reasoning. Use this whenever you can decompose a sub-task into a focused unit of work: each sub-session stays focused on its task and keeps your own context tight. The sub-session may itself act as a coordinator, dispatching further sub-sessions. From the sub-session's view, tool-spawned and envelope-spawned sessions are indistinguishable — both deposit into the same dispatch substrate. The `subgoal` parameter must be self-contained: the sub-session starts cold and only sees the text you pass here, so include all the context it needs without referring to 'above' or 'earlier'. Returns the sub-session id and the label (preserved as-is) on success. The sub-session replies to you via `<@{your-goal-id}>...</@{your-goal-id}>` envelopes — the reply mechanism is unchanged. Prefer this over `<@{your-goal-id}|label>...</@{your-goal-id}|label>` envelopes: the tool call cannot be malformed and fires in-turn rather than at end-of-turn.",
+        "Spawn a fresh sub-session of your own goal. The new sub-session runs concurrently with your current turn (in-turn, not at end-of-turn) — it starts processing the task immediately while you keep reasoning. Use this whenever you can decompose a sub-task into a focused unit of work: each sub-session stays focused on its task and keeps your own context tight. The sub-session may itself act as a coordinator, dispatching further sub-sessions. The `subgoal` parameter must be self-contained: the sub-session starts cold and only sees the text you pass here, so include all the context it needs without referring to 'above' or 'earlier'. Returns the sub-session id and the label (preserved as-is) on success.",
         json!({
             "subgoal": {"type": "string", "description": "The task description for the sub-session. Self-contained: include all the context the sub-session needs to complete the task without referring to your surrounding reply or earlier turns."},
-            "label": {"type": "string", "description": "Optional short correlation tag (e.g. 'investigate-auth') the sub-session echoes back to you in its reply envelope. Use an empty string or omit to dispatch without a label."}
+            "label": {"type": "string", "description": "Optional short correlation tag (e.g. 'investigate-auth') the sub-session echoes back in its reply. Use an empty string or omit to dispatch without a label."}
         }),
         &["subgoal"],
     ));
@@ -300,6 +342,14 @@ pub struct NativeRunner {
     pub api_key: Option<String>,
     pub system_prompt: Option<String>,
     pub policy: ToolPolicy,
+    /// Maximum HTTP retries on transient failures before surfacing. Defaults
+    /// to `MAX_RETRIES`; exposed so tests can fast-fail (set to 0) and so
+    /// future per-tier retry tuning can override without touching the
+    /// constructors.
+    pub max_retries: usize,
+    /// Base delay (ms) for exponential backoff between retries. Defaults to
+    /// `RETRY_BASE_DELAY_MS`; exposed for the same reasons as `max_retries`.
+    pub retry_base_delay_ms: u64,
     sessions: Mutex<HashMap<String, Vec<Value>>>,
     client: reqwest::Client,
 }
@@ -317,6 +367,8 @@ impl NativeRunner {
             api_key,
             system_prompt: None,
             policy,
+            max_retries: MAX_RETRIES,
+            retry_base_delay_ms: RETRY_BASE_DELAY_MS,
             sessions: Mutex::new(HashMap::new()),
             client: reqwest::Client::new(),
         }
@@ -335,6 +387,8 @@ impl NativeRunner {
             api_key,
             system_prompt: Some(system_prompt.into()),
             policy,
+            max_retries: MAX_RETRIES,
+            retry_base_delay_ms: RETRY_BASE_DELAY_MS,
             sessions: Mutex::new(HashMap::new()),
             client: reqwest::Client::new(),
         }
@@ -377,7 +431,7 @@ impl OpenCodeRunner for NativeRunner {
         mut on_chunk: Chunk,
         send_message: Option<crate::cap::SendMessageFn>,
         spawn_session: Option<crate::cap::SpawnSessionFn>,
-    ) -> Result<String> {
+    ) -> std::result::Result<String, RunError> {
         // Resume or create the session's message history.
         let sid: String;
         let mut messages: Vec<Value>;
@@ -392,7 +446,11 @@ impl OpenCodeRunner for NativeRunner {
                     None => {
                         // Unknown id: a dropped (overflowed) or pre-restart
                         // session. Fail so goal_agent_loop resets to fresh.
-                        return Err(anyhow!("unknown native session {id} — session store has no history"));
+                        // The session is genuinely gone — preserved_session_id
+                        // is None, so the caller's Err arm clears its cached id.
+                        return Err(RunError::lost(format!(
+                            "unknown native session {id} — session store has no history"
+                        )));
                     }
                 }
             }
@@ -421,44 +479,88 @@ impl OpenCodeRunner for NativeRunner {
                 break;
             }
 
-            let body = request_body(&self.model, &messages, &tools);
-            let mut req = self.client.post(&self.endpoint).json(&body);
-            if let Some(key) = self.api_key.as_deref() {
-                req = req.bearer_auth(key);
-            }
-            let resp = req.send().await;
-
-            let resp = match resp {
-                Ok(r) => r,
-                Err(e) => {
-                    let msg = format!("backend request failed: {e}");
-                    on_chunk(crate::prompts::stream_error(&msg));
-                    self.save_session(&sid, messages);
-                    return Err(anyhow!(msg));
+            // HTTP round-trip with bounded retry on transient failures
+            // (connection errors, 429 rate limits, 5xx server errors).
+            // Retries are transparent: the request body is rebuilt from
+            // `messages` each attempt and `messages` is only mutated after
+            // a successful response, so a retry neither duplicates turns
+            // nor corrupts the session history. Non-retryable conditions
+            // (4xx except 429, context overflow, unparseable bodies)
+            // surface immediately as RunError::transient or RunError::lost
+            // so the caller preserves the session for the next dispatch.
+            let (status, payload): (u16, Value) = {
+                let mut attempt = 0;
+                loop {
+                    attempt += 1;
+                    let body = request_body(&self.model, &messages, &tools);
+                    let mut req = self.client.post(&self.endpoint).json(&body);
+                    if let Some(key) = self.api_key.as_deref() {
+                        req = req.bearer_auth(key);
+                    }
+                    match req.send().await {
+                        Ok(r) => {
+                            let status = r.status().as_u16();
+                            if is_retryable_status(status) && attempt <= self.max_retries {
+                                let delay = retry_delay_ms(attempt, self.retry_base_delay_ms);
+                                on_chunk(crate::prompts::retry_notice(
+                                    attempt,
+                                    self.max_retries,
+                                    delay,
+                                    &format!("HTTP {status}"),
+                                ));
+                                tokio::time::sleep(Duration::from_millis(delay)).await;
+                                continue;
+                            }
+                            match r.json::<Value>().await {
+                                Ok(v) => break (status, v),
+                                Err(e) => {
+                                    // Don't retry unparseable bodies: a broken
+                                    // server returning HTML error pages would
+                                    // loop forever. Surface as transient so
+                                    // the caller preserves the session.
+                                    let msg = format!(
+                                        "backend returned unparseable response (HTTP {status}): {e}"
+                                    );
+                                    on_chunk(crate::prompts::stream_error(&msg));
+                                    self.save_session(&sid, messages);
+                                    return Err(RunError::transient(sid, msg));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            if attempt <= self.max_retries {
+                                let delay = retry_delay_ms(attempt, self.retry_base_delay_ms);
+                                on_chunk(crate::prompts::retry_notice(
+                                    attempt,
+                                    self.max_retries,
+                                    delay,
+                                    &format!("{e}"),
+                                ));
+                                tokio::time::sleep(Duration::from_millis(delay)).await;
+                                continue;
+                            }
+                            let msg = format!(
+                                "backend request failed after {} retries: {e}",
+                                self.max_retries
+                            );
+                            on_chunk(crate::prompts::stream_error(&msg));
+                            self.save_session(&sid, messages);
+                            return Err(RunError::transient(sid, msg));
+                        }
+                    }
                 }
             };
 
-            let status = resp.status();
-            let payload: Value = match resp.json().await {
-                Ok(v) => v,
-                Err(e) => {
-                    let msg = format!("backend returned unparseable response: {e}");
-                    on_chunk(crate::prompts::stream_error(&msg));
-                    self.save_session(&sid, messages);
-                    return Err(anyhow!(msg));
-                }
-            };
-
-            if let Some(err_msg) = api_error_message(&payload, status.as_u16()) {
+            if let Some(err_msg) = api_error_message(&payload, status) {
                 on_chunk(crate::prompts::stream_error(&err_msg));
                 if is_context_overflow(&err_msg) {
                     // Fail visibly and drop the session: the next dispatch
                     // starts fresh (goal_agent_loop clears its sid on Err).
                     self.sessions.lock().unwrap().remove(&sid);
-                    return Err(anyhow!("context overflow: {err_msg}"));
+                    return Err(RunError::lost(format!("context overflow: {err_msg}")));
                 }
                 self.save_session(&sid, messages);
-                return Err(anyhow!(err_msg));
+                return Err(RunError::transient(sid, err_msg));
             }
 
             let Some(assistant) = payload
@@ -469,7 +571,7 @@ impl OpenCodeRunner for NativeRunner {
                 let msg = "backend response has no choices[0].message".to_string();
                 on_chunk(crate::prompts::stream_error(&msg));
                 self.save_session(&sid, messages);
-                return Err(anyhow!(msg));
+                return Err(RunError::transient(sid, msg));
             };
 
             // Extract assistant text, handling both string and array formats.
@@ -709,8 +811,8 @@ async fn execute_send_message(
 /// *caller's own goal* (the routing target is implicit in the closure —
 /// the schema exposes no target parameter to the model). When the callback
 /// is `None` (e.g. a test mock that does not care about dispatch), the
-/// model receives an explicit error so it can fall back to the @-envelope
-/// mechanism — the same error surface the runner uses for `send_message`.
+/// model receives an explicit error — the same error surface the runner
+/// uses for `send_message`.
 ///
 /// `label` normalisation: an explicit empty string is treated as "no
 /// label" (None) so the model's "omit the label" and "pass empty string"
@@ -731,7 +833,7 @@ async fn execute_spawn_session(
     // Normalise the label: absent, null, and empty-string are all "no
     // label" so the model has three equivalent ways to dispatch without
     // a correlation tag. A non-empty label is preserved verbatim for the
-    // callback (and ultimately for the reply envelope).
+    // callback (and ultimately for the reply).
     let label_arg = args.get("label").and_then(|v| v.as_str());
     let label: Option<&str> = match label_arg {
         Some(l) if !l.is_empty() => Some(l),
@@ -914,6 +1016,117 @@ fn resolve(path: &str, work_dir: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // spec (backends): retryable status predicate. 429 and 5xx are the only
+    // statuses worth retrying — they indicate a transient server/rate-limit
+    // condition. 4xx (except 429) are permanent client errors that will not
+    // resolve by repeating the identical request.
+    #[test]
+    fn test_spec_is_retryable_status_covers_rate_limit_and_server_errors() {
+        assert!(is_retryable_status(429), "429 rate limit must be retryable");
+        assert!(is_retryable_status(500), "500 must be retryable");
+        assert!(is_retryable_status(502), "502 bad gateway must be retryable");
+        assert!(is_retryable_status(503), "503 service unavailable must be retryable");
+        assert!(is_retryable_status(504), "504 gateway timeout must be retryable");
+        assert!(is_retryable_status(599), "upper 5xx bound must be retryable");
+    }
+
+    #[test]
+    fn test_spec_is_retryable_status_rejects_client_errors_and_success() {
+        assert!(!is_retryable_status(200), "200 success must not be retryable");
+        assert!(!is_retryable_status(400), "400 bad request must not be retryable");
+        assert!(!is_retryable_status(401), "401 unauthorized must not be retryable");
+        assert!(!is_retryable_status(403), "403 forbidden must not be retryable");
+        assert!(!is_retryable_status(404), "404 not found must not be retryable");
+        assert!(!is_retryable_status(413), "413 payload too large (overflow-adjacent) must not be retryable");
+    }
+
+    // spec (backends): exponential backoff. Each retry doubles the delay so
+    // a flapping endpoint gets progressively more breathing room without
+    // hanging the session for minutes. Saturating shift prevents overflow
+    // if max_retries is ever raised high.
+    #[test]
+    fn test_spec_retry_delay_ms_doubles_each_attempt() {
+        let base = 1000u64;
+        assert_eq!(retry_delay_ms(1, base), 1000, "first retry: base");
+        assert_eq!(retry_delay_ms(2, base), 2000, "second retry: 2× base");
+        assert_eq!(retry_delay_ms(3, base), 4000, "third retry: 4× base");
+        assert_eq!(retry_delay_ms(4, base), 8000, "fourth retry: 8× base");
+    }
+
+    #[test]
+    fn test_spec_retry_delay_ms_respects_configured_base() {
+        // Tests (and future per-tier config) can set a smaller base for
+        // faster failure. The doubling ratio is preserved regardless of base.
+        assert_eq!(retry_delay_ms(1, 100), 100);
+        assert_eq!(retry_delay_ms(2, 100), 200);
+        assert_eq!(retry_delay_ms(3, 100), 400);
+    }
+
+    // spec (backends): default retry config on freshly-constructed runners
+    // must match the module constants, so production behavior is stable
+    // unless a caller explicitly overrides.
+    #[test]
+    fn test_spec_native_runner_defaults_match_constants() {
+        let r = NativeRunner::new("http://x", "m", None, ToolPolicy::Unrestricted);
+        assert_eq!(r.max_retries, MAX_RETRIES, "new() must default max_retries to MAX_RETRIES");
+        assert_eq!(r.retry_base_delay_ms, RETRY_BASE_DELAY_MS, "new() must default retry_base_delay_ms to RETRY_BASE_DELAY_MS");
+        let r2 = NativeRunner::with_system_prompt("http://x", "m", None, "sp", ToolPolicy::TendScope);
+        assert_eq!(r2.max_retries, MAX_RETRIES, "with_system_prompt() must default max_retries to MAX_RETRIES");
+        assert_eq!(r2.retry_base_delay_ms, RETRY_BASE_DELAY_MS, "with_system_prompt() must default retry_base_delay_ms to RETRY_BASE_DELAY_MS");
+    }
+
+    // spec (backends): a transient network failure must NOT lose the session.
+    // The runner saves the session history before surfacing the error and
+    // returns RunError::transient(sid, ...) so goal_agent_loop can resume
+    // from sid on the next dispatch. This is the regression test for the bug
+    // where a single network blip wiped every prior turn: the runner now
+    // signals preservation, the store holds the history, and the caller's
+    // Err arm honors the signal.
+    //
+    // Port 1 on loopback refuses connections immediately (ECONNREFUSED), so
+    // this test does not depend on timeouts and is stable under load.
+    #[tokio::test]
+    async fn test_spec_native_transient_network_failure_preserves_session() {
+        let mut runner = NativeRunner::new(
+            "http://127.0.0.1:1/v1/chat/completions",
+            "test-model",
+            None,
+            ToolPolicy::Unrestricted,
+        );
+        // Fast-fail: skip retries so this test stays sub-second. The
+        // connection-refused endpoint would otherwise burn the full
+        // backoff budget (1s+2s+4s) on every run.
+        runner.max_retries = 0;
+        let on_sid: Chunk = Box::new(|_| {});
+        let on_chunk: Chunk = Box::new(|_| {});
+        let result = runner
+            .run("hi", None, Path::new("."), None, on_sid, on_chunk, None, None)
+            .await;
+        let err = result.expect_err("connection-refused endpoint must return Err");
+        assert!(
+            err.session_preserved(),
+            "transient network failure must mark the session as preserved; got message: {}",
+            err.message
+        );
+        let sid = err
+            .preserved_session_id
+            .as_ref()
+            .expect("transient failure must carry a preserved sid")
+            .clone();
+        assert!(
+            sid.starts_with("nat_"),
+            "preserved sid must be the runner-generated nat_<uuid>, got {sid}"
+        );
+        // The history must actually be in the store so a resume works —
+        // the contract is not just "we returned the sid" but "the sid is
+        // loadable on the next dispatch".
+        let store = runner.sessions.lock().unwrap();
+        assert!(
+            store.contains_key(&sid),
+            "transient failure must leave the session history in the store for resume"
+        );
+    }
 
     // spec (native-backend): tend's policy denies bash outright — the
     // capability boundary is enforced in code, not via system prompt.
@@ -1120,10 +1333,9 @@ mod tests {
         assert!(names.contains(&"message"), "message must be a required parameter");
     }
 
-    // spec (send-message): tool description must explicitly say the recipient
-    // must already be in the session registry and that the tool fires
-    // immediately during the turn (so the model picks the right tool for
-    // the job and not the @-envelope mechanism).
+    // spec (send-message): tool description must explicitly mention the
+    // session registry and that the tool fires immediately during the
+    // turn, so the model knows the dispatch is synchronous and in-turn.
     #[test]
     fn test_spec_send_message_schema_documents_registry_and_in_turn_dispatch() {
         let tools = tool_definitions(&ToolPolicy::Unrestricted);
@@ -1314,8 +1526,8 @@ mod tests {
     }
 
     // spec (send-message): missing arguments produce explicit errors, not
-    // silent acceptance.  The runner must reject malformed tool calls the
-    // same way the @-envelope parser would reject a missing tag.
+    // silent acceptance.  The runner must reject malformed tool calls
+    // rather than accepting them and producing an empty dispatch.
     #[tokio::test]
     async fn test_spec_execute_send_message_missing_target_errors() {
         let cb: crate::cap::SendMessageFn = Arc::new(|_, _| Ok("ok".to_string()));
@@ -1517,7 +1729,7 @@ mod tests {
         assert!(names.contains(&"subgoal"), "subgoal must be a required parameter");
         // label is optional; the spec does not require it. The schema
         // must NOT mandate it — that would block the bare-task form
-        // (e.g. `<@my-goal|>` in the envelope path) where no label is
+        // (e.g. when the label is omitted) where no label is
         // wanted.
         assert!(!names.contains(&"label"), "label must NOT be a required parameter");
     }
@@ -1562,8 +1774,7 @@ mod tests {
         );
         // In-turn dispatch: the description must explain that the spawn
         // fires immediately during the caller's turn, so the model
-        // prefers the tool over the @-envelope path (which fires at
-        // end-of-turn).
+        // knows the dispatch is synchronous and in-turn.
         assert!(
             desc.to_lowercase().contains("in-turn")
                 || desc.to_lowercase().contains("immediately during")
@@ -1617,7 +1828,9 @@ mod tests {
     // can route replies to.
     #[tokio::test]
     async fn test_spec_execute_spawn_session_delegates_to_callback() {
-        let captured: Arc<Mutex<Option<(String, Option<String>)>>> = Arc::new(Mutex::new(None));
+        // Capture cell for the (subgoal, label) the callback received.
+        type Captured = Arc<Mutex<Option<(String, Option<String>)>>>;
+        let captured: Captured = Arc::new(Mutex::new(None));
         let captured_clone = captured.clone();
         let cb: crate::cap::SpawnSessionFn = Arc::new(move |subgoal: &str, label: Option<&str>| {
             *captured_clone.lock().unwrap() = Some((subgoal.to_string(), label.map(String::from)));
@@ -1684,8 +1897,7 @@ mod tests {
 
     // spec (spawn-session): no callback configured returns an explicit
     // error naming the misconfiguration. The harness's signal that the
-    // feature is not wired — the model can fall back to the @-envelope
-    // path or to routing to a peer.
+    // feature is not wired — the model must route to a peer instead.
     #[tokio::test]
     async fn test_spec_execute_spawn_session_no_callback_returns_error() {
         let err = execute_spawn_session(
@@ -1701,9 +1913,9 @@ mod tests {
     }
 
     // spec (spawn-session): missing subgoal produces an explicit error
-    // — the same defence-in-depth the @-envelope parser uses for
-    // missing tags. A tool call without subgoal would otherwise
-    // produce a sub-session with no task.
+    // — defence-in-depth against malformed tool calls. A tool call
+    // without subgoal would otherwise produce a sub-session with no
+    // task.
     #[tokio::test]
     async fn test_spec_execute_spawn_session_missing_subgoal_errors() {
         let cb: crate::cap::SpawnSessionFn = Arc::new(|_, _| Ok(("x~1".to_string(), None)));

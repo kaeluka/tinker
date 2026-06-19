@@ -558,7 +558,7 @@ mod tests {
                 _on_chunk: Chunk,
                 _send_message: Option<crate::cap::SendMessageFn>,
                 _spawn_session: Option<crate::cap::SpawnSessionFn>,
-            ) -> Result<String> {
+            ) -> std::result::Result<String, crate::cap::RunError> {
                 let n = self.calls.fetch_add(1, Ordering::SeqCst);
                 if n == 0 {
                     *self.first_session_id.lock().unwrap() =

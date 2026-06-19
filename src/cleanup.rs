@@ -436,19 +436,22 @@ mod tests {
             _on_chunk: Chunk,
             _send_message: Option<crate::cap::SendMessageFn>,
             _spawn_session: Option<crate::cap::SpawnSessionFn>,
-        ) -> Result<String> {
+        ) -> std::result::Result<String, crate::cap::RunError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             // Drop any line that is a marker line — mirrors what a real
             // cleanup agent would do for inline markers.
-            let hits = find_marker_files(self.fs.as_ref(), Path::new("/proj"))?;
+            let hits = find_marker_files(self.fs.as_ref(), Path::new("/proj"))
+                .map_err(|e| crate::cap::RunError::lost(format!("{e:#}")))?;
             for path in hits {
-                let content = self.fs.read_to_string(&path)?;
+                let content = self.fs.read_to_string(&path)
+                    .map_err(|e| crate::cap::RunError::lost(format!("{e:#}")))?;
                 let cleaned: String = content
                     .lines()
                     .filter(|l| !super::line_is_marker(l))
                     .collect::<Vec<_>>()
                     .join("\n");
-                self.fs.write(&path, &cleaned)?;
+                self.fs.write(&path, &cleaned)
+                    .map_err(|e| crate::cap::RunError::lost(format!("{e:#}")))?;
             }
             Ok(String::new())
         }
@@ -470,7 +473,7 @@ mod tests {
             _on_chunk: Chunk,
             _send_message: Option<crate::cap::SendMessageFn>,
             _spawn_session: Option<crate::cap::SpawnSessionFn>,
-        ) -> Result<String> {
+        ) -> std::result::Result<String, crate::cap::RunError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(String::new())
         }

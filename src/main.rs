@@ -268,9 +268,24 @@ async fn goal_agent_loop(
                 let _ = session_tx.send(SessionEvent::Done { goal_id: goal_id.clone(), full_output: output }).await;
             }
             Err(e) => {
+                // Two failure modes share this arm:
+                //   - lost (preserved_session_id == None): the session is
+                //     genuinely gone (context overflow, unknown id). Clear
+                //     llm_session_id so the next dispatch starts fresh.
+                //   - transient (preserved_session_id == Some(sid)): the run
+                //     failed but the session history was saved. PRESERVE the
+                //     sid so the next dispatch resumes — clearing it here was
+                //     the bug that wiped every prior turn on a single network
+                //     blip. The exit_status log distinguishes the two so the
+                //     introspection event log can tell them apart.
+                let exit_status = if e.session_preserved() {
+                    format!("transient: {}", e.message)
+                } else {
+                    format!("crash: {}", e.message)
+                };
                 log.emit("goal_session", logger::LogEvent::GoalSessionFinished {
                     goal_id: goal_id.clone(),
-                    exit_status: format!("crash: {e:#}"),
+                    exit_status,
                     duration_ms: session_ms,
                     files_modified_count: 0,
                     files_modified: vec![],
@@ -279,8 +294,9 @@ async fn goal_agent_loop(
                     full_output: output.clone(),
                     backend: backend_name.clone(),
                 });
-                // Clear session_id so next message starts a fresh session.
-                llm_session_id = None;
+                // Preserve the session id for transient failures; clear only
+                // on genuine session loss (context overflow, unknown id).
+                llm_session_id = e.preserved_session_id;
                 let _ = session_tx.send(SessionEvent::Done { goal_id: goal_id.clone(), full_output: output }).await;
             }
         }
@@ -3535,6 +3551,50 @@ mod tests {
         );
     }
 
+    // spec (backends): the goal_agent_loop Err arm must distinguish transient
+    // failures (session preserved) from genuine session loss (overflow). It
+    // must NOT unconditionally clear llm_session_id — that was the bug where a
+    // single network blip wiped every prior turn from the model's view. The
+    // arm must (a) branch on RunError::session_preserved(), (b) set
+    // llm_session_id from preserved_session_id (not always None), and (c)
+    // record an exit_status that distinguishes the two so the introspection
+    // log can tell them apart.
+    #[test]
+    fn test_spec_goal_agent_loop_err_arm_preserves_session_on_transient() {
+        let main_rs = include_str!("main.rs");
+        assert!(
+            main_rs.contains("e.session_preserved()"),
+            "goal_agent_loop Err arm must branch on RunError::session_preserved()"
+        );
+        assert!(
+            main_rs.contains("llm_session_id = e.preserved_session_id"),
+            "goal_agent_loop Err arm must set llm_session_id from preserved_session_id, not unconditionally None"
+        );
+        // The only `llm_session_id = None;` in production code must be the
+        // declaration at the top of goal_agent_loop
+        // (`let mut llm_session_id: Option<String> = None;`). A second
+        // occurrence would mean someone re-added the unconditional clear in
+        // the Err arm — the original bug. We inspect only the production
+        // portion (before `#[cfg(test)]`); test code legitimately references
+        // the string and would produce false positives.
+        let production = main_rs.split("#[cfg(test)]").next().unwrap_or(main_rs);
+        let none_assigns = production
+            .lines()
+            .filter(|l| l.contains("llm_session_id = None;") && !l.contains("let mut"))
+            .count();
+        assert_eq!(
+            none_assigns, 0,
+            "production goal_agent_loop must not contain `llm_session_id = None;` outside the declaration — that was the bug"
+        );
+        assert!(
+            main_rs.contains("\"transient:"),
+            "exit_status must mark transient failures distinctly from crashes"
+        );
+        assert!(
+            main_rs.contains("\"crash:"),
+            "exit_status must mark genuine session loss as crash"
+        );
+    }
 
     #[test]
     fn test_spec_shared_language_form_norm_minimum_viable_shape() {
