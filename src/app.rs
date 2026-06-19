@@ -47,6 +47,44 @@ pub fn session_parent_id(id: &str) -> &str {
     }
 }
 
+/// Per-goal token-usage statistics for the TUI's cost-driver indicators.
+/// Tracks running totals across all API calls for a goal; the three
+/// rendered metrics are derived lazily from these totals.
+///
+/// `session_count` is incremented on each completed dispatch (each
+/// `SessionEvent::Done`). Input/output totals accumulate from
+/// `SessionEvent::TokenUsage` events. The averages are computed at
+/// render time so they always reflect the latest state.
+#[derive(Debug, Clone, Default)]
+pub struct GoalTokenStats {
+    /// Number of completed dispatches for this goal.
+    pub session_count: u64,
+    /// Cumulative prompt (input) tokens across all API calls.
+    pub total_prompt_tokens: u64,
+    /// Cumulative completion (output) tokens across all API calls.
+    pub total_completion_tokens: u64,
+    /// Cumulative cached tokens across all API calls (where reported).
+    pub total_cached_tokens: u64,
+}
+
+impl GoalTokenStats {
+    /// Average prompt tokens per session. Returns 0 when no sessions have
+    /// completed — the metric is hidden in the row when count is 0.
+    pub fn avg_prompt_per_session(&self) -> u64 {
+        self.total_prompt_tokens.checked_div(self.session_count).unwrap_or(0)
+    }
+
+    /// Average completion tokens per session.
+    pub fn avg_completion_per_session(&self) -> u64 {
+        self.total_completion_tokens.checked_div(self.session_count).unwrap_or(0)
+    }
+
+    /// True when any token data has been recorded for this goal.
+    pub fn has_data(&self) -> bool {
+        self.session_count > 0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum Role {
     User(String),
@@ -222,6 +260,9 @@ pub struct App {
     pub werkeln_verb_idx: usize,
     /// When the verb index was last advanced.
     pub werkeln_last_advance: Instant,
+    /// Per-goal token-usage statistics for the TUI cost-driver indicators.
+    /// Keyed by goal id (permanent goal id or ephemeral session id).
+    pub token_usage: HashMap<String, GoalTokenStats>,
 }
 
 impl App {
@@ -261,6 +302,7 @@ impl App {
             goal_id_collisions: Vec::new(),
             werkeln_verb_idx: 0,
             werkeln_last_advance: Instant::now(),
+            token_usage: HashMap::new(),
         }
     }
 
@@ -874,5 +916,84 @@ mod tests {
         app.update_goal_id_collisions(vec![]);
         assert!(system_messages(&app).is_empty());
         assert!(app.goal_id_collisions.is_empty());
+    }
+
+    // --- GoalTokenStats ---
+
+    // spec: token-usage metrics — session count flags overtriggering, input per
+    // session flags prompt size, output per session flags verbosity. The three
+    // metrics isolate one cost driver each. GoalTokenStats tracks running totals
+    // and computes the averages lazily.
+
+    #[test]
+    fn test_spec_goal_token_stats_avg_per_session_divides_totals_by_count() {
+        let stats = GoalTokenStats {
+            session_count: 3,
+            total_prompt_tokens: 15_000,
+            total_completion_tokens: 3_000,
+            total_cached_tokens: 0,
+        };
+        assert_eq!(stats.avg_prompt_per_session(), 5_000);
+        assert_eq!(stats.avg_completion_per_session(), 1_000);
+    }
+
+    #[test]
+    fn test_spec_goal_token_stats_avg_returns_zero_when_no_sessions() {
+        let stats = GoalTokenStats::default();
+        assert_eq!(stats.avg_prompt_per_session(), 0);
+        assert_eq!(stats.avg_completion_per_session(), 0);
+        assert!(!stats.has_data());
+    }
+
+    #[test]
+    fn test_spec_goal_token_stats_has_data_true_after_session_count_increment() {
+        let stats = GoalTokenStats {
+            session_count: 1,
+            total_prompt_tokens: 0,
+            total_completion_tokens: 0,
+            total_cached_tokens: 0,
+        };
+        assert!(stats.has_data());
+    }
+
+    // spec: token-usage metrics — the TUI's App tracks per-goal token stats
+    // in a HashMap keyed by goal id. The three cost-driver indicators render
+    // from these totals.
+
+    #[test]
+    fn test_spec_app_token_usage_starts_empty() {
+        let app = App::new();
+        assert!(app.token_usage.is_empty());
+    }
+
+    #[test]
+    fn test_spec_app_token_usage_accumulates_across_multiple_events() {
+        let mut app = App::new();
+        // Simulate two API calls in the first dispatch.
+        let stats = app.token_usage.entry("tend".into()).or_default();
+        stats.total_prompt_tokens += 5_000;
+        stats.total_completion_tokens += 1_000;
+        stats.total_prompt_tokens += 3_000;
+        stats.total_completion_tokens += 500;
+        stats.session_count += 1;
+
+        let stats = app.token_usage.get("tend").unwrap();
+        assert_eq!(stats.session_count, 1);
+        assert_eq!(stats.total_prompt_tokens, 8_000);
+        assert_eq!(stats.total_completion_tokens, 1_500);
+        assert_eq!(stats.avg_prompt_per_session(), 8_000);
+        assert_eq!(stats.avg_completion_per_session(), 1_500);
+    }
+
+    #[test]
+    fn test_spec_app_token_usage_cached_tokens_accumulate() {
+        let mut app = App::new();
+        let stats = app.token_usage.entry("tend".into()).or_default();
+        stats.total_prompt_tokens += 10_000;
+        stats.total_cached_tokens += 3_000;
+        stats.session_count += 1;
+
+        let stats = app.token_usage.get("tend").unwrap();
+        assert_eq!(stats.total_cached_tokens, 3_000);
     }
 }

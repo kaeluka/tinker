@@ -10,6 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -38,6 +39,15 @@ pub struct StateSnapshot {
     pub focus: String,
     pub scroll_offsets: ScrollOffsets,
     pub queue: Vec<QueueEntry>,
+    /// Per-goal token-usage metrics derived from logged per-call data.
+    /// Keyed by goal id. Each entry tracks session count and average
+    /// input/output tokens per session, isolating three cost drivers:
+    /// triggering frequency (session_count), prompt size (avg_input),
+    /// and verbosity (avg_output). Reset on tinker restart — the state
+    /// file is a current snapshot, not a historical record (the event
+    /// log is the durable source).
+    #[serde(default)]
+    pub token_metrics: HashMap<String, GoalTokenMetrics>,
 }
 
 impl Default for StateSnapshot {
@@ -47,7 +57,45 @@ impl Default for StateSnapshot {
             focus: "repl".to_string(),
             scroll_offsets: ScrollOffsets::default(),
             queue: Vec::new(),
+            token_metrics: HashMap::new(),
         }
+    }
+}
+
+/// Per-goal token-usage metrics for the state snapshot. The serialized
+/// fields (`session_count`, `avg_input_tokens_per_session`,
+/// `avg_output_tokens_per_session`) are derived from the internal running
+/// totals (`#[serde(skip)]`) which accumulate as
+/// `ApiTokenUsage` events arrive and `GoalSessionFinished` events
+/// increment the session count.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GoalTokenMetrics {
+    /// Number of completed dispatches for this goal.
+    pub session_count: usize,
+    /// Average prompt (input) tokens per session. Derived from the running
+    /// total divided by session_count.
+    #[serde(default)]
+    pub avg_input_tokens_per_session: u64,
+    /// Average completion (output) tokens per session. Derived from the
+    /// running total divided by session_count.
+    #[serde(default)]
+    pub avg_output_tokens_per_session: u64,
+    /// Internal: cumulative prompt tokens across all API calls for this goal.
+    #[serde(skip)]
+    pub total_prompt_tokens: u64,
+    /// Internal: cumulative completion tokens across all API calls for this goal.
+    #[serde(skip)]
+    pub total_completion_tokens: u64,
+}
+
+impl GoalTokenMetrics {
+    /// Recalculate the derived averages from the running totals. Called
+    /// after every `ApiTokenUsage` and `GoalSessionFinished` update so
+    /// the serialized fields stay current.
+    fn recalc(&mut self) {
+        let count = self.session_count.max(1) as u64;
+        self.avg_input_tokens_per_session = self.total_prompt_tokens / count;
+        self.avg_output_tokens_per_session = self.total_completion_tokens / count;
     }
 }
 
@@ -77,6 +125,22 @@ pub enum LogEvent {
         summary_chars: usize,
         full_output: String,
         backend: String,
+    },
+    /// Per-API-call token usage, fired once per LLM round-trip inside the
+    /// tool loop. `goal_id` tags the originating goal; `prompt_tokens` and
+    /// `completion_tokens` are the input/output token counts from the
+    /// provider's `usage` object; `total_tokens` is the provider's reported
+    /// total; `cached_tokens` is a provider-specific extension (e.g. Anthropic
+    /// prompt caching, OpenAI `prompt_tokens_details.cached_tokens`) — `None`
+    /// when the provider doesn't report it. The state file's per-goal
+    /// `token_metrics` are derived from these events (accumulated and divided
+    /// by session count).
+    ApiTokenUsage {
+        goal_id: String,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        total_tokens: u64,
+        cached_tokens: Option<u64>,
     },
     CleanupHookRun {
         goal_id: String,
@@ -404,6 +468,23 @@ fn apply_to_state(entry: &LogEntry, state: &mut StateSnapshot) -> bool {
         }
         LogEvent::GoalSessionFinished { goal_id, .. } => {
             state.queue.retain(|e| &e.goal_id != goal_id || e.status != "running");
+            // Increment session count and recalc token averages — a finished
+            // dispatch is a completed session for metric purposes.
+            let metrics = state.token_metrics.entry(goal_id.clone()).or_default();
+            metrics.session_count += 1;
+            metrics.recalc();
+            true
+        }
+        LogEvent::ApiTokenUsage {
+            goal_id,
+            prompt_tokens,
+            completion_tokens,
+            ..
+        } => {
+            let metrics = state.token_metrics.entry(goal_id.clone()).or_default();
+            metrics.total_prompt_tokens += prompt_tokens;
+            metrics.total_completion_tokens += completion_tokens;
+            metrics.recalc();
             true
         }
         _ => false,
@@ -1372,5 +1453,240 @@ mod tests {
 
         // Cleanup.
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    // ── ApiTokenUsage event tests ────────────────────────────────────────────
+
+    // spec (tend-introspection): ApiTokenUsage serializes with kind =
+    // "api_token_usage" and carries goal_id, prompt_tokens, completion_tokens,
+    // total_tokens, and optional cached_tokens.
+    #[test]
+    fn test_spec_api_token_usage_serializes() {
+        let event = LogEvent::ApiTokenUsage {
+            goal_id: "tui".to_string(),
+            prompt_tokens: 15000,
+            completion_tokens: 3000,
+            total_tokens: 18000,
+            cached_tokens: Some(5000),
+        };
+        let entry = LogEntry {
+            ts: "2026-06-15T00:00:00Z".to_string(),
+            source: "backend".to_string(),
+            event,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["kind"], "api_token_usage");
+        assert_eq!(val["source"], "backend");
+        assert_eq!(val["goal_id"], "tui");
+        assert_eq!(val["prompt_tokens"], 15000);
+        assert_eq!(val["completion_tokens"], 3000);
+        assert_eq!(val["total_tokens"], 18000);
+        assert_eq!(val["cached_tokens"], 5000);
+    }
+
+    // spec (tend-introspection): ApiTokenUsage with no cached_tokens
+    // serializes cached_tokens as null.
+    #[test]
+    fn test_spec_api_token_usage_no_cached_tokens() {
+        let event = LogEvent::ApiTokenUsage {
+            goal_id: "backends".to_string(),
+            prompt_tokens: 2000,
+            completion_tokens: 500,
+            total_tokens: 2500,
+            cached_tokens: None,
+        };
+        let entry = LogEntry {
+            ts: "2026-06-15T00:00:00Z".to_string(),
+            source: "backend".to_string(),
+            event,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["cached_tokens"], serde_json::Value::Null);
+    }
+
+    // spec (tend-introspection): ApiTokenUsage is a state-changing event —
+    // it accumulates into token_metrics in the state snapshot.
+    #[test]
+    fn test_spec_api_token_usage_updates_state() {
+        let mut state = StateSnapshot::default();
+        let entry = LogEntry {
+            ts: "2026-06-15T00:00:00Z".to_string(),
+            source: "backend".to_string(),
+            event: LogEvent::ApiTokenUsage {
+                goal_id: "tui".to_string(),
+                prompt_tokens: 10000,
+                completion_tokens: 2000,
+                total_tokens: 12000,
+                cached_tokens: Some(3000),
+            },
+        };
+        let changed = apply_to_state(&entry, &mut state);
+        assert!(changed, "ApiTokenUsage must mark state dirty");
+        let metrics = &state.token_metrics["tui"];
+        assert_eq!(metrics.total_prompt_tokens, 10000);
+        assert_eq!(metrics.total_completion_tokens, 2000);
+        // Averages are 0 before any session finishes (session_count is 0,
+        // recalc divides by max(1)).
+        assert_eq!(metrics.session_count, 0);
+        // With session_count=0, recalc uses max(1)=1, so averages reflect
+        // raw totals — this is the pre-completion state.
+        assert_eq!(metrics.avg_input_tokens_per_session, 10000);
+        assert_eq!(metrics.avg_output_tokens_per_session, 2000);
+    }
+
+    // spec (tend-introspection): ApiTokenUsage events accumulate across
+    // multiple calls, and GoalSessionFinished increments session_count so
+    // averages are total/session_count.
+    #[test]
+    fn test_spec_token_metrics_accumulate_and_average() {
+        let mut state = StateSnapshot::default();
+        let mk = |ev: LogEvent| LogEntry {
+            ts: "2026-06-15T00:00:00Z".to_string(),
+            source: "backend".to_string(),
+            event: ev,
+        };
+
+        // Two API calls in session 1.
+        apply_to_state(
+            &mk(LogEvent::ApiTokenUsage {
+                goal_id: "tui".into(),
+                prompt_tokens: 10000,
+                completion_tokens: 1000,
+                total_tokens: 11000,
+                cached_tokens: None,
+            }),
+            &mut state,
+        );
+        apply_to_state(
+            &mk(LogEvent::ApiTokenUsage {
+                goal_id: "tui".into(),
+                prompt_tokens: 12000,
+                completion_tokens: 1500,
+                total_tokens: 13500,
+                cached_tokens: None,
+            }),
+            &mut state,
+        );
+
+        // Session 1 finishes.
+        apply_to_state(
+            &mk(LogEvent::GoalSessionFinished {
+                goal_id: "tui".into(),
+                exit_status: "clean".into(),
+                duration_ms: 5000,
+                files_modified_count: 0,
+                files_modified: vec![],
+                tool_calls: 2,
+                summary_chars: 0,
+                full_output: "".into(),
+                backend: "native".into(),
+            }),
+            &mut state,
+        );
+
+        // Session 2: one call.
+        apply_to_state(
+            &mk(LogEvent::ApiTokenUsage {
+                goal_id: "tui".into(),
+                prompt_tokens: 18000,
+                completion_tokens: 2000,
+                total_tokens: 20000,
+                cached_tokens: Some(5000),
+            }),
+            &mut state,
+        );
+
+        // Session 2 finishes.
+        apply_to_state(
+            &mk(LogEvent::GoalSessionFinished {
+                goal_id: "tui".into(),
+                exit_status: "clean".into(),
+                duration_ms: 3000,
+                files_modified_count: 1,
+                files_modified: vec!["src/x.rs".into()],
+                tool_calls: 1,
+                summary_chars: 0,
+                full_output: "".into(),
+                backend: "native".into(),
+            }),
+            &mut state,
+        );
+
+        let m = &state.token_metrics["tui"];
+        assert_eq!(m.session_count, 2);
+        assert_eq!(m.total_prompt_tokens, 10000 + 12000 + 18000); // 40000
+        assert_eq!(m.total_completion_tokens, 1000 + 1500 + 2000); // 4500
+        // Averages: total / session_count
+        assert_eq!(m.avg_input_tokens_per_session, 40000 / 2); // 20000
+        assert_eq!(m.avg_output_tokens_per_session, 4500 / 2); // 2250
+    }
+
+    // spec (tend-introspection): multiple goals tracked independently in
+    // the token_metrics map.
+    #[test]
+    fn test_spec_token_metrics_per_goal_isolation() {
+        let mut state = StateSnapshot::default();
+        let mk = |ev: LogEvent| LogEntry {
+            ts: "2026-06-15T00:00:00Z".to_string(),
+            source: "backend".to_string(),
+            event: ev,
+        };
+
+        apply_to_state(
+            &mk(LogEvent::ApiTokenUsage {
+                goal_id: "tui".into(),
+                prompt_tokens: 100,
+                completion_tokens: 50,
+                total_tokens: 150,
+                cached_tokens: None,
+            }),
+            &mut state,
+        );
+        apply_to_state(
+            &mk(LogEvent::ApiTokenUsage {
+                goal_id: "backends".into(),
+                prompt_tokens: 500,
+                completion_tokens: 200,
+                total_tokens: 700,
+                cached_tokens: None,
+            }),
+            &mut state,
+        );
+
+        assert_eq!(state.token_metrics.len(), 2);
+        assert_eq!(state.token_metrics["tui"].total_prompt_tokens, 100);
+        assert_eq!(state.token_metrics["backends"].total_prompt_tokens, 500);
+    }
+
+    // spec (tend-introspection): the state snapshot's token_metrics
+    // serializes to JSON with the derived average fields and without the
+    // internal running totals (serde(skip)).
+    #[test]
+    fn test_spec_state_snapshot_serializes_token_metrics() {
+        let mut state = StateSnapshot::default();
+        state.token_metrics.insert("tui".into(), GoalTokenMetrics {
+            session_count: 3,
+            avg_input_tokens_per_session: 15000,
+            avg_output_tokens_per_session: 3000,
+            total_prompt_tokens: 45000,
+            total_completion_tokens: 9000,
+        });
+        let json = serde_json::to_string(&state).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let m = &val["token_metrics"]["tui"];
+        assert_eq!(m["session_count"], 3);
+        assert_eq!(m["avg_input_tokens_per_session"], 15000);
+        assert_eq!(m["avg_output_tokens_per_session"], 3000);
+        // Internal fields must NOT be serialized.
+        assert!(
+            m.get("total_prompt_tokens").is_none(),
+            "total_prompt_tokens must be serde(skip)"
+        );
+        assert!(
+            m.get("total_completion_tokens").is_none(),
+            "total_completion_tokens must be serde(skip)"
+        );
     }
 }

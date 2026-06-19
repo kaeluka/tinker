@@ -46,6 +46,17 @@ pub enum SessionEvent {
         dirty_files: Vec<std::path::PathBuf>,
         error: Option<String>,
     },
+    /// Per-API-call token usage, fired once per LLM round-trip inside the
+    /// tool loop. Multiple `TokenUsage` events per dispatch are normal (one
+    /// per tool-loop iteration). `cached_tokens` is provider-specific
+    /// (OpenAI prompt caching, Anthropic) — `None` when not reported.
+    TokenUsage {
+        goal_id: String,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        total_tokens: u64,
+        cached_tokens: Option<u64>,
+    },
 }
 
 /// Builds a Markdown table of the goal's neighboring goals in the graph —
@@ -257,7 +268,8 @@ pub async fn run_silent(
         buf_clone.lock().unwrap().push_str(&chunk);
     });
     let on_sid: Box<dyn FnMut(String) + Send> = Box::new(|_| {});
-    oc.run(message, session_id, work_dir, None, on_sid, on_chunk, None, None).await?;
+    let on_usage: crate::cap::UsageChunk = Box::new(|_| {});
+    oc.run(message, session_id, work_dir, None, on_sid, on_chunk, on_usage, None, None).await?;
     let s = buf.lock().unwrap().clone();
     Ok(s)
 }
@@ -295,8 +307,9 @@ pub async fn run_goal(
             text: chunk,
         });
     });
+    let on_usage: crate::cap::UsageChunk = Box::new(|_| {});
     let session_id = oc
-        .run(&message, None, &work_dir, None, on_sid, on_chunk, None, None)
+        .run(&message, None, &work_dir, None, on_sid, on_chunk, on_usage, None, None)
         .await?;
 
     let output = full_output.lock().unwrap().clone();
@@ -520,6 +533,7 @@ mod tests {
                 _system_prompt: Option<&str>,
                 _on_session_id: Chunk,
                 _on_chunk: Chunk,
+                _on_usage: crate::cap::UsageChunk,
                 _send_message: Option<crate::cap::SendMessageFn>,
                 _spawn_session: Option<crate::cap::SpawnSessionFn>,
             ) -> std::result::Result<String, crate::cap::RunError> {

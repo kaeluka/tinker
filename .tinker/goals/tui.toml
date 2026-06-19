@@ -1,6 +1,6 @@
 id = "tui"
 kind = "feature"
-summary = "This goal owns the terminal interface rendering: the two-column layout, goal-list row format including ephemeral sub-sessions accurately nested under their immediate dispatcher at all depths with label-first display when a label is provided and pane-label normalization to the root permanent goal name, per-category visual styling, pane-label animation, the goal-detail header, goal-ID visual consistency, per-session conversation views, active-session switching, the options dialog, queue and trigger-reason display, and scroll behavior."
+summary = "This goal owns the terminal interface rendering: the two-column layout, goal-list row format including ephemeral sub-sessions accurately nested under their immediate dispatcher at all depths with label-first display when a label is provided and pane-label normalization to the root permanent goal name, per-category visual styling, pane-label animation, the goal-detail header, goal-ID visual consistency, per-session conversation views, active-session switching, the options dialog, queue and trigger-reason display, token-usage cost-driver metrics, and scroll behavior."
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left
@@ -73,6 +73,17 @@ invocation for that goal in queue order — running first, then queued
 surface is read-only.
 
 **Ephemeral sub-sessions.** Ephemeral sub-sessions appear in the goal list as soon as they are dispatched — not deferred until the dispatching turn completes. Sub-sessions nest visually under their immediate dispatcher at all depths: `jog~1~3` appears indented beneath `jog~1`, which appears beneath `jog`. The pane label normalizes to the root permanent goal name. When a sub-session was dispatched with an explicit label, the goal-list row displays the label instead of the auto-generated `root~N` index; unlabeled sub-sessions continue to display as `root~N`.
+
+**Token-usage metrics.** Each goal-list row shows three right-aligned
+token-usage metrics in compact form: session count, average input
+tokens per session, and average output tokens per session. The three
+numbers replace a few characters of the summary preview — already
+truncated — and each isolates one cost driver: session count flags
+overtriggering, input per session flags prompt size, output per
+session flags verbosity. The metrics render right-aligned so they
+form neat columns across all goals. The detail pane shows the full
+breakdown: totals, per-session averages, and cache-hit information
+where the provider reports it.
 
 **Options dialog.** Pressing Enter on a goal in the goal list opens
 an options dialog with two fields: a trigger reason and the goal's
@@ -170,7 +181,7 @@ reason = "tui renders every user-facing text surface (conversation, goal text); 
 
 [[related]]
 id = "tend-introspection"
-reason = "tend-introspection's introspection substrate captures this goal's structural state (selection, focus, scroll, queue snapshot) in its state file and event log; when tui's structural state model changes, the substrate's captured fields must change."
+reason = "tend-introspection's introspection substrate captures this goal's structural state (selection, focus, scroll, queue snapshot) in its state file and event log; when tui's structural state model changes, the substrate's captured fields must change. Per-goal token-usage metrics in the state snapshot drive the three cost-driver indicators rendered in the goal-list rows."
 
 [[related]]
 id = "fresh-agents"

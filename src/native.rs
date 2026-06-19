@@ -30,7 +30,7 @@
 //! context overflow, unparseable bodies) surface immediately so a broken
 //! server or an oversized prompt doesn't hang the session for ~7s per turn.
 
-use crate::cap::{Chunk, OpenCodeRunner, RunError};
+use crate::cap::{Chunk, OpenCodeRunner, RunError, TokenUsage};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -419,6 +419,27 @@ fn extract_assistant_text(assistant: &Value) -> String {
     String::new()
 }
 
+/// Extract token usage from an OpenAI-protocol response. Returns `None`
+/// when the response has no `usage` object — some local model servers omit
+/// it entirely, and error responses don't include it.
+///
+/// Core fields (`prompt_tokens`, `completion_tokens`, `total_tokens`) are
+/// universal across OpenAI-protocol providers. `cached_tokens` is a
+/// provider-specific extension (OpenAI `prompt_tokens_details.cached_tokens`)
+/// read when present and `None` when absent.
+pub fn extract_usage(payload: &Value) -> Option<TokenUsage> {
+    let usage = payload.get("usage")?;
+    Some(TokenUsage {
+        prompt_tokens: usage.get("prompt_tokens")?.as_u64()?,
+        completion_tokens: usage.get("completion_tokens")?.as_u64()?,
+        total_tokens: usage.get("total_tokens")?.as_u64()?,
+        cached_tokens: usage
+            .get("prompt_tokens_details")
+            .and_then(|d| d.get("cached_tokens"))
+            .and_then(|c| c.as_u64()),
+    })
+}
+
 #[async_trait]
 impl OpenCodeRunner for NativeRunner {
     async fn run(
@@ -429,6 +450,7 @@ impl OpenCodeRunner for NativeRunner {
         system_prompt: Option<&str>,
         mut on_session_id: Chunk,
         mut on_chunk: Chunk,
+        mut on_usage: crate::cap::UsageChunk,
         send_message: Option<crate::cap::SendMessageFn>,
         spawn_session: Option<crate::cap::SpawnSessionFn>,
     ) -> std::result::Result<String, RunError> {
@@ -550,6 +572,19 @@ impl OpenCodeRunner for NativeRunner {
                     }
                 }
             };
+
+            // Extract per-round-trip token usage from the response BEFORE the
+            // error check. This ensures usage is captured even on failure
+            // paths (rate limits, context overflow) — some providers include
+            // usage data on error responses, and knowing the prompt size on a
+            // context-overflow failure is exactly what you want. Core fields
+            // are universal across OpenAI-protocol providers; cached_tokens is
+            // a provider-specific extension read when present. If the response
+            // has no `usage` object (some local model servers, most error
+            // responses), the callback doesn't fire.
+            if let Some(usage) = extract_usage(&payload) {
+                on_usage(usage);
+            }
 
             if let Some(err_msg) = api_error_message(&payload, status) {
                 on_chunk(crate::prompts::stream_error(&err_msg));
@@ -1100,8 +1135,9 @@ mod tests {
         runner.max_retries = 0;
         let on_sid: Chunk = Box::new(|_| {});
         let on_chunk: Chunk = Box::new(|_| {});
+        let on_usage: crate::cap::UsageChunk = Box::new(|_| {});
         let result = runner
-            .run("hi", None, Path::new("."), None, on_sid, on_chunk, None, None)
+            .run("hi", None, Path::new("."), None, on_sid, on_chunk, on_usage, None, None)
             .await;
         let err = result.expect_err("connection-refused endpoint must return Err");
         assert!(
@@ -1967,5 +2003,126 @@ mod tests {
         );
         // The result string omits the label clause when label is None.
         assert!(!result.contains("label:"), "result must omit label clause when label is None: {result}");
+    }
+
+    // ── Token usage extraction ───────────────────────────────────────────────
+
+    // spec (backends): extract_usage reads the core token fields from the
+    // OpenAI-protocol response's `usage` object. prompt_tokens,
+    // completion_tokens, and total_tokens are universal across all
+    // OpenAI-protocol providers and must always be present when `usage`
+    // exists.
+    #[test]
+    fn test_spec_extract_usage_core_fields() {
+        let payload = json!({
+            "choices": [{"message": {"role": "assistant", "content": "hi"}}],
+            "usage": {
+                "prompt_tokens": 1200,
+                "completion_tokens": 350,
+                "total_tokens": 1550
+            }
+        });
+        let usage = extract_usage(&payload).expect("usage object must parse");
+        assert_eq!(usage.prompt_tokens, 1200);
+        assert_eq!(usage.completion_tokens, 350);
+        assert_eq!(usage.total_tokens, 1550);
+        assert!(
+            usage.cached_tokens.is_none(),
+            "cached_tokens must be None when prompt_tokens_details is absent"
+        );
+    }
+
+    // spec (backends): cached_tokens is a provider-specific extension — read
+    // when present (OpenAI `prompt_tokens_details.cached_tokens`), None when
+    // the provider doesn't report it.
+    #[test]
+    fn test_spec_extract_usage_with_cached_tokens() {
+        let payload = json!({
+            "usage": {
+                "prompt_tokens": 1200,
+                "completion_tokens": 350,
+                "total_tokens": 1550,
+                "prompt_tokens_details": {
+                    "cached_tokens": 800
+                }
+            }
+        });
+        let usage = extract_usage(&payload).expect("usage object must parse");
+        assert_eq!(usage.cached_tokens, Some(800));
+    }
+
+    #[test]
+    fn test_spec_extract_usage_without_cached_tokens_is_none() {
+        let payload = json!({
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150
+            }
+        });
+        let usage = extract_usage(&payload).expect("usage object must parse");
+        assert!(usage.cached_tokens.is_none());
+    }
+
+    // spec (backends): extract_usage is called BEFORE the error check in the
+    // tool loop, so usage data is captured even on failure paths (rate limits,
+    // context overflow). Some providers include usage on error responses.
+    // This test documents that extract_usage itself is error-agnostic — it
+    // returns usage data whenever the `usage` object is present, regardless of
+    // whether the response also contains an `error` field.
+    #[test]
+    fn test_spec_extract_usage_captures_data_on_error_response_with_usage() {
+        let payload = json!({
+            "error": {"message": "rate limited", "type": "rate_limit_error"},
+            "usage": {
+                "prompt_tokens": 1200,
+                "completion_tokens": 0,
+                "total_tokens": 1200
+            }
+        });
+        let usage = extract_usage(&payload)
+            .expect("usage must be extracted when present, even on error responses");
+        assert_eq!(usage.prompt_tokens, 1200);
+        assert_eq!(usage.completion_tokens, 0);
+        assert_eq!(usage.total_tokens, 1200);
+    }
+
+    // spec (backends): if the response has no `usage` object (some local
+    // model servers omit it entirely, error responses don't include it),
+    // extract_usage returns None — the callback doesn't fire for that
+    // endpoint, producing no token-usage log events.
+    #[test]
+    fn test_spec_extract_usage_missing_usage_returns_none() {
+        let payload = json!({
+            "choices": [{"message": {"role": "assistant", "content": "hi"}}]
+        });
+        assert!(extract_usage(&payload).is_none(), "response without usage must return None");
+    }
+
+    #[test]
+    fn test_spec_extract_usage_error_response_returns_none() {
+        let payload = json!({
+            "error": {"message": "rate limited", "type": "rate_limit_error"}
+        });
+        assert!(extract_usage(&payload).is_none(), "error response must return None");
+    }
+
+    // spec (backends): the three core fields (prompt_tokens,
+    // completion_tokens, total_tokens) are mandatory — a `usage` object
+    // missing any one of them returns None. This guards against partially-
+    // reported usage (e.g. a provider that reports prompt+completion but
+    // omits total) silently producing a TokenUsage with a misleading 0.
+    #[test]
+    fn test_spec_extract_usage_partial_core_fields_returns_none() {
+        let payload = json!({
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 50
+            }
+        });
+        assert!(
+            extract_usage(&payload).is_none(),
+            "usage missing total_tokens must return None — core fields are required"
+        );
     }
 }

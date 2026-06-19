@@ -483,6 +483,7 @@ fn draw_goal_tree(
                 selected_id.as_deref(),
                 &running_base_ids,
                 app,
+                list_area.width,
             )
         })
         .collect();
@@ -522,6 +523,35 @@ fn draw_goal_tree(
                     Span::styled("▶ ", Style::default().fg(Color::DarkGray)),
                     Span::raw(reason.to_string()),
                 ]));
+            }
+            // Token-usage breakdown for the detail pane.
+            if let Some(stats) = app.token_usage.get(&g.id).filter(|s| s.has_data()) {
+                let dim = Style::default().fg(Color::DarkGray);
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled("Token usage", dim)));
+                lines.push(Line::from(vec![
+                    Span::styled("  Sessions: ", dim),
+                    Span::raw(stats.session_count.to_string()),
+                    Span::styled("    Total in: ", dim),
+                    Span::raw(stats.total_prompt_tokens.to_string()),
+                    Span::styled("    Total out: ", dim),
+                    Span::raw(stats.total_completion_tokens.to_string()),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::styled("  Avg in/session: ", dim),
+                    Span::raw(stats.avg_prompt_per_session().to_string()),
+                    Span::styled("    Avg out/session: ", dim),
+                    Span::raw(stats.avg_completion_per_session().to_string()),
+                ]));
+                if stats.total_cached_tokens > 0 {
+                    let pct = (stats.total_cached_tokens * 100)
+                        .checked_div(stats.total_prompt_tokens)
+                        .unwrap_or(0);
+                    lines.push(Line::from(vec![
+                        Span::styled("  Cache hits: ", dim),
+                        Span::raw(format!("{} tokens ({}% of input)", stats.total_cached_tokens, pct)),
+                    ]));
+                }
             }
             lines
         }
@@ -598,12 +628,34 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
     }
 }
 
+/// Width of the metrics block in display columns: leading separator space (1)
+/// + session count (2) + space (1) + input avg (5) + space (1) + output avg (5) = 15.
+const METRICS_WIDTH: usize = 15;
+
+/// Format a token count compactly for the goal-list metrics columns.
+///   0–999:        plain number        (e.g. `3`, `42`, `999`)
+///   1000–9999:    one decimal + k     (e.g. `1.2k`, `9.9k`)
+///   10000–999999: integer + k         (e.g. `10k`, `127k`)
+///   1000000+:     one decimal + M     (e.g. `1.2M`)
+fn format_compact_tokens(n: u64) -> String {
+    if n < 1_000 {
+        n.to_string()
+    } else if n < 10_000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else if n < 1_000_000 {
+        format!("{}k", n / 1000)
+    } else {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    }
+}
+
 fn goal_list_row_line(
     item: &GoalListItem,
     depth_by_id: &std::collections::HashMap<String, usize>,
     selected_id: Option<&str>,
     running_base_ids: &std::collections::HashSet<&str>,
     app: &App,
+    pane_width: u16,
 ) -> Line<'static> {
     let id = item.id();
     let is_selected = selected_id == Some(id);
@@ -652,7 +704,26 @@ fn goal_list_row_line(
             let marker_style = Style::default().fg(Color::DarkGray);
             let marker_str = if is_active { "▶ " } else { "- " };
             let indent = "  ".repeat(depth);
-            let preview = truncate_with_ellipsis(&g.summary, 60);
+
+            // Token-usage metrics: three right-aligned numbers (session count,
+            // avg input per session, avg output per session) rendered DarkGray
+            // so they read as ambient cost-driver status — not competing with
+            // the goal name. Only permanent goals with recorded data show
+            // metrics; ephemeral sub-sessions never do.
+            let stats = app.token_usage.get(g.id.as_str());
+            let has_metrics = stats.is_some_and(|s| s.has_data());
+            let metrics_width = if has_metrics { METRICS_WIDTH } else { 0 };
+
+            // Truncate the summary to leave room for the metrics block when
+            // present. Without metrics, keep the existing 60-char preview.
+            let prefix_width = depth * 2 + 2 + g.id.chars().count();
+            let max_preview = if has_metrics {
+                (pane_width as usize).saturating_sub(prefix_width + 3 + metrics_width)
+            } else {
+                60
+            };
+            let preview = truncate_with_ellipsis(&g.summary, max_preview);
+
             let mut spans = vec![
                 Span::styled(format!("{}{}", indent, marker_str), marker_style),
                 Span::styled(g.id.clone(), id_style),
@@ -660,6 +731,28 @@ fn goal_list_row_line(
             if !preview.is_empty() {
                 spans.push(Span::styled(format!(" — {}", preview), name_style));
             }
+
+            // Right-align the metrics block to the pane edge. The gap between
+            // the summary text and the metrics is filled with raw (unstyled)
+            // spaces so the metrics form neat columns across all goal rows.
+            if has_metrics {
+                let stats = stats.unwrap();
+                let left_width = prefix_width
+                    + if preview.is_empty() { 0 } else { 3 + preview.chars().count() };
+                let padding = (pane_width as usize).saturating_sub(left_width + metrics_width);
+                if padding > 0 {
+                    spans.push(Span::raw(" ".repeat(padding)));
+                }
+                let metrics_style = Style::default().fg(Color::DarkGray);
+                let metrics_text = format!(
+                    " {:>2} {:>5} {:>5}",
+                    stats.session_count,
+                    format_compact_tokens(stats.avg_prompt_per_session()),
+                    format_compact_tokens(stats.avg_completion_per_session()),
+                );
+                spans.push(Span::styled(metrics_text, metrics_style));
+            }
+
             Line::from(spans)
         }
         GoalListItem::Ephemeral(session_id, label) => {
@@ -1152,7 +1245,7 @@ mod tests {
         depth_by_id.insert("tui".to_string(), 0usize);
         let running = std::collections::HashSet::new();
         let item = GoalListItem::Goal(app.goals[0].clone());
-        let line = goal_list_row_line(&item, &depth_by_id, None, &running, &app);
+        let line = goal_list_row_line(&item, &depth_by_id, None, &running, &app, 38);
 
         // The first span is the prefix + indent. Extract the marker substring
         // (the row has no children so indent is empty).
@@ -1196,7 +1289,7 @@ mod tests {
         let running = std::collections::HashSet::new();
         let item = GoalListItem::Goal(app.goals[0].clone());
         // Selection is on a different goal — packaged goal is NOT selected.
-        let line = goal_list_row_line(&item, &depth_by_id, Some("other"), &running, &app);
+        let line = goal_list_row_line(&item, &depth_by_id, Some("other"), &running, &app, 38);
 
         // The first span is the prefix + indent. It must be dim and have no
         // italic — the packaged italic only applies to id and summary.
@@ -1251,7 +1344,7 @@ mod tests {
         depth_by_id.insert("tui".to_string(), 0usize);
         let running = std::collections::HashSet::new();
         let ephemeral = GoalListItem::Ephemeral("tui~1".to_string(), None);
-        let line = goal_list_row_line(&ephemeral, &depth_by_id, None, &running, &app);
+        let line = goal_list_row_line(&ephemeral, &depth_by_id, None, &running, &app, 38);
 
         let prefix_span = &line.spans[0];
         let prefix_text = prefix_span.content.as_ref();
@@ -1390,7 +1483,7 @@ mod tests {
         let running = std::collections::HashSet::new();
         let item = GoalListItem::Goal(app.goals[0].clone());
         // Selection is on a different goal — packaged goal is NOT selected.
-        let line = goal_list_row_line(&item, &depth_by_id, Some("other"), &running, &app);
+        let line = goal_list_row_line(&item, &depth_by_id, Some("other"), &running, &app, 38);
 
         // The id span must be DarkGray + ITALIC + BOLD.
         let id_span = line.spans.iter().find(|s| s.content.as_ref() == "tui")
@@ -1439,7 +1532,7 @@ mod tests {
         let running = std::collections::HashSet::new();
         let item = GoalListItem::Goal(app.goals[0].clone());
         // The packaged goal IS the selected one.
-        let line = goal_list_row_line(&item, &depth_by_id, Some("tui"), &running, &app);
+        let line = goal_list_row_line(&item, &depth_by_id, Some("tui"), &running, &app, 38);
 
         // The id span must be the selection color (Cyan) + BOLD + ITALIC.
         let id_span = line.spans.iter().find(|s| s.content.as_ref() == "tui")
@@ -1486,7 +1579,7 @@ mod tests {
         depth_by_id.insert("backends".to_string(), 0usize);
         let running = std::collections::HashSet::new();
         let item = GoalListItem::Goal(app.goals[0].clone());
-        let line = goal_list_row_line(&item, &depth_by_id, None, &running, &app);
+        let line = goal_list_row_line(&item, &depth_by_id, None, &running, &app, 38);
 
         let id_span = line.spans.iter().find(|s| s.content.as_ref() == "backends")
             .expect("row must contain id span 'backends'");
@@ -1949,6 +2042,304 @@ plain trailing line";
         assert_eq!(app.selected_item_id(), Some("alpha~1".to_string()));
         assert!(app.selected_goal().is_none(),
             "selected_goal() must return None when an ephemeral is selected");
+    }
+
+    // ── format_compact_tokens ──
+
+    /// Spec (tui — token-usage metrics): values under 1000 render as plain
+    /// numbers with no suffix.
+    #[test]
+    fn test_spec_format_compact_tokens_plain_under_1000() {
+        assert_eq!(format_compact_tokens(0), "0");
+        assert_eq!(format_compact_tokens(3), "3");
+        assert_eq!(format_compact_tokens(42), "42");
+        assert_eq!(format_compact_tokens(999), "999");
+    }
+
+    /// Spec (tui — token-usage metrics): values 1000–9999 render with one
+    /// decimal place and a `k` suffix.
+    #[test]
+    fn test_spec_format_compact_tokens_k_suffix() {
+        assert_eq!(format_compact_tokens(1000), "1.0k");
+        assert_eq!(format_compact_tokens(1200), "1.2k");
+        assert_eq!(format_compact_tokens(9900), "9.9k");
+    }
+
+    /// Spec (tui — token-usage metrics): values 10000–999999 render as an
+    /// integer with a `k` suffix; 1000000+ renders with one decimal and `M`.
+    #[test]
+    fn test_spec_format_compact_tokens_large_values() {
+        assert_eq!(format_compact_tokens(10_000), "10k");
+        assert_eq!(format_compact_tokens(127_000), "127k");
+        assert_eq!(format_compact_tokens(999_999), "999k");
+        assert_eq!(format_compact_tokens(1_000_000), "1.0M");
+        assert_eq!(format_compact_tokens(1_200_000), "1.2M");
+    }
+
+    // ── goal-list row token metrics ──
+
+    /// Spec (tui — token-usage metrics): when a permanent goal has token data,
+    /// the row renders the three right-aligned metrics (session count, avg
+    /// input, avg output) in the metrics block.
+    #[test]
+    fn test_spec_goal_list_row_shows_token_metrics_when_data_exists() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![PathBuf::from("/proj/.tinker")];
+        app.goals = vec![Goal {
+            id: "alpha".to_string(),
+            summary: "a short summary".to_string(),
+            description: String::new(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        }];
+        // 3 sessions, 3600 prompt tokens (avg 1200 → "1.2k"),
+        // 2400 completion tokens (avg 800 → "800").
+        app.token_usage.insert(
+            "alpha".to_string(),
+            crate::app::GoalTokenStats {
+                session_count: 3,
+                total_prompt_tokens: 3600,
+                total_completion_tokens: 2400,
+                total_cached_tokens: 0,
+            },
+        );
+
+        let mut depth_by_id = std::collections::HashMap::new();
+        depth_by_id.insert("alpha".to_string(), 0usize);
+        let running = std::collections::HashSet::new();
+        let item = GoalListItem::Goal(app.goals[0].clone());
+        let line = goal_list_row_line(&item, &depth_by_id, None, &running, &app, 38);
+
+        let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            line_text.contains(" 3 "),
+            "metrics block must contain session count 3; got: {:?}",
+            line_text,
+        );
+        assert!(
+            line_text.contains("1.2k"),
+            "metrics block must contain formatted avg input 1.2k; got: {:?}",
+            line_text,
+        );
+        assert!(
+            line_text.contains("800"),
+            "metrics block must contain formatted avg output 800; got: {:?}",
+            line_text,
+        );
+
+        // The metrics must render DarkGray — ambient status, not competing
+        // with the goal name.
+        let metrics_span = line.spans.iter()
+            .find(|s| s.content.as_ref().contains("1.2k"))
+            .expect("metrics span must exist");
+        assert_eq!(
+            metrics_span.style.fg,
+            Some(Color::DarkGray),
+            "metrics block must render in DarkGray",
+        );
+    }
+
+    /// Spec (tui — token-usage metrics): when a goal has no token data
+    /// (session_count is 0), the row shows no metrics block — the full
+    /// summary is rendered as before.
+    #[test]
+    fn test_spec_goal_list_row_no_metrics_when_no_data() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![PathBuf::from("/proj/.tinker")];
+        app.goals = vec![Goal {
+            id: "beta".to_string(),
+            summary: "a summary that should not be truncated by metrics".to_string(),
+            description: String::new(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        }];
+        // No token_usage entry for "beta" at all.
+
+        let mut depth_by_id = std::collections::HashMap::new();
+        depth_by_id.insert("beta".to_string(), 0usize);
+        let running = std::collections::HashSet::new();
+        let item = GoalListItem::Goal(app.goals[0].clone());
+        let line = goal_list_row_line(&item, &depth_by_id, None, &running, &app, 38);
+
+        // No span should contain a compact token suffix — the metrics block
+        // is absent.
+        let has_metrics = line.spans.iter()
+            .any(|s| s.content.as_ref().contains("k") && s.content.as_ref().trim().len() <= 5);
+        assert!(
+            !has_metrics,
+            "no metrics block should appear when there is no token data",
+        );
+    }
+
+    /// Spec (tui — token-usage metrics): when a goal has token data, the
+    /// summary preview is truncated to leave room for the metrics block. A
+    /// long summary is shortened (ending with "...") rather than running over
+    /// the metrics — without metrics the full 60-char budget is available.
+    #[test]
+    fn test_spec_goal_list_row_truncates_summary_when_metrics_present() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![PathBuf::from("/proj/.tinker")];
+        app.goals = vec![Goal {
+            id: "verbose".to_string(),
+            summary: "this is a very long summary that would normally render fully at the 60-char budget but must be truncated to make room for the metrics block".to_string(),
+            description: String::new(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        }];
+        app.token_usage.insert(
+            "verbose".to_string(),
+            crate::app::GoalTokenStats {
+                session_count: 2,
+                total_prompt_tokens: 4000,
+                total_completion_tokens: 1000,
+                total_cached_tokens: 0,
+            },
+        );
+
+        let mut depth_by_id = std::collections::HashMap::new();
+        depth_by_id.insert("verbose".to_string(), 0usize);
+        let running = std::collections::HashSet::new();
+        let item = GoalListItem::Goal(app.goals[0].clone());
+        // Narrow pane forces truncation: prefix(9) + 3 + 15(metrics) = 27,
+        // leaving 38 - 27 = 11 chars for the preview.
+        let line = goal_list_row_line(&item, &depth_by_id, None, &running, &app, 38);
+
+        let preview_span: &Span = line.spans.iter()
+            .find(|s| s.content.starts_with(" — "))
+            .expect("summary span must exist");
+        let preview = preview_span.content.trim_start_matches(" — ");
+        assert!(
+            preview.ends_with("..."),
+            "summary must be truncated (end with '...') when metrics are present; got: {:?}",
+            preview,
+        );
+        assert!(
+            preview.chars().count() < 60,
+            "summary must be shorter than the 60-char no-metrics budget; got {} chars",
+            preview.chars().count(),
+        );
+    }
+
+    /// Spec (tui — token-usage metrics): ephemeral sub-sessions never show
+    /// token metrics — only permanent goals with completed dispatches do.
+    /// Guards against the metrics block leaking onto ephemeral rows.
+    #[test]
+    fn test_spec_goal_list_row_ephemeral_shows_no_metrics() {
+        let mut app = App::new();
+        // Inject token data keyed by the parent goal so a Goal row WOULD show
+        // metrics — the Ephemeral row must still show none.
+        app.token_usage.insert(
+            "tend".to_string(),
+            crate::app::GoalTokenStats {
+                session_count: 5,
+                total_prompt_tokens: 100_000,
+                total_completion_tokens: 20_000,
+                total_cached_tokens: 0,
+            },
+        );
+        let ephemeral = GoalListItem::Ephemeral("tend~1".to_string(), None);
+        let depth_by_id = std::collections::HashMap::new();
+        let running = std::collections::HashSet::new();
+        let line = goal_list_row_line(&ephemeral, &depth_by_id, None, &running, &app, 50);
+
+        // The ephemeral row has exactly two spans (marker + display_text) and
+        // no metrics. The avg tokens here would be 20.0k / 4.0k if they leaked.
+        let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            !line_text.contains("20.0k") && !line_text.contains("4.0k"),
+            "ephemeral sub-session row must not show token metrics; got: {:?}",
+            line_text,
+        );
+    }
+
+    /// Spec (tui — token-usage metrics): the metrics block is right-aligned to
+    /// the pane edge so metrics form neat columns across goal rows regardless
+    /// of summary length. Two goals with different-length summaries must render
+    /// their metrics spans starting at the same character offset.
+    #[test]
+    fn test_spec_goal_list_row_metrics_right_aligned_across_rows() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![PathBuf::from("/proj/.tinker")];
+        app.goals = vec![
+            Goal {
+                id: "alpha".to_string(),
+                summary: "short".to_string(),
+                description: String::new(),
+                parent_id: String::new(),
+                children: vec![],
+                related: vec![],
+                tier: None,
+                kind: None,
+                source_path: None,
+            },
+            Goal {
+                id: "beta".to_string(),
+                summary: "a much much longer summary text to widen the row".to_string(),
+                description: String::new(),
+                parent_id: String::new(),
+                children: vec![],
+                related: vec![],
+                tier: None,
+                kind: None,
+                source_path: None,
+            },
+        ];
+        // Both goals: 2 sessions, avg prompt 2.0k, avg completion 1.0k —
+        // the 'k' suffix lets us identify the metrics span uniquely.
+        for id in &["alpha", "beta"] {
+            app.token_usage.insert(
+                id.to_string(),
+                crate::app::GoalTokenStats {
+                    session_count: 2,
+                    total_prompt_tokens: 4000,
+                    total_completion_tokens: 2000,
+                    total_cached_tokens: 0,
+                },
+            );
+        }
+
+        let mut depth_by_id = std::collections::HashMap::new();
+        depth_by_id.insert("alpha".to_string(), 0usize);
+        depth_by_id.insert("beta".to_string(), 0usize);
+        let running = std::collections::HashSet::new();
+        let item_a = GoalListItem::Goal(app.goals[0].clone());
+        let item_b = GoalListItem::Goal(app.goals[1].clone());
+        let line_a = goal_list_row_line(&item_a, &depth_by_id, None, &running, &app, 50);
+        let line_b = goal_list_row_line(&item_b, &depth_by_id, None, &running, &app, 50);
+
+        // Character offset where each row's metrics span begins.
+        fn metrics_offset(line: &Line) -> Option<usize> {
+            let mut off = 0;
+            for s in &line.spans {
+                // The metrics span is DarkGray and carries a compact-token
+                // suffix (k/M) from the averaged values.
+                if s.style.fg == Some(Color::DarkGray)
+                    && (s.content.contains('k') || s.content.contains('M'))
+                {
+                    return Some(off);
+                }
+                off += s.content.chars().count();
+            }
+            None
+        }
+        let off_a = metrics_offset(&line_a).expect("alpha must render metrics");
+        let off_b = metrics_offset(&line_b).expect("beta must render metrics");
+        assert_eq!(
+            off_a, off_b,
+            "metrics must start at the same column across rows (right-aligned to pane edge)",
+        );
     }
 
 

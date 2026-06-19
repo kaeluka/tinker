@@ -1,6 +1,6 @@
 id = "tend-introspection"
 kind = "feature"
-summary = "This goal owns tend's runtime introspection substrate — the append-only event log at .tinker/logs/runtime.jsonl capturing turns, messages, goal-session lifecycle, dispatch, cleanup, goal-file changes, TUI state, batch state transitions, and cross-tier goal collisions, plus the semantic UI state snapshot at .tinker/state/runtime.json, written async and non-blocking; batch transitions also emit as user-visible system messages."
+summary = "This goal owns tend's runtime introspection substrate — the append-only event log at .tinker/logs/runtime.jsonl capturing turns, messages, goal-session lifecycle, dispatch, cleanup, goal-file changes, TUI state, batch state transitions, per-API-call token usage, and cross-tier goal collisions, plus the semantic UI state snapshot at .tinker/state/runtime.json, written async and non-blocking; batch transitions also emit as user-visible system messages."
 description = """
 ## WHAT
 A runtime introspection substrate that lets tend inspect its own
@@ -21,7 +21,7 @@ tend-injected system messages (full content plus a `source` field
 naming the emitting component — dispatcher, harness);
 goal-session lifecycle (dispatched, started, finished) with
 observable facts; dispatch emissions; cleanup-hook results;
-goal-file changes; TUI structural state changes (selection,
+per-API-call token counts (prompt, completion, total, and provider-specific extensions like cached tokens) tagged with the originating goal; goal-file changes; TUI structural state changes (selection,
 focus, scroll, queue); and **batch state transitions** — when the
 system moves from idle to active and back — as first-class events,
 alongside the existing system-message stream. At session registry
@@ -43,8 +43,10 @@ Finished-session events carry **observable facts only** — no
 session-declared outcome. Implementation chooses the fields.
 
 The **state file** is JSON, semantic only: selected goal id, focus
-region, scroll offsets, and queue snapshot (running + pending with
-reasons and start/queue timestamps).
+region, scroll offsets, queue snapshot (running + pending with
+reasons and start/queue timestamps), and per-goal token-usage metrics
+(session count, average input tokens per session, average output
+tokens per session) derived from the logged per-call data.
 
 Writes are **async and non-blocking**, so the substrate never
 slows tend's main loop.
@@ -89,11 +91,11 @@ reason = "This goal produces code, which follows `coding-standards` (capability-
 
 [[related]]
 id = "tui"
-reason = "tend-introspection's substrate captures tui's structural state (selection, focus, scroll offsets, queue snapshot) in its state file and logs tui state-change events; the set of observable structural state it records is defined by what tui renders and maintains."
+reason = "tend-introspection's substrate captures tui's structural state (selection, focus, scroll offsets, queue snapshot) in its state file and logs tui state-change events; the set of observable structural state it records is defined by what tui renders and maintains. The state snapshot also carries per-goal token-usage metrics that tui renders as cost-driver indicators in the goal-list rows."
 
 [[related]]
 id = "goal-agents"
-reason = "tend-introspection logs goal-session lifecycle events (dispatched/started/finished), dispatch emissions, a session-start system-prompt and goal-list-hash capture, and cross-tier goal collision events (goal id, contributing tiers and paths) — all produced by goal-agents' session registry and its startup diagnostics."
+reason = "tend-introspection logs goal-session lifecycle events (dispatched/started/finished), dispatch emissions, a session-start system-prompt and goal-list-hash capture, and cross-tier goal collision events (goal id, contributing tiers and paths) — all produced by goal-agents' session registry and its startup diagnostics. Per-API-call token counts are tagged with the originating goal via the session registry."
 
 [[related]]
 id = "goal-storage"
@@ -110,5 +112,9 @@ reason = "spawn-session dispatches produce a new event type in the runtime event
 [[related]]
 id = "send-message"
 reason = "send-message dispatches produce a new event type in the runtime event log — sender, target, dispatch time."
+
+[[related]]
+id = "backends"
+reason = "Per-API-call token counts originate at the backend's tool-loop seam where each API response is parsed; this goal logs them and derives per-session metrics for the state snapshot."
 
 

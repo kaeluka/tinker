@@ -15,6 +15,28 @@ use std::sync::Arc;
 /// Streaming text token callback. Synchronous so trait methods can be `dyn`-safe.
 pub type Chunk = Box<dyn FnMut(String) + Send>;
 
+/// Per-API-call token usage from a single LLM round-trip. The OpenAI
+/// chat-completions protocol returns a `usage` object alongside `choices`;
+/// this struct carries the fields that matter for cost tracking.
+///
+/// `cached_tokens` is a provider-specific extension (e.g. Anthropic prompt
+/// caching, OpenAI `prompt_tokens_details.cached_tokens`). `None` when the
+/// provider doesn't report it — some local model servers omit `usage`
+/// entirely, in which case the callback doesn't fire at all.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TokenUsage {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    pub cached_tokens: Option<u64>,
+}
+
+/// Callback for per-API-call token usage. Fires once per LLM round-trip
+/// inside the tool loop, after each successful response parse. Same pattern
+/// as `Chunk` — synchronous, `FnMut` so the callback can close over mutable
+/// state (e.g. an accumulator or a `LogSender`).
+pub type UsageChunk = Box<dyn FnMut(TokenUsage) + Send>;
+
 /// Error returned by [`OpenCodeRunner::run`].
 ///
 /// Distinguishes two failure modes that previously shared a single `Err`:
@@ -116,6 +138,11 @@ pub type SpawnSessionFn = Arc<dyn Fn(&str, Option<&str>) -> Result<(String, Opti
 ///
 /// `on_session_id` is called once when a session ID is first seen on the stream.
 /// `on_chunk` is called for each streamed text chunk.
+/// `on_usage` is called once per LLM round-trip with the token usage
+/// (`prompt_tokens`, `completion_tokens`, `total_tokens`, optional
+/// `cached_tokens`) from the API response. If the response has no `usage`
+/// object (some local model servers), the callback doesn't fire — so
+/// endpoints that don't report usage produce no token-usage log events.
 /// Returns the session ID seen during the run (or empty string if none).
 ///
 /// `system_prompt` is used only when `session_id` is `None` (new session) to
@@ -160,6 +187,7 @@ pub trait OpenCodeRunner: Send + Sync {
         system_prompt: Option<&str>,
         on_session_id: Chunk,
         on_chunk: Chunk,
+        on_usage: UsageChunk,
         send_message: Option<SendMessageFn>,
         spawn_session: Option<SpawnSessionFn>,
     ) -> std::result::Result<String, RunError>;

@@ -11,6 +11,8 @@ Tinker runs against a single backend: the native implementation, which targets a
 
 **Tool loop.** Native runs the agent loop in-process: it calls the chat-completions API on the tier's configured endpoint and executes tool calls itself — exactly six tools: bash, read, write, edit, glob, grep. Because tinker owns the tool executor, file-access boundaries are enforced in code via a per-role tool policy: tend gets restricted tool access and a narrowed write scope (the goals directory); goal sessions — including cleanup, which runs as a goal session like any other — get the full unrestricted tool set. A policy denial is returned to the model as a tool error it can adapt to. Sessions are in-memory only — a restart starts all sessions fresh. Context overflow fails visibly: the session is dropped and the next dispatch starts fresh.
 
+**Token usage capture.** Each API response carries a token-usage object — prompt tokens, completion tokens, total tokens, and provider-specific extensions such as cached-token counts. The tool loop reads this per round-trip and exposes the per-call token counts rather than discarding them. Attribution to the originating goal flows through the session registry. Core fields are universal across OpenAI-protocol providers; extended fields are read when present and skipped when absent.
+
 **Error feedback.** Tool errors flow back to the model in-loop as tool results. API errors surface as visible chunks the agent can reason about.
 
 Startup argument handling is governed by `startup-args`. Recognised flag: `--tend-full-goal-context` (restore full goal text in tend's context instead of the compact index).
@@ -62,3 +64,7 @@ reason = "send-message is a tool registered in backends' tool policy layer; its 
 [[related]]
 id = "spawn-session"
 reason = "spawn-session is a tool registered in backends' tool policy layer; its parameters, dispatch semantics, and call accounting are subject to backends' framework constraints."
+
+[[related]]
+id = "tend-introspection"
+reason = "The tool loop exposes per-round-trip token counts from each API response; tend-introspection logs them as per-call events and derives per-session metrics for the state snapshot."

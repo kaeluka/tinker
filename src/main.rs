@@ -223,6 +223,17 @@ async fn goal_agent_loop(
         });
 
         let session_t0 = std::time::Instant::now();
+        let gid_usage = goal_id.clone();
+        let tx_usage = session_tx.clone();
+        let on_usage: cap::UsageChunk = Box::new(move |usage| {
+            let _ = tx_usage.try_send(SessionEvent::TokenUsage {
+                goal_id: gid_usage.clone(),
+                prompt_tokens: usage.prompt_tokens,
+                completion_tokens: usage.completion_tokens,
+                total_tokens: usage.total_tokens,
+                cached_tokens: usage.cached_tokens,
+            });
+        });
         let run_result = oc.run(
             &llm_message,
             llm_session_id.as_deref(),
@@ -230,6 +241,7 @@ async fn goal_agent_loop(
             system_prompt_for_run.as_deref(),
             on_sid,
             on_chunk,
+            on_usage,
             Some(send_message_dispatcher.clone()),
             Some(spawn_session_dispatcher.clone()),
         ).await;
@@ -1576,6 +1588,8 @@ fn handle_session_event(
             app.finalize_agent_message(&goal_id);
             // Clear the ▶ indicator for any session type, including interactive agents.
             app.running_sessions.remove(&goal_id);
+            // Increment session count for the TUI's per-goal token metrics.
+            app.token_usage.entry(goal_id.clone()).or_default().session_count += 1;
             let session_text = full_output;
             // Reload goals — any session may have written TOML files.
             if let Ok(load) = goal::load_all_goals(fs, &app.tinker_dirs) {
@@ -1681,6 +1695,22 @@ fn handle_session_event(
             app.push_system_message(&msg);
             log.emit("cleanup", logger::LogEvent::TinkerSystemMessageReceived { content: msg });
             app.running_sessions.remove(&goal_id);
+        }
+        SessionEvent::TokenUsage { goal_id, prompt_tokens, completion_tokens, total_tokens, cached_tokens } => {
+            log.emit("backend", logger::LogEvent::ApiTokenUsage {
+                goal_id: goal_id.clone(),
+                prompt_tokens,
+                completion_tokens,
+                total_tokens,
+                cached_tokens,
+            });
+            // Update App's in-memory token stats for TUI rendering.
+            let stats = app.token_usage.entry(goal_id).or_default();
+            stats.total_prompt_tokens += prompt_tokens;
+            stats.total_completion_tokens += completion_tokens;
+            if let Some(cached) = cached_tokens {
+                stats.total_cached_tokens += cached;
+            }
         }
     }
 }
@@ -2007,6 +2037,7 @@ mod tests {
             SessionEvent::Chunk { .. } => {}
             SessionEvent::Done { .. } => {}
             SessionEvent::CleanupBlocked { .. } => {}
+            SessionEvent::TokenUsage { .. } => {}
         }
     }
 

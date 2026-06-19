@@ -173,7 +173,8 @@ async fn run_oc_oneshot(
 ) -> Result<()> {
     let on_sid: Box<dyn FnMut(String) + Send> = Box::new(|_| {});
     let on_chunk: Box<dyn FnMut(String) + Send> = Box::new(|_| {});
-    oc.run(message, None, work_dir, None, on_sid, on_chunk, None, None).await?;
+    let on_usage: crate::cap::UsageChunk = Box::new(|_| {});
+    oc.run(message, None, work_dir, None, on_sid, on_chunk, on_usage, None, None).await?;
     Ok(())
 }
 
@@ -434,6 +435,7 @@ mod tests {
             _system_prompt: Option<&str>,
             _on_session_id: Chunk,
             _on_chunk: Chunk,
+            _on_usage: crate::cap::UsageChunk,
             _send_message: Option<crate::cap::SendMessageFn>,
             _spawn_session: Option<crate::cap::SpawnSessionFn>,
         ) -> std::result::Result<String, crate::cap::RunError> {
@@ -471,6 +473,7 @@ mod tests {
             _system_prompt: Option<&str>,
             _on_session_id: Chunk,
             _on_chunk: Chunk,
+            _on_usage: crate::cap::UsageChunk,
             _send_message: Option<crate::cap::SendMessageFn>,
             _spawn_session: Option<crate::cap::SpawnSessionFn>,
         ) -> std::result::Result<String, crate::cap::RunError> {
