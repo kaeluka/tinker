@@ -1,6 +1,6 @@
 id = "tui"
 kind = "feature"
-summary = "This goal owns the terminal interface rendering: the two-column layout, goal-list row format including ephemeral sub-sessions accurately nested under their immediate dispatcher at all depths with label-first display when a label is provided and pane-label normalization to the root permanent goal name, per-category visual styling, pane-label animation, the goal-detail header, goal-ID visual consistency, per-session conversation views, active-session switching, the options dialog, queue and trigger-reason display, token-usage cost-driver metrics, and scroll behavior."
+summary = "This goal owns the terminal interface rendering: the two-column layout, goal-list row format including ephemeral sub-sessions accurately nested under their immediate dispatcher at all depths with label-first display when a label is provided and pane-label normalization to the root permanent goal name, per-category visual styling, pane-label animation, the goal-detail header, goal-ID visual consistency, per-session conversation views, active-session switching, input-box text editing, the options dialog, queue and trigger-reason display, token-usage cost-driver metrics, and scroll behavior."
 description = """
 ## WHAT
 Tinker presents a terminal interface in two columns. The **left
@@ -24,6 +24,11 @@ to the session they were exchanged with. Switching to a different
 session with `/<goal-id>` immediately loads that session's full
 accumulated conversation into the pane, then streams new output from
 that session going forward.
+
+**Input editing.** The conversation input box is a full text-editing
+surface: mid-string insertion, cursor movement, word navigation, and
+line editing follow the readline convention. Multi-byte text (emoji,
+non-ASCII) edits correctly.
 
 Tend's startup output is not rendered in the conversation pane — the
 TUI suppresses it. The model produces output eagerly on startup but
@@ -117,6 +122,11 @@ meaning in a `rummage>` thread.
 The `/<goal-id>` switching mechanism extends naturally from the
 original three named agents to the whole registry — any goal is
 directly addressable from the keyboard.
+
+The system depends on the user composing detailed messages to direct
+agents; an input surface that can't be edited mid-string makes
+composition painful at exactly the point where care matters most.
+Readline is the universal terminal convention.
 
 Tend's startup output is not rendered because it is internal
 scaffolding, not conversation. The user opened tinker to type

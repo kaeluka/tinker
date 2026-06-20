@@ -1909,6 +1909,44 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                 app.should_quit = true;
                 KeyAction::Quit
             }
+            // Ctrl-A — cursor to start of line (readline convention).
+            (KeyModifiers::CONTROL, KeyCode::Char('a')) => {
+                app.input_cursor_home();
+                KeyAction::None
+            }
+            // Ctrl-E — cursor to end of line (readline convention).
+            (KeyModifiers::CONTROL, KeyCode::Char('e')) => {
+                app.input_cursor_end();
+                KeyAction::None
+            }
+            // Ctrl-U — delete from cursor to start of line.
+            (KeyModifiers::CONTROL, KeyCode::Char('u')) => {
+                app.input_kill_to_start();
+                KeyAction::None
+            }
+            // Ctrl-K — delete from cursor to end of line.
+            (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
+                app.input_kill_to_end();
+                KeyAction::None
+            }
+            // Ctrl-W — delete word before cursor.
+            (KeyModifiers::CONTROL, KeyCode::Char('w')) => {
+                app.input_delete_word();
+                KeyAction::None
+            }
+            // Word-backward: Ctrl+Left or Alt+Left (covers macOS Opt+Left).
+            // Must precede the bare `(_, Left)` arm.
+            (KeyModifiers::CONTROL, KeyCode::Left)
+            | (KeyModifiers::ALT, KeyCode::Left) => {
+                app.input_cursor_word_left();
+                KeyAction::None
+            }
+            // Word-forward: Ctrl+Right or Alt+Right.
+            (KeyModifiers::CONTROL, KeyCode::Right)
+            | (KeyModifiers::ALT, KeyCode::Right) => {
+                app.input_cursor_word_right();
+                KeyAction::None
+            }
             (_, KeyCode::Tab) => {
                 if !app.flat_goals().is_empty() {
                     app.focus = Focus::Tree;
@@ -1930,7 +1968,7 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                     let help_msg = "Commands: @<goal-id> [msg], /quit, /help, /<goal-id> to switch session. Tab = goal tree, Enter on goal = options (tier, trigger reason).";
                     app.push_system_message(help_msg);
                     log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: help_msg.to_string() });
-                    app.input.clear();
+                    app.clear_input();
                     return KeyAction::None;
                 }
 
@@ -1943,26 +1981,46 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                         let msg = format!("switched to {} — type to chat, /<goal-id> to switch", id);
                         app.push_system_message(&msg);
                         log.emit("repl", logger::LogEvent::TinkerSystemMessageReceived { content: msg });
-                        app.input.clear();
+                        app.clear_input();
                         return KeyAction::None;
                     }
                     // Unknown slash command: fall through as ordinary input.
 
                 let session_id = app.active_session.clone();
                 app.push_user_message(&input, &session_id);
-                app.input.clear();
+                app.clear_input();
                 app.user_has_interacted = true;
                 if session_id == "tend" {
                     app.correction_attempts = 0;
                 }
                 KeyAction::SendToSession(session_id, input)
             }
+            (_, KeyCode::Left) => {
+                app.input_cursor_left();
+                KeyAction::None
+            }
+            (_, KeyCode::Right) => {
+                app.input_cursor_right();
+                KeyAction::None
+            }
+            (_, KeyCode::Home) => {
+                app.input_cursor_home();
+                KeyAction::None
+            }
+            (_, KeyCode::End) => {
+                app.input_cursor_end();
+                KeyAction::None
+            }
             (_, KeyCode::Backspace) => {
-                app.input.pop();
+                app.input_backspace();
+                KeyAction::None
+            }
+            (_, KeyCode::Delete) => {
+                app.input_delete();
                 KeyAction::None
             }
             (_, KeyCode::Char(c)) => {
-                app.input.push(c);
+                app.input_insert(c);
                 KeyAction::None
             }
             _ => KeyAction::None,
@@ -3634,12 +3692,276 @@ mod tests {
             "prompt must enforce one-question-per-turn");
     }
 
+    // spec (goal-agents cache-stable ordering): the system prompt places the
+    // goal id LAST so the cacheable prefix (compact index, framework preamble,
+    // goal description, neighbors) is byte-identical between a permanent goal
+    // and its ephemeral sub-sessions. The test proves: (1) the session id
+    // appears in the lean init USER message, so the agent still knows its
+    // identity; (2) the dispatchers capture the caller's id at construction
+    // time via closure, not by reading the system prompt; (3) the system
+    // prompt's only use of the id is the trailing "Goal ID:" line — purely
+    // informational, never needed for routing.
+    #[test]
+    fn test_spec_ephemeral_id_redundantly_communicated_outside_system_prompt() {
+        let make_goal = |id: &str| goal::Goal {
+            id: id.into(),
+            summary: "dynamic analysis".into(),
+            description: "You are rummage.".into(),
+            parent_id: "".into(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        };
+        let compact_index = "[{\"id\":\"rummage\",\"summary\":\"dynamic analysis\"}]";
+
+        // The system prompt the sub-session actually gets (goal.id = ephemeral).
+        let child_sp = goal_session::session_init_message(
+            &make_goal("rummage~1"),
+            None,
+            compact_index,
+        );
+
+        // The lean init USER message — the first turn's content.
+        let lean_init = goal_session::fresh_subsession_lean_init_message(
+            &make_goal("rummage"),
+            "rummage",          // dispatcher_id
+            "rummage~1",        // session_id (ephemeral)
+            Some("probe-auth"), // label
+            "investigate the auth flow", // task
+            compact_index,
+        );
+
+        // 1. The lean init communicates the session id explicitly — the agent
+        //    learns its identity from the USER message regardless of the
+        //    system prompt.
+        assert!(
+            lean_init.contains("rummage~1"),
+            "the lean init (user message) must communicate the ephemeral session id"
+        );
+        assert!(
+            lean_init.contains("You are an ephemeral fresh sub-session"),
+            "the lean init must frame the session id as the agent's identity"
+        );
+
+        // 2. The lean init communicates the dispatcher id as the REPLY TARGET —
+        //    a session-specific instruction. The system prompt contains
+        //    `send_message(target="rummage"` only as a generic shared-agent
+        //    example in the framework preamble (the "three shared agents"
+        //    section), NOT as a dispatcher-specific reply routing instruction.
+        //    The dispatcher-specific reply instruction ("report back to your
+        //    dispatcher via send_message(target=\"rummage\"...)") is in the
+        //    lean init only.
+        assert!(
+            lean_init.contains("report back to your dispatcher via"),
+            "the lean init must carry the dispatcher-specific reply instruction"
+        );
+        assert!(
+            !child_sp.contains("report back to your dispatcher via"),
+            "the system prompt must NOT carry dispatcher-specific reply routing — that's in the lean init"
+        );
+
+        // 3. The system prompt's only reference to the ephemeral id is the
+        //    trailing "Goal ID:" line — placed last for prefix-cache
+        //    stability. Verify it is purely informational (identity context),
+        //    not a routing instruction the agent must follow.
+        let sp_lines_with_id: Vec<&str> = child_sp
+            .lines()
+            .filter(|l| l.contains("rummage~1"))
+            .collect();
+        assert!(
+            sp_lines_with_id.len() == 1,
+            "the system prompt must reference the ephemeral id in exactly 1 place (the trailing Goal ID line); found {}: {:?}",
+            sp_lines_with_id.len(),
+            sp_lines_with_id,
+        );
+        // The sole reference is the Goal ID: label, at the end of the prompt.
+        assert!(
+            sp_lines_with_id[0].contains("Goal ID:"),
+            "the sole system-prompt reference to the id must be the Goal ID label at the end, got: {:?}",
+            sp_lines_with_id[0],
+        );
+        // The Goal ID line must be the LAST non-empty line of the system prompt.
+        let last_meaningful_line = child_sp.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
+        assert_eq!(
+            last_meaningful_line, "Goal ID: rummage~1",
+            "the Goal ID line must be the last line of the system prompt for cache-stable ordering; got: {:?}",
+            last_meaningful_line,
+        );
+
+        // 4. PROVE routing doesn't depend on the system prompt: the send_message
+        //    dispatcher captures the caller's id at CONSTRUCTION time via the
+        //    closure's `sender` parameter. It never parses the system prompt.
+        //    We verify this structurally: build a dispatcher with "rummage~1"
+        //    as sender and confirm the self-send guard uses that value — not
+        //    anything from a prompt.
+        let (goal_spawn_tx, _rx) = mpsc::unbounded_channel::<SpawnGoalRequest>();
+        let app = Arc::new(Mutex::new(App::new()));
+        let session_senders: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let log = logger::noop_sender();
+        let dispatcher = build_send_message_dispatcher(
+            "rummage~1".to_string(),  // the ephemeral id — captured in closure
+            session_senders,
+            goal_spawn_tx,
+            app,
+            log,
+        );
+
+        // The self-send guard rejects "rummage~1" as a target — proving the
+        // dispatcher knows the caller is "rummage~1" from its closure, NOT
+        // from any prompt text.
+        let err = dispatcher("rummage~1", "test self-send").expect_err(
+            "self-send must be rejected — the dispatcher knows its own id from the closure"
+        );
+        assert!(
+            err.contains("rummage~1") && err.contains("yourself"),
+            "self-send rejection must name the captured caller id: {err}",
+        );
+
+        // A send to the permanent goal "rummage" is NOT a self-send — the
+        // dispatcher treats them as different agents. (In production this
+        // would route to the permanent rummage session if it exists.)
+        let _not_self = dispatcher("rummage", "message to parent").unwrap_or_else(|e| {
+            // It's fine if this errors (parent not in registry) — the point
+            // is it doesn't error with the SELF-SEND message.
+            assert!(
+                !e.contains("yourself"),
+                "send to 'rummage' must not be treated as self-send when caller is 'rummage~1': {e}"
+            );
+            "routed".to_string()
+        });
+
+        // 5. PROVE the framework preamble (shared by all sessions) never
+        //    references an EPHEMERAL session id — it uses generic placeholders
+        //    and permanent goal names (tend, rummage, jog) as named shared
+        //    agents. An ephemeral id like "rummage~1" must never appear.
+        let preamble = goal_session::MESSAGE_PASSING_AND_PROGRESS_SECTIONS;
+        assert!(
+            !preamble.contains("rummage~1"),
+            "the shared framework preamble must not reference any ephemeral session id — only permanent goal names and generic placeholders"
+        );
+        assert!(
+            preamble.contains("<goal-id>"),
+            "the shared preamble must use generic <goal-id> placeholders, not concrete ephemeral ids"
+        );
+    }
+
+    // spec (goal-agents cache-stable ordering): verifies that the system prompt
+    // places the goal id LAST so the cacheable prefix (everything before it) is
+    // byte-identical between a permanent goal and its ephemeral sub-sessions.
+    // Proves: (1) there is exactly ONE {GOAL_ID} site — the trailing "Goal ID:"
+    // line; (2) the cacheable prefix covers >99% of the prompt; (3) normalizing
+    // the ephemeral id back to the permanent id makes parent and child
+    // byte-identical, proving the {GOAL_ID} site is the SOLE divergence.
+    #[test]
+    fn test_spec_goal_id_cache_stable_ordering() {
+        let make_goal = |id: &str| goal::Goal {
+            id: id.into(),
+            summary: "dynamic analysis".into(),
+            description: "You are rummage. Do dynamic analysis.".into(),
+            parent_id: "".into(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        };
+        // Use a realistic compact index with multiple goals.
+        let compact_index = "[{\"id\":\"tend\",\"summary\":\"manage goals\"},{\"id\":\"rummage\",\"summary\":\"dynamic analysis\"}]";
+
+        let parent_sp = goal_session::session_init_message(
+            &make_goal("rummage"),
+            None,
+            compact_index,
+        );
+        let child_sp = goal_session::session_init_message(
+            &make_goal("rummage~1"),
+            None,
+            compact_index,
+        );
+
+        // 1. There must be exactly ONE {GOAL_ID} site in the child prompt.
+        let child_id_positions: Vec<usize> = child_sp
+            .match_indices("rummage~1")
+            .map(|(i, _)| i)
+            .collect();
+
+        assert_eq!(
+            child_id_positions.len(),
+            1,
+            "there must be exactly 1 {{GOAL_ID}} site (the trailing Goal ID line); found {}: {:?}",
+            child_id_positions.len(),
+            child_id_positions,
+        );
+
+        // 2. PROVE this is the ONLY difference: replace "rummage~1" with
+        //    "rummage" in the child, and the result must be byte-identical to
+        //    the parent. This proves no other section diverges.
+        let child_normalized = child_sp.replace("rummage~1", "rummage");
+        assert_eq!(
+            parent_sp, child_normalized,
+            "after normalizing the ephemeral id back to the permanent id, parent and child must be byte-identical — proves the {{GOAL_ID}} site is the SOLE divergence",
+        );
+
+        let divergence_byte = child_id_positions[0];
+
+        // 3. Verify the {GOAL_ID} site is the "Goal ID:" line, near the end.
+        let goal_id_line = "Goal ID: rummage";
+        let goal_id_line_pos = parent_sp.find(goal_id_line)
+            .expect("'Goal ID: rummage' must be present in parent prompt");
+        assert!(
+            divergence_byte >= goal_id_line_pos && divergence_byte <= goal_id_line_pos + goal_id_line.len(),
+            "{{GOAL_ID}} site (byte {divergence_byte}) must be within the trailing 'Goal ID:' line (at byte {goal_id_line_pos})",
+        );
+
+        // 4. The cacheable prefix (everything before the divergence) must cover
+        //    >99% of the prompt. This is the entire point of cache-stable
+        //    ordering: the byte-identical prefix that the API provider caches.
+        let total_prompt_len = parent_sp.len();
+        let cacheable_prefix_len = divergence_byte;
+        let coverage_pct = (cacheable_prefix_len as f64 / total_prompt_len as f64) * 100.0;
+
+        assert!(
+            coverage_pct > 99.0,
+            "cacheable prefix must cover >99% of the prompt for prefix-cache stability; got {coverage_pct:.1}% ({cacheable_prefix_len} / {total_prompt_len} bytes)",
+        );
+
+        // 5. The {GOAL_ID} line must be the last meaningful content of the
+        //    prompt — nothing follows it except optional whitespace.
+        let last_meaningful_line = parent_sp.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
+        assert_eq!(
+            last_meaningful_line, "Goal ID: rummage",
+            "the Goal ID line must be the last line of the system prompt; got: {:?}",
+            last_meaningful_line,
+        );
+
+        // 6. The cacheable prefix must start with the compact index, not an
+        //    identity line. The system prompt no longer has an opening
+        //    identity line — it starts with "## Goal index".
+        assert!(
+            parent_sp.starts_with("## Goal index"),
+            "system prompt must start with '## Goal index' (no opening identity line); got: {:?}",
+            &parent_sp[..parent_sp.len().min(30)],
+        );
+        assert!(
+            !parent_sp.contains("You are the agent for goal"),
+            "system prompt must NOT contain the old opening identity line",
+        );
+
+        eprintln!("=== CACHE-STABLE SYSTEM PROMPT ===");
+        eprintln!("Total prompt: {total_prompt_len} bytes");
+        eprintln!("Cacheable prefix: {cacheable_prefix_len} bytes ({coverage_pct:.1}%)");
+        eprintln!("Divergence at byte {divergence_byte} (Goal ID line)");
+    }
+
     #[test]
     fn test_spec_tinker_encodes_dual_duty_no_fabrication_at_inflection_points() {
         let content = test_tend_description();
         assert!(content.contains("Phase 1") || content.contains("Phase 2") || content.contains("Phase 3"),
             "prompt must describe interview phases");
-        assert!(content.contains("genuinely doesn't know") || content.contains("user names it") || content.contains("investigative, not leading"),
+        assert!(content.contains("you're the interviewer not the designer") || content.contains("fooling the user into believing otherwise would be damaging the final outcome") || content.contains("Always present choices under an open world assumption"),
             "prompt must require WHY-directed investigation — tend does not name Y, the user does");
     }
 
@@ -4743,5 +5065,211 @@ mod tests {
             err.contains("delivery lost") || err.contains("send_message"),
             "error must carry a delivery-lost indicator: {err}"
         );
+    }
+
+    // ==================================================================
+    // REPL input cursor editing (key-handler integration)
+    // ==================================================================
+
+    /// Spec (tui — input cursor): Left arrow moves the cursor left in the
+    /// REPL input.
+    #[test]
+    fn test_spec_repl_left_arrow_moves_cursor() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "abc".into();
+        app.input_cursor = 3;
+        handle_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.input_cursor, 2);
+    }
+
+    /// Spec (tui — input cursor): Right arrow moves the cursor right.
+    #[test]
+    fn test_spec_repl_right_arrow_moves_cursor() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "abc".into();
+        app.input_cursor = 0;
+        handle_key(&mut app, KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.input_cursor, 1);
+    }
+
+    /// Spec (tui — input cursor): Ctrl-A moves the cursor to the beginning.
+    #[test]
+    fn test_spec_repl_ctrl_a_moves_cursor_to_start() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "abc".into();
+        app.input_cursor = 2;
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.input_cursor, 0);
+    }
+
+    /// Spec (tui — input cursor): Ctrl-E moves the cursor to the end.
+    #[test]
+    fn test_spec_repl_ctrl_e_moves_cursor_to_end() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "abc".into();
+        app.input_cursor = 0;
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.input_cursor, 3);
+    }
+
+    /// Spec (tui — input cursor): Ctrl-Left jumps back one word.
+    #[test]
+    fn test_spec_repl_ctrl_left_jumps_word() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "hello world".into();
+        app.input_cursor = 11;
+        handle_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.input_cursor, 6);
+    }
+
+    /// Spec (tui — input cursor): Alt-Left jumps back one word (macOS Opt).
+    #[test]
+    fn test_spec_repl_alt_left_jumps_word() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "hello world".into();
+        app.input_cursor = 11;
+        handle_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::ALT), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.input_cursor, 6);
+    }
+
+    /// Spec (tui — input cursor): Ctrl-Right jumps forward one word.
+    #[test]
+    fn test_spec_repl_ctrl_right_jumps_word() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "hello world".into();
+        app.input_cursor = 0;
+        handle_key(&mut app, KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.input_cursor, 6);
+    }
+
+    /// Spec (tui — input cursor): Home key moves cursor to start.
+    #[test]
+    fn test_spec_repl_home_moves_cursor_to_start() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "abc".into();
+        app.input_cursor = 2;
+        handle_key(&mut app, KeyEvent::new(KeyCode::Home, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.input_cursor, 0);
+    }
+
+    /// Spec (tui — input cursor): End key moves cursor to end.
+    #[test]
+    fn test_spec_repl_end_moves_cursor_to_end() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "abc".into();
+        app.input_cursor = 0;
+        handle_key(&mut app, KeyEvent::new(KeyCode::End, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.input_cursor, 3);
+    }
+
+    /// Spec (tui — input cursor): Delete key forward-deletes the char after
+    /// the cursor.
+    #[test]
+    fn test_spec_repl_delete_key_forward_deletes() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "abc".into();
+        app.input_cursor = 1;
+        handle_key(&mut app, KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.input, "ac");
+        assert_eq!(app.input_cursor, 1);
+    }
+
+    /// Spec (tui — input cursor): typing a character inserts at the cursor,
+    /// not just at the end. Tests the full round-trip: move cursor to mid,
+    /// type, verify insertion at cursor.
+    #[test]
+    fn test_spec_repl_type_inserts_at_cursor_not_end() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        // Type "helo"
+        for c in "helo".chars() {
+            handle_key(&mut app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        }
+        assert_eq!(app.input, "helo");
+        // Move cursor left twice → after "he"
+        handle_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        handle_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        // Type 'l'
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.input, "hello");
+    }
+
+    /// Spec (tui — input cursor): Backspace at a mid-string cursor deletes the
+    /// char before the cursor, not the last char.
+    #[test]
+    fn test_spec_repl_backspace_deletes_before_cursor() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "hello".into();
+        app.input_cursor = 3; // after "hel"
+        handle_key(&mut app, KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.input, "helo");
+        assert_eq!(app.input_cursor, 2);
+    }
+
+    /// Spec (tui — input cursor): Ctrl-C still quits even with the new
+    /// cursor key handlers in place (regression guard).
+    #[test]
+    fn test_spec_repl_ctrl_c_still_quits() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "abc".into();
+        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert!(matches!(action, KeyAction::Quit));
+        assert!(app.should_quit);
+    }
+
+    /// Spec (tui — input cursor): Enter still submits the full input text
+    /// regardless of cursor position, and resets the cursor to 0 on clear.
+    #[test]
+    fn test_spec_repl_enter_submits_full_text_with_mid_cursor() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "hello".into();
+        app.input_cursor = 2; // cursor is mid-string
+        let action = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        match action {
+            KeyAction::SendToSession(_, msg) => assert_eq!(msg, "hello"),
+            other => panic!("expected SendToSession, got {:?}", other),
+        }
+        assert!(app.input.is_empty());
+        assert_eq!(app.input_cursor, 0);
+    }
+
+    /// Spec (tui — input cursor): Ctrl-W deletes the word before the cursor
+    /// via the key handler.
+    #[test]
+    fn test_spec_repl_ctrl_w_deletes_word() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "hello world".into();
+        app.input_cursor = 11;
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.input, "hello ");
     }
 }

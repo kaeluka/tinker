@@ -129,18 +129,15 @@ fn draw_modal(frame: &mut Frame, app: &App) {
     let label_dim    = Style::default().fg(Color::DarkGray);
     let tier_value_style = Style::default().fg(Color::White);
 
-    // Field 1: trigger reason.
+    // Field 1: trigger reason. No fake block cursor — the terminal's real
+    // cursor is placed via set_cursor_position below when this field is focused.
+    const REASON_LABEL: &str = "  Reason: ";
     let reason_line = Line::from(vec![
         Span::styled(
-            "  Reason: ",
+            REASON_LABEL,
             if reason_focused { label_active } else { label_dim },
         ),
         Span::raw(modal.input.clone()),
-        if reason_focused {
-            Span::styled("█", cursor_style)
-        } else {
-            Span::raw("")
-        },
     ]);
 
     // Field 2: tier selector — Left/Right to cycle when focused.
@@ -180,6 +177,16 @@ fn draw_modal(frame: &mut Frame, app: &App) {
         Paragraph::new(lines).wrap(Wrap { trim: false }),
         inner,
     );
+
+    // Place the terminal cursor on the focused field. The Reason field is
+    // line 0 of the modal's inner area; the cursor sits after the label +
+    // input text. The Tier field is a selector (no text cursor) — we place
+    // the cursor on the tier value to indicate focus.
+    if reason_focused {
+        let cursor_x = inner.x + REASON_LABEL.chars().count() as u16 + modal.input.chars().count() as u16;
+        let cursor_y = inner.y;
+        frame.set_cursor_position((cursor_x, cursor_y));
+    }
 }
 
 fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -207,11 +214,10 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     let input_locked = app.phase == Phase::Initializing;
     let input_text_style = if input_locked { Style::default().fg(Color::DarkGray) } else { Style::default() };
-    let cursor = if !input_locked { "█" } else { "" };
 
     let max_input = (inner.height / 2).max(1);
     let (input_height, input_scroll) =
-        input_pane_layout(&prompt, &app.input, cursor, inner.width, max_input);
+        input_pane_layout(&prompt, &app.input, inner.width, max_input);
 
     let msg_area = Rect {
         height: inner.height.saturating_sub(input_height),
@@ -235,10 +241,14 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
     let paragraph = Paragraph::new(viewport).wrap(Wrap { trim: false });
     frame.render_widget(paragraph.scroll((scroll_offset, 0)), msg_area);
 
+    // Input line: prompt + input text. The cursor is placed via
+    // `frame.set_cursor_position()` below (the terminal's real hardware
+    // cursor), not via a fake block character — that was invisible on some
+    // terminals because ratatui hides the cursor every frame unless
+    // `set_cursor_position` is called.
     let input_line = Line::from(vec![
-        Span::styled(prompt, prompt_style),
+        Span::styled(prompt.clone(), prompt_style),
         Span::styled(app.input.clone(), input_text_style),
-        Span::styled(cursor, Style::default().fg(Color::Cyan)),
     ]);
     frame.render_widget(
         Paragraph::new(input_line)
@@ -246,17 +256,37 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
             .scroll((input_scroll, 0)),
         input_area,
     );
+
+    // Place the terminal cursor at the correct (x, y) within the input pane.
+    // Only when the REPL is focused and input is not locked (Initializing).
+    if focused && !input_locked {
+        let prompt_width = prompt.chars().count() as u16;
+        let cursor_col = prompt_width + app.input_cursor as u16;
+        let pane_width = input_area.width.max(1);
+        // Account for wrapping: the cursor's position within the wrapped text
+        // determines which row and column it lands on.
+        let wrapped_row = cursor_col / pane_width;
+        let col_in_row = cursor_col % pane_width;
+        let cursor_y = input_area.y + wrapped_row.saturating_sub(input_scroll);
+        let cursor_x = input_area.x + col_in_row;
+        frame.set_cursor_position((cursor_x, cursor_y));
+    }
 }
 
 /// Chat input pane layout: returns `(height, scroll)` for the input pane.
 /// Height matches the wrapped Paragraph's actual row count, capped by `max`
 /// and floored at 1. When the unclamped row count exceeds `max`, `scroll` is
-/// set so the bottom wrapped row (where the cursor sits) stays visible.
-fn input_pane_layout(prompt: &str, input: &str, cursor: &str, width: u16, max: u16) -> (u16, u16) {
+/// set so the bottom wrapped row stays visible.
+///
+/// A phantom space is appended to account for the cursor position when the
+/// cursor is at the end of the input — without it, an input that exactly fills
+/// the pane width would compute one fewer row than needed, hiding the cursor
+/// on the wrapped line below.
+fn input_pane_layout(prompt: &str, input: &str, width: u16, max: u16) -> (u16, u16) {
     let line = Line::from(vec![
         Span::raw(prompt.to_string()),
         Span::raw(input.to_string()),
-        Span::raw(cursor.to_string()),
+        Span::raw(" "), // phantom cursor width
     ]);
     let needed = (Paragraph::new(line)
         .wrap(Wrap { trim: false })
@@ -942,7 +972,6 @@ mod tests {
     #[test]
     fn test_spec_input_pane_height_matches_paragraph_line_count() {
         let prompt = "tend> ";
-        let cursor = "█";
         let inputs = [
             "",
             "hello",
@@ -952,17 +981,18 @@ mod tests {
         ];
         for &width in &[20u16, 40, 60, 80, 100] {
             for input in &inputs {
+                // Phantom cursor space accounts for cursor at end of input.
                 let line = Line::from(vec![
                     Span::raw(prompt.to_string()),
                     Span::raw(input.to_string()),
-                    Span::raw(cursor.to_string()),
+                    Span::raw(" "),
                 ]);
                 let expected = (Paragraph::new(line)
                     .wrap(Wrap { trim: false })
                     .line_count(width) as u16)
                     .max(1);
                 let big_cap = 1000u16;
-                let (height, scroll) = input_pane_layout(prompt, input, cursor, width, big_cap);
+                let (height, scroll) = input_pane_layout(prompt, input, width, big_cap);
                 assert_eq!(
                     height, expected,
                     "input_pane_layout height drifted from Paragraph::line_count: width={} input={:?}",
@@ -984,7 +1014,6 @@ mod tests {
     #[test]
     fn test_spec_input_pane_scrolls_to_keep_cursor_row_visible() {
         let prompt = "tend> ";
-        let cursor = "█";
         // Long input that wraps to many rows at a narrow width.
         let mut input = String::new();
         for _ in 0..30 {
@@ -992,11 +1021,11 @@ mod tests {
         }
         let width = 40u16;
         let cap = 4u16;
-        let (height, scroll) = input_pane_layout(prompt, &input, cursor, width, cap);
+        let (height, scroll) = input_pane_layout(prompt, &input, width, cap);
         let line = Line::from(vec![
             Span::raw(prompt.to_string()),
             Span::raw(input.clone()),
-            Span::raw(cursor.to_string()),
+            Span::raw(" "), // phantom cursor space
         ]);
         let needed = Paragraph::new(line)
             .wrap(Wrap { trim: false })

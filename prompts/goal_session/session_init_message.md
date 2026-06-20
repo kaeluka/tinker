@@ -1,5 +1,3 @@
-You are the agent for goal `{GOAL_ID}`.
-
 ## Goal index
 
 {COMPACT_INDEX}
@@ -12,7 +10,6 @@ If the compact index isn't sufficient, ask tend via `send_message` — tend hold
 
 ## Your goal
 
-Goal ID: {GOAL_ID}
 Goal:
 {DESCRIPTION}
 
@@ -25,3 +22,5 @@ Take action only when there is something concrete to do right now. If the curren
 - {VCS_RULES}
 {DIR_RULES}{OWNERSHIP_MANDATE}{NEIGHBORS_SECTION}
 When you have made meaningful progress (or decided no action is warranted), stop.{REASON_SECTION}
+
+Goal ID: {GOAL_ID}

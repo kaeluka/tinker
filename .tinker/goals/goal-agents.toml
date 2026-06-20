@@ -1,6 +1,6 @@
 id = "goal-agents"
 kind = "feature"
-summary = "This goal owns the agent-architecture runtime: the uniform per-goal session registry, universal dispatch routing, the runtime-injected framework preamble and dispatcher-provided spec-diff init section, the tier field and its kind-aware session-start resolution (behavior goals default to high, feature goals to mid), the unified event stream, the .tinker/ access prohibition, tend's two structural exceptions (eager start with TUI-suppressed startup output and the goal-file parse-correction loop), and the startup diagnostic that emits cross-tier goal collision warnings."
+summary = "This goal owns the agent-architecture runtime: the uniform per-goal session registry, universal dispatch routing, the runtime-injected framework preamble and dispatcher-provided spec-diff init section, the cache-stable system-prompt ordering that places session identity last for prefix-cache stability, the tier field and its kind-aware session-start resolution (behavior goals default to high, feature goals to mid), the unified event stream, the .tinker/ access prohibition, tend's two structural exceptions (eager start with TUI-suppressed startup output and the goal-file parse-correction loop), and the startup diagnostic that emits cross-tier goal collision warnings."
 description = """
 ## WHAT
 Tinker's agent architecture follows one rule: **every goal is a
@@ -38,6 +38,17 @@ tend/rummage split along intent/*should* vs code/*is*
 completing significant work an agent reports to its dispatcher — what
 it did, decisions beyond the goal, how to try the result, and every
 `test_spec_` function it touched.
+
+**Cache-stable prompt ordering.** The system prompt is ordered for
+prefix-cache stability: content that is identical between a permanent
+goal and its ephemeral sub-sessions — the compact index, framework
+preamble, goal description, and neighbors section — comes first;
+session-identifying information (the goal id) comes last. This
+maximizes the byte-identical prefix that the API provider caches, so
+a fresh sub-session reuses its parent's cached prefix. Task-specific
+content (the spec diff, the subgoal) arrives in the first user
+message, not the system prompt, so it does not affect the cacheable
+prefix.
 
 **Dispatcher-provided init section.** When tend dispatches a goal
 agent after a goal write, it augments the init message with one
@@ -99,6 +110,14 @@ rare but invisible: a user installing a global packaged goal that
 accidentally shadows a project-local goal would see no warning
 without it. Listing the contributing tiers and paths makes the
 collision legible and actionable.
+
+The cache-stable ordering exists because each sub-session sends a
+fresh system prompt on its first API call. When the system prompt
+shares a prefix with its parent's, the API provider caches that
+prefix — so the cost of re-sending it shrinks toward zero as the
+prefix grows. Placing the goal id — the sole element that differs in
+the system prompt between a permanent session and its ephemeral
+children — last maximizes that prefix.
 
 """
 parent_id = "the-cycles"

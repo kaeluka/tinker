@@ -212,6 +212,11 @@ pub enum Phase {
 pub struct App {
     pub messages: Vec<Message>,
     pub input: String,
+    /// Character-index cursor position within `input` (0 = before first char,
+    /// `input.chars().count()` = after last char). Characters are inserted at
+    /// this position; backspace deletes the char before it. Maintained by the
+    /// `input_*` helper methods to stay in sync with `input`.
+    pub input_cursor: usize,
     pub goals: Vec<Goal>,
     pub tinker_dirs: Vec<PathBuf>,
     pub parse_errors: Vec<(PathBuf, String)>,
@@ -270,6 +275,7 @@ impl App {
         Self {
             messages: vec![],
             input: String::new(),
+            input_cursor: 0,
             goals: vec![],
             tinker_dirs: vec![],
             parse_errors: vec![],
@@ -312,6 +318,164 @@ impl App {
 
     pub fn push_system_message(&mut self, text: &str) {
         self.messages.push(Message { role: Role::System, text: text.to_string() });
+    }
+
+    // ------------------------------------------------------------------
+    // REPL input cursor editing
+    // ------------------------------------------------------------------
+    //
+    // The REPL input is a single-line buffer with a movable cursor. All
+    // mutations go through these methods so `input_cursor` stays a valid
+    // char index into `input` (0..=chars().count()). The cursor is
+    // char-based (not byte-based) so multi-byte characters work correctly.
+
+    /// Clamps `input_cursor` into the valid range. Called at the start of
+    /// every editing operation so direct field writes (e.g. in tests) don't
+    /// produce an out-of-bounds index.
+    fn clamp_cursor(&mut self) {
+        let max = self.input.chars().count();
+        if self.input_cursor > max {
+            self.input_cursor = max;
+        }
+    }
+
+    /// Insert a character at the cursor and advance the cursor past it.
+    pub fn input_insert(&mut self, c: char) {
+        self.clamp_cursor();
+        let pos = self.input_cursor;
+        let mut new_input = String::with_capacity(self.input.len() + c.len_utf8());
+        new_input.extend(self.input.chars().take(pos));
+        new_input.push(c);
+        new_input.extend(self.input.chars().skip(pos));
+        self.input = new_input;
+        self.input_cursor = pos + 1;
+    }
+
+    /// Delete the character before the cursor (Backspace). Does nothing when
+    /// the cursor is at position 0.
+    pub fn input_backspace(&mut self) {
+        self.clamp_cursor();
+        if self.input_cursor == 0 {
+            return;
+        }
+        let pos = self.input_cursor;
+        let mut new_input = String::with_capacity(self.input.len());
+        new_input.extend(self.input.chars().take(pos - 1));
+        new_input.extend(self.input.chars().skip(pos));
+        self.input = new_input;
+        self.input_cursor = pos - 1;
+    }
+
+    /// Delete the character after the cursor (forward Delete). Does nothing
+    /// when the cursor is at the end.
+    pub fn input_delete(&mut self) {
+        self.clamp_cursor();
+        let pos = self.input_cursor;
+        let mut new_input = String::with_capacity(self.input.len());
+        new_input.extend(self.input.chars().take(pos));
+        new_input.extend(self.input.chars().skip(pos + 1));
+        self.input = new_input;
+        // cursor position unchanged
+    }
+
+    /// Move the cursor one character to the left. Clamped at 0.
+    pub fn input_cursor_left(&mut self) {
+        self.clamp_cursor();
+        self.input_cursor = self.input_cursor.saturating_sub(1);
+    }
+
+    /// Move the cursor one character to the right. Clamped at end.
+    pub fn input_cursor_right(&mut self) {
+        self.clamp_cursor();
+        let max = self.input.chars().count();
+        if self.input_cursor < max {
+            self.input_cursor += 1;
+        }
+    }
+
+    /// Move the cursor to the beginning of the input.
+    pub fn input_cursor_home(&mut self) {
+        self.input_cursor = 0;
+    }
+
+    /// Move the cursor to the end of the input.
+    pub fn input_cursor_end(&mut self) {
+        self.input_cursor = self.input.chars().count();
+    }
+
+    /// Move the cursor backward by one word. A word boundary is the
+    /// transition from whitespace to non-whitespace; trailing whitespace is
+    /// skipped first, then the contiguous run of non-whitespace characters.
+    pub fn input_cursor_word_left(&mut self) {
+        self.clamp_cursor();
+        let chars: Vec<char> = self.input.chars().collect();
+        let mut pos = self.input_cursor.min(chars.len());
+        while pos > 0 && chars[pos - 1].is_whitespace() {
+            pos -= 1;
+        }
+        while pos > 0 && !chars[pos - 1].is_whitespace() {
+            pos -= 1;
+        }
+        self.input_cursor = pos;
+    }
+
+    /// Move the cursor forward by one word. Skips the current run of
+    /// non-whitespace, then the following whitespace.
+    pub fn input_cursor_word_right(&mut self) {
+        self.clamp_cursor();
+        let chars: Vec<char> = self.input.chars().collect();
+        let mut pos = self.input_cursor.min(chars.len());
+        while pos < chars.len() && !chars[pos].is_whitespace() {
+            pos += 1;
+        }
+        while pos < chars.len() && chars[pos].is_whitespace() {
+            pos += 1;
+        }
+        self.input_cursor = pos;
+    }
+
+    /// Delete from the cursor to the beginning of the line (Ctrl-U).
+    pub fn input_kill_to_start(&mut self) {
+        self.clamp_cursor();
+        let pos = self.input_cursor;
+        let rest: String = self.input.chars().skip(pos).collect();
+        self.input = rest;
+        self.input_cursor = 0;
+    }
+
+    /// Delete from the cursor to the end of the line (Ctrl-K).
+    pub fn input_kill_to_end(&mut self) {
+        self.clamp_cursor();
+        let pos = self.input_cursor;
+        let kept: String = self.input.chars().take(pos).collect();
+        self.input = kept;
+        // cursor stays (now at end)
+    }
+
+    /// Delete the word before the cursor (Ctrl-W). Skips trailing whitespace,
+    /// then deletes the contiguous run of non-whitespace.
+    pub fn input_delete_word(&mut self) {
+        self.clamp_cursor();
+        let chars: Vec<char> = self.input.chars().collect();
+        let old_pos = self.input_cursor.min(chars.len());
+        let mut new_pos = old_pos;
+        while new_pos > 0 && chars[new_pos - 1].is_whitespace() {
+            new_pos -= 1;
+        }
+        while new_pos > 0 && !chars[new_pos - 1].is_whitespace() {
+            new_pos -= 1;
+        }
+        let mut new_input = String::with_capacity(self.input.len());
+        new_input.extend(chars[..new_pos].iter());
+        new_input.extend(chars[old_pos..].iter());
+        self.input = new_input;
+        self.input_cursor = new_pos;
+    }
+
+    /// Clear the input and reset the cursor to 0.
+    pub fn clear_input(&mut self) {
+        self.input.clear();
+        self.input_cursor = 0;
     }
 
     /// Diffs `new` against the current parse_errors. Emits a system message
@@ -1166,5 +1330,285 @@ mod tests {
         let agg = app.aggregated_token_stats("nobody");
         assert!(!agg.has_data());
         assert_eq!(agg.session_count, 0);
+    }
+
+    // ==================================================================
+    // REPL input cursor editing
+    // ==================================================================
+
+    // --- input_insert ---
+
+    /// Spec (tui — input cursor): inserting characters at the cursor builds
+    /// the expected string when typing left-to-right (cursor at end).
+    #[test]
+    fn test_spec_input_insert_appends_at_end_when_cursor_at_end() {
+        let mut app = App::new();
+        app.input_insert('h');
+        app.input_insert('i');
+        assert_eq!(app.input, "hi");
+        assert_eq!(app.input_cursor, 2);
+    }
+
+    /// Spec (tui — input cursor): inserting a character in the middle of the
+    /// text places it at the cursor position and advances the cursor.
+    #[test]
+    fn test_spec_input_insert_mid_string() {
+        let mut app = App::new();
+        app.input = "helo".into();
+        app.input_cursor = 3; // after "hel"
+        app.input_insert('l');
+        assert_eq!(app.input, "hello");
+        assert_eq!(app.input_cursor, 4);
+    }
+
+    // --- input_backspace ---
+
+    /// Spec (tui — input cursor): backspace at the end removes the last char.
+    #[test]
+    fn test_spec_input_backspace_at_end() {
+        let mut app = App::new();
+        app.input = "hello".into();
+        app.input_cursor = 5;
+        app.input_backspace();
+        assert_eq!(app.input, "hell");
+        assert_eq!(app.input_cursor, 4);
+    }
+
+    /// Spec (tui — input cursor): backspace in the middle removes the char
+    /// before the cursor and decrements the cursor.
+    #[test]
+    fn test_spec_input_backspace_mid_string() {
+        let mut app = App::new();
+        app.input = "hello".into();
+        app.input_cursor = 3; // after "hel"
+        app.input_backspace();
+        assert_eq!(app.input, "helo");
+        assert_eq!(app.input_cursor, 2);
+    }
+
+    /// Spec (tui — input cursor): backspace at position 0 is a no-op.
+    #[test]
+    fn test_spec_input_backspace_at_start_is_noop() {
+        let mut app = App::new();
+        app.input = "hello".into();
+        app.input_cursor = 0;
+        app.input_backspace();
+        assert_eq!(app.input, "hello");
+        assert_eq!(app.input_cursor, 0);
+    }
+
+    // --- input_delete (forward delete) ---
+
+    /// Spec (tui — input cursor): forward delete removes the char after the
+    /// cursor without moving the cursor.
+    #[test]
+    fn test_spec_input_delete_mid_string() {
+        let mut app = App::new();
+        app.input = "hello".into();
+        app.input_cursor = 1; // after "h"
+        app.input_delete();
+        assert_eq!(app.input, "hllo");
+        assert_eq!(app.input_cursor, 1);
+    }
+
+    /// Spec (tui — input cursor): forward delete at end is a no-op.
+    #[test]
+    fn test_spec_input_delete_at_end_is_noop() {
+        let mut app = App::new();
+        app.input = "hello".into();
+        app.input_cursor = 5;
+        app.input_delete();
+        assert_eq!(app.input, "hello");
+        assert_eq!(app.input_cursor, 5);
+    }
+
+    // --- cursor movement ---
+
+    /// Spec (tui — input cursor): left arrow decrements the cursor, clamped at 0.
+    #[test]
+    fn test_spec_input_cursor_left() {
+        let mut app = App::new();
+        app.input = "abc".into();
+        app.input_cursor = 3;
+        app.input_cursor_left();
+        assert_eq!(app.input_cursor, 2);
+        app.input_cursor_left();
+        assert_eq!(app.input_cursor, 1);
+        app.input_cursor_left();
+        assert_eq!(app.input_cursor, 0);
+        app.input_cursor_left(); // clamp
+        assert_eq!(app.input_cursor, 0);
+    }
+
+    /// Spec (tui — input cursor): right arrow increments the cursor, clamped
+    /// at the string length.
+    #[test]
+    fn test_spec_input_cursor_right() {
+        let mut app = App::new();
+        app.input = "abc".into();
+        app.input_cursor = 0;
+        app.input_cursor_right();
+        assert_eq!(app.input_cursor, 1);
+        app.input_cursor_right();
+        assert_eq!(app.input_cursor, 2);
+        app.input_cursor_right();
+        assert_eq!(app.input_cursor, 3);
+        app.input_cursor_right(); // clamp
+        assert_eq!(app.input_cursor, 3);
+    }
+
+    /// Spec (tui — input cursor): Home moves cursor to 0.
+    #[test]
+    fn test_spec_input_cursor_home() {
+        let mut app = App::new();
+        app.input = "abc".into();
+        app.input_cursor = 2;
+        app.input_cursor_home();
+        assert_eq!(app.input_cursor, 0);
+    }
+
+    /// Spec (tui — input cursor): End moves cursor to string length.
+    #[test]
+    fn test_spec_input_cursor_end() {
+        let mut app = App::new();
+        app.input = "abc".into();
+        app.input_cursor = 0;
+        app.input_cursor_end();
+        assert_eq!(app.input_cursor, 3);
+    }
+
+    // --- word navigation ---
+
+    /// Spec (tui — input cursor): word-left skips trailing whitespace then
+    /// the contiguous word characters.
+    #[test]
+    fn test_spec_input_cursor_word_left_skips_whitespace_then_word() {
+        let mut app = App::new();
+        app.input = "hello world".into();
+        app.input_cursor = 11; // end
+        app.input_cursor_word_left();
+        assert_eq!(app.input_cursor, 6, "should land at start of 'world'");
+    }
+
+    /// Spec (tui — input cursor): word-left from mid-word lands at the start
+    /// of the current word.
+    #[test]
+    fn test_spec_input_cursor_word_left_mid_word() {
+        let mut app = App::new();
+        app.input = "hello world".into();
+        app.input_cursor = 8; // inside "world"
+        app.input_cursor_word_left();
+        assert_eq!(app.input_cursor, 6, "should land at start of 'world'");
+    }
+
+    /// Spec (tui — input cursor): word-right skips the current word then the
+    /// following whitespace.
+    #[test]
+    fn test_spec_input_cursor_word_right() {
+        let mut app = App::new();
+        app.input = "hello world".into();
+        app.input_cursor = 0;
+        app.input_cursor_word_right();
+        assert_eq!(app.input_cursor, 6, "should land at start of 'world'");
+    }
+
+    /// Spec (tui — input cursor): word-right from inside a word lands at the
+    /// start of the next word.
+    #[test]
+    fn test_spec_input_cursor_word_right_mid_word() {
+        let mut app = App::new();
+        app.input = "hello world".into();
+        app.input_cursor = 2; // inside "hello"
+        app.input_cursor_word_right();
+        assert_eq!(app.input_cursor, 6);
+    }
+
+    // --- kill operations ---
+
+    /// Spec (tui — input cursor): Ctrl-U (kill to start) deletes from cursor
+    /// to beginning and resets cursor to 0.
+    #[test]
+    fn test_spec_input_kill_to_start() {
+        let mut app = App::new();
+        app.input = "hello world".into();
+        app.input_cursor = 5;
+        app.input_kill_to_start();
+        assert_eq!(app.input, " world");
+        assert_eq!(app.input_cursor, 0);
+    }
+
+    /// Spec (tui — input cursor): Ctrl-K (kill to end) deletes from cursor
+    /// to end; cursor stays at new end.
+    #[test]
+    fn test_spec_input_kill_to_end() {
+        let mut app = App::new();
+        app.input = "hello world".into();
+        app.input_cursor = 5;
+        app.input_kill_to_end();
+        assert_eq!(app.input, "hello");
+        assert_eq!(app.input_cursor, 5);
+    }
+
+    // --- delete word (Ctrl-W) ---
+
+    /// Spec (tui — input cursor): Ctrl-W deletes the word before the cursor.
+    #[test]
+    fn test_spec_input_delete_word() {
+        let mut app = App::new();
+        app.input = "hello world".into();
+        app.input_cursor = 11; // end
+        app.input_delete_word();
+        assert_eq!(app.input, "hello ");
+        assert_eq!(app.input_cursor, 6);
+    }
+
+    /// Spec (tui — input cursor): Ctrl-W skips trailing whitespace before
+    /// deleting the word.
+    #[test]
+    fn test_spec_input_delete_word_skips_trailing_whitespace() {
+        let mut app = App::new();
+        app.input = "hello   ".into();
+        app.input_cursor = 8;
+        app.input_delete_word();
+        assert_eq!(app.input, "");
+        assert_eq!(app.input_cursor, 0);
+    }
+
+    // --- clear_input ---
+
+    /// Spec (tui — input cursor): clear_input resets both the text and cursor.
+    #[test]
+    fn test_spec_clear_input_resets_cursor() {
+        let mut app = App::new();
+        app.input = "hello".into();
+        app.input_cursor = 3;
+        app.clear_input();
+        assert!(app.input.is_empty());
+        assert_eq!(app.input_cursor, 0);
+    }
+
+    // --- multi-byte safety ---
+
+    /// Spec (tui — input cursor): multi-byte characters (emoji) must be
+    /// inserted, navigated, and deleted correctly by char index. Marked
+    /// spec (not security): char-based indexing correctness is a TUI
+    /// correctness property, not a threat in security.md (whose threats
+    /// T1–T5 cover TOML isolation, session leaks, ancestor merge, tool
+    /// boundaries, and terminal corruption).
+    #[test]
+    fn test_spec_input_cursor_multibyte_insert_and_navigate() {
+        let mut app = App::new();
+        app.input_insert('a');
+        app.input_insert('😀');
+        app.input_insert('b');
+        // input = "a😀b", cursor = 3
+        assert_eq!(app.input, "a😀b");
+        assert_eq!(app.input_cursor, 3);
+        app.input_cursor_left(); // 2
+        app.input_cursor_left(); // 1
+        assert_eq!(app.input_cursor, 1); // before 😀
+        app.input_backspace(); // delete 'a'
+        assert_eq!(app.input, "😀b");
+        assert_eq!(app.input_cursor, 0);
     }
 }

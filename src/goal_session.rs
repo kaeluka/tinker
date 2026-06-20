@@ -101,14 +101,21 @@ pub fn build_neighborhood_table(goal: &Goal) -> String {
 /// construction path for all sessions (goal agents, tend, rummage, jog —
 /// once their descriptions migrate to TOML).
 ///
+/// The message is ordered for prefix-cache stability: content that is
+/// byte-identical between a permanent goal and its ephemeral sub-sessions
+/// (compact index, framework preamble, goal description, neighbors) comes
+/// first; the sole diverging element — the goal id — comes last. This
+/// maximizes the cacheable prefix so a fresh sub-session benefits from its
+/// parent's cached prefix.
+///
 /// The message includes:
-/// 1. Identity — "You are the agent for goal `<id>`."
-/// 2. Navigation — compact goal index and on-demand pull path.
-/// 3. Message-passing semantics — how send_message routing works.
-/// 4. The goal's own description (WHAT/WHY).
-/// 5. Rules (VCS, directory writes, ownership mandate).
-/// 6. Neighbor goals — mandatory consultation table (agent-collaboration).
-/// 7. Trigger reason (if present).
+/// 1. Navigation — compact goal index and on-demand pull path.
+/// 2. Message-passing semantics — how send_message routing works.
+/// 3. The goal's own description (WHAT/WHY).
+/// 4. Rules (VCS, directory writes, ownership mandate).
+/// 5. Neighbor goals — mandatory consultation table (agent-collaboration).
+/// 6. Trigger reason (if present).
+/// 7. Goal id — the sole session-identifying element, placed last.
 pub fn session_init_message(goal: &Goal, reason: Option<&str>, compact_index: &str) -> String {
     let table = build_neighborhood_table(goal);
     let neighbors_section = if table.is_empty() {
