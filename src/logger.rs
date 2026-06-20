@@ -40,7 +40,10 @@ pub struct StateSnapshot {
     pub scroll_offsets: ScrollOffsets,
     pub queue: Vec<QueueEntry>,
     /// Per-goal token-usage metrics derived from logged per-call data.
-    /// Keyed by goal id. Each entry tracks session count and average
+    /// Keyed by permanent goal id — ephemeral sub-sessions' costs are
+    /// rolled up into their parent permanent goal so a goal that
+    /// delegates all work to sub-sessions still shows the full cost of
+    /// that delegation. Each entry tracks session count and average
     /// input/output tokens per session, isolating three cost drivers:
     /// triggering frequency (session_count), prompt size (avg_input),
     /// and verbosity (avg_output). Reset on tinker restart — the state
@@ -363,6 +366,10 @@ pub struct HistoricTokenStats {
 /// - `api_token_usage` → accumulate prompt/completion/cached tokens
 /// - `goal_session_finished` → increment session_count
 ///
+/// Ephemeral sub-session ids (e.g. `"rummage~1"`) are rolled up to their
+/// permanent root (`"rummage"`) so a parent goal's metrics include all
+/// delegated sub-session costs.
+///
 /// Malformed lines and unknown event kinds are silently skipped — the log
 /// is append-only and may contain lines from older schema versions.
 ///
@@ -402,7 +409,11 @@ pub fn load_historic_token_metrics(log_path: &std::path::Path) -> std::io::Resul
                     Some(g) => g.to_string(),
                     None => continue,
                 };
-                let stats = metrics.entry(goal_id).or_default();
+                // Roll up ephemeral ids (e.g. "rummage~1") to their
+                // permanent root ("rummage") so sub-session costs
+                // aggregate into the parent.
+                let base = crate::app::session_base_id(&goal_id).to_string();
+                let stats = metrics.entry(base).or_default();
                 if let Some(pt) = val.get("prompt_tokens").and_then(|v| v.as_u64()) {
                     stats.total_prompt_tokens += pt;
                 }
@@ -418,7 +429,8 @@ pub fn load_historic_token_metrics(log_path: &std::path::Path) -> std::io::Resul
                     Some(g) => g.to_string(),
                     None => continue,
                 };
-                let stats = metrics.entry(goal_id).or_default();
+                let base = crate::app::session_base_id(&goal_id).to_string();
+                let stats = metrics.entry(base).or_default();
                 stats.session_count += 1;
             }
             _ => {}
@@ -588,9 +600,11 @@ fn apply_to_state(entry: &LogEntry, state: &mut StateSnapshot) -> bool {
         }
         LogEvent::GoalSessionFinished { goal_id, .. } => {
             state.queue.retain(|e| &e.goal_id != goal_id || e.status != "running");
-            // Increment session count and recalc token averages — a finished
-            // dispatch is a completed session for metric purposes.
-            let metrics = state.token_metrics.entry(goal_id.clone()).or_default();
+            // Roll up to the permanent (root) goal id so ephemeral
+            // sub-sessions' completions count toward the parent's
+            // session_count and averages.
+            let base = crate::app::session_base_id(goal_id);
+            let metrics = state.token_metrics.entry(base.to_string()).or_default();
             metrics.session_count += 1;
             metrics.recalc();
             true
@@ -601,7 +615,11 @@ fn apply_to_state(entry: &LogEntry, state: &mut StateSnapshot) -> bool {
             completion_tokens,
             ..
         } => {
-            let metrics = state.token_metrics.entry(goal_id.clone()).or_default();
+            // Roll up to the permanent (root) goal id so ephemeral
+            // sub-sessions' token costs aggregate into the parent's
+            // metrics.
+            let base = crate::app::session_base_id(goal_id);
+            let metrics = state.token_metrics.entry(base.to_string()).or_default();
             metrics.total_prompt_tokens += prompt_tokens;
             metrics.total_completion_tokens += completion_tokens;
             metrics.recalc();
@@ -1905,5 +1923,185 @@ mod tests {
         assert_eq!(metrics.total_completion_tokens, 6000);
         assert_eq!(metrics.avg_input_tokens_per_session, 20000);
         assert_eq!(metrics.avg_output_tokens_per_session, 3000);
+    }
+
+    // ── Ephemeral rollup tests ────────────────────────────────────────────────
+
+    // spec (tend-introspection): ApiTokenUsage events tagged with an
+    // ephemeral session id (e.g. "rummage~1") roll up to the permanent
+    // root goal id ("rummage") so the parent's metrics include delegated
+    // sub-session costs.
+    #[test]
+    fn test_spec_apply_to_state_rolls_up_ephemeral_token_usage() {
+        let mut state = StateSnapshot::default();
+        let entry = LogEntry {
+            ts: "2026-06-20T00:00:00Z".to_string(),
+            source: "backend".to_string(),
+            event: LogEvent::ApiTokenUsage {
+                goal_id: "rummage~1".to_string(),
+                prompt_tokens: 5000,
+                completion_tokens: 800,
+                total_tokens: 5800,
+                cached_tokens: None,
+            },
+        };
+        apply_to_state(&entry, &mut state);
+
+        // The metrics must land under "rummage", not "rummage~1".
+        assert!(
+            !state.token_metrics.contains_key("rummage~1"),
+            "ephemeral id must not appear as a separate metrics key"
+        );
+        let m = &state.token_metrics["rummage"];
+        assert_eq!(m.total_prompt_tokens, 5000);
+        assert_eq!(m.total_completion_tokens, 800);
+    }
+
+    // spec (tend-introspection): deeply nested ephemeral ids (e.g.
+    // "rummage~1~5") still roll up to the root ("rummage").
+    #[test]
+    fn test_spec_apply_to_state_rolls_up_deeply_nested_ephemeral() {
+        let mut state = StateSnapshot::default();
+        let mk = |ev: LogEvent| LogEntry {
+            ts: "2026-06-20T00:00:00Z".to_string(),
+            source: "backend".to_string(),
+            event: ev,
+        };
+
+        // Sub-session at depth 2 and depth 1 both roll into the root.
+        apply_to_state(
+            &mk(LogEvent::ApiTokenUsage {
+                goal_id: "rummage~1~5".into(),
+                prompt_tokens: 1000,
+                completion_tokens: 200,
+                total_tokens: 1200,
+                cached_tokens: None,
+            }),
+            &mut state,
+        );
+        apply_to_state(
+            &mk(LogEvent::ApiTokenUsage {
+                goal_id: "rummage~2".into(),
+                prompt_tokens: 3000,
+                completion_tokens: 400,
+                total_tokens: 3400,
+                cached_tokens: None,
+            }),
+            &mut state,
+        );
+
+        assert_eq!(state.token_metrics.len(), 1, "both ephemeral ids must roll up to the single root key");
+        let m = &state.token_metrics["rummage"];
+        assert_eq!(m.total_prompt_tokens, 4000);
+        assert_eq!(m.total_completion_tokens, 600);
+    }
+
+    // spec (tend-introspection): GoalSessionFinished events tagged with
+    // an ephemeral id increment the parent's session_count.
+    #[test]
+    fn test_spec_apply_to_state_rolls_up_ephemeral_session_finished() {
+        let mut state = StateSnapshot::default();
+        let mk = |ev: LogEvent| LogEntry {
+            ts: "2026-06-20T00:00:00Z".to_string(),
+            source: "goal_session".to_string(),
+            event: ev,
+        };
+
+        // One sub-session finishes.
+        apply_to_state(
+            &mk(LogEvent::GoalSessionFinished {
+                goal_id: "rummage~1".into(),
+                exit_status: "clean".into(),
+                duration_ms: 5000,
+                files_modified_count: 0,
+                files_modified: vec![],
+                tool_calls: 3,
+                summary_chars: 0,
+                full_output: "".into(),
+                backend: "native".into(),
+            }),
+            &mut state,
+        );
+
+        assert!(
+            !state.token_metrics.contains_key("rummage~1"),
+            "ephemeral id must not appear as a separate metrics key"
+        );
+        let m = &state.token_metrics["rummage"];
+        assert_eq!(m.session_count, 1, "sub-session completion must increment parent's session_count");
+    }
+
+    // spec (tend-introspection): ephemeral tokens and the parent's own
+    // tokens co-exist — the parent's direct API calls plus sub-session
+    // costs all aggregate under the permanent id.
+    #[test]
+    fn test_spec_apply_to_state_parent_and_subsession_costs_aggregate() {
+        let mut state = StateSnapshot::default();
+        let mk = |ev: LogEvent| LogEntry {
+            ts: "2026-06-20T00:00:00Z".to_string(),
+            source: "backend".to_string(),
+            event: ev,
+        };
+
+        // Parent makes a direct API call.
+        apply_to_state(
+            &mk(LogEvent::ApiTokenUsage {
+                goal_id: "rummage".into(),
+                prompt_tokens: 10000,
+                completion_tokens: 1000,
+                total_tokens: 11000,
+                cached_tokens: None,
+            }),
+            &mut state,
+        );
+
+        // Sub-session makes API calls.
+        apply_to_state(
+            &mk(LogEvent::ApiTokenUsage {
+                goal_id: "rummage~1".into(),
+                prompt_tokens: 5000,
+                completion_tokens: 500,
+                total_tokens: 5500,
+                cached_tokens: None,
+            }),
+            &mut state,
+        );
+
+        let m = &state.token_metrics["rummage"];
+        assert_eq!(m.total_prompt_tokens, 15000, "parent + sub-session tokens must aggregate");
+        assert_eq!(m.total_completion_tokens, 1500);
+    }
+
+    // spec (tend-introspection): load_historic_token_metrics rolls up
+    // ephemeral-tagged events in the log so startup replay reconstructs
+    // aggregated metrics, not per-sub-session entries.
+    #[test]
+    fn test_spec_load_historic_token_metrics_rolls_up_ephemeral() {
+        let tmp = std::env::temp_dir().join(format!(
+            "tinker_test_replay_rollup_{}.jsonl",
+            std::process::id()
+        ));
+
+        let lines = [
+            r#"{"ts":"2026-01-01T00:00:00Z","source":"backend","kind":"api_token_usage","goal_id":"rummage~1","prompt_tokens":1000,"completion_tokens":200,"total_tokens":1200,"cached_tokens":null}"#,
+            r#"{"ts":"2026-01-01T00:01:00Z","source":"backend","kind":"api_token_usage","goal_id":"rummage~2","prompt_tokens":3000,"completion_tokens":600,"total_tokens":3600,"cached_tokens":null}"#,
+            r#"{"ts":"2026-01-01T00:02:00Z","source":"goal_session","kind":"goal_session_finished","goal_id":"rummage~1","exit_status":"clean","duration_ms":5000,"files_modified_count":0,"files_modified":[],"tool_calls":1,"summary_chars":0,"full_output":"","backend":"native"}"#,
+            r#"{"ts":"2026-01-01T00:03:00Z","source":"backend","kind":"api_token_usage","goal_id":"rummage","prompt_tokens":500,"completion_tokens":50,"total_tokens":550,"cached_tokens":null}"#,
+        ];
+        std::fs::write(&tmp, lines.join("\n")).unwrap();
+
+        let metrics = load_historic_token_metrics(&tmp).expect("replay must succeed");
+
+        assert_eq!(metrics.len(), 1, "all ephemeral ids must roll up to the single root 'rummage'");
+        assert!(
+            !metrics.contains_key("rummage~1") && !metrics.contains_key("rummage~2"),
+            "no ephemeral entries must survive"
+        );
+        let r = &metrics["rummage"];
+        assert_eq!(r.total_prompt_tokens, 4500, "1000 + 3000 + 500");
+        assert_eq!(r.total_completion_tokens, 850, "200 + 600 + 50");
+        assert_eq!(r.session_count, 1, "one sub-session finished");
+
+        let _ = std::fs::remove_file(&tmp);
     }
 }

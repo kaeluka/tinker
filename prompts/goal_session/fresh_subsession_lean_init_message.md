@@ -8,7 +8,7 @@ send_message(target="{DISPATCHER_ID}", message="...")
 
 ## Fresh dispatch
 
-When a task has independent sub-tasks that don't need to share context, distribute them to fresh sub-sessions of your own session rather than accumulating everything in one context.
+When a task would fill your context with material you won't need for subsequent decisions, dispatch its sub-parts to fresh sub-sessions so your context stays clean for what comes next. A single-shot task with no follow-up stays inline: the sub-session's startup cost buys no protection when there is no subsequent reasoning to degrade.
 
 ```
 spawn_session(subgoal="...", label="...")

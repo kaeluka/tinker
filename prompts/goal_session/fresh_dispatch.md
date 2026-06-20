@@ -1,6 +1,6 @@
 ## Fresh dispatch
 
-Whenever you can decompose a sub-task, default to dispatching it to a fresh sub-session of your own goal rather than doing it inline. Each sub-session stays focused on its task, which preserves quality and keeps your own context tight.
+The decision to dispatch is driven by context hygiene: a task that fills your session with material it won't need for subsequent decisions — file contents, search results, intermediate reasoning — is dispatched to a fresh sub-session of your own goal so your session stays clean for what comes next. A single-shot task with no follow-up stays in the main session: the sub-session's startup cost buys no protection when there is no subsequent reasoning to degrade. The principle is reasoning quality; parallelism is a side benefit.
 
 Use the `spawn_session` tool:
 

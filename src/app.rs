@@ -521,6 +521,37 @@ impl App {
         }
     }
 
+    /// Aggregated token-usage statistics for a permanent goal, summing the
+    /// goal's own API calls with all its ephemeral sub-sessions' calls. A
+    /// parent goal that delegates all work to sub-sessions shows the full
+    /// cost of delegation, not zero — the cost of delegated work shows on
+    /// the parent.
+    ///
+    /// Aggregation matches ephemeral sessions by `session_base_id`: any key
+    /// in `token_usage` whose root permanent goal ID matches `goal_id`
+    /// contributes. This includes the permanent goal's own entry (if any)
+    /// and all ephemeral descendants at any nesting depth
+    /// (`tend`, `tend~1`, `tend~1~3`, …). Retired sub-sessions whose token
+    /// stats persist in the map after their session entry is retired are
+    /// included — the cost persists on the parent.
+    ///
+    /// The averages (`avg_prompt_per_session`, `avg_completion_per_session`)
+    /// are computed from the aggregated totals divided by the aggregated
+    /// session count, so the per-session average includes the delegated
+    /// work's sessions in the denominator.
+    pub fn aggregated_token_stats(&self, goal_id: &str) -> GoalTokenStats {
+        let mut agg = GoalTokenStats::default();
+        for (key, stats) in &self.token_usage {
+            if session_base_id(key) == goal_id {
+                agg.session_count += stats.session_count;
+                agg.total_prompt_tokens += stats.total_prompt_tokens;
+                agg.total_completion_tokens += stats.total_completion_tokens;
+                agg.total_cached_tokens += stats.total_cached_tokens;
+            }
+        }
+        agg
+    }
+
 }
 
 #[cfg(test)]
@@ -995,5 +1026,145 @@ mod tests {
 
         let stats = app.token_usage.get("tend").unwrap();
         assert_eq!(stats.total_cached_tokens, 3_000);
+    }
+
+    // ── aggregated_token_stats ─────────────────────────────────────────────
+
+    // spec (tui — token-usage metrics): the three metrics shown for a
+    // permanent goal aggregate the goal's own API calls with all its
+    // ephemeral sub-sessions' calls, so the cost of delegated work shows
+    // on the parent. A parent that delegates everything to sub-sessions
+    // must show non-zero cost.
+
+    #[test]
+    fn test_spec_aggregated_token_stats_includes_parent_own_calls() {
+        let mut app = App::new();
+        app.token_usage.insert("tend".into(), GoalTokenStats {
+            session_count: 2,
+            total_prompt_tokens: 10_000,
+            total_completion_tokens: 2_000,
+            total_cached_tokens: 0,
+        });
+        let agg = app.aggregated_token_stats("tend");
+        assert_eq!(agg.session_count, 2);
+        assert_eq!(agg.total_prompt_tokens, 10_000);
+        assert_eq!(agg.total_completion_tokens, 2_000);
+        assert!(agg.has_data());
+    }
+
+    // spec (tui — token-usage metrics): when the parent has no own calls
+    // but sub-sessions have produced tokens, the aggregated stats must
+    // reflect the sub-sessions' cost.
+    #[test]
+    fn test_spec_aggregated_token_stats_rolls_up_ephemeral_children() {
+        let mut app = App::new();
+        // No parent entry — all work delegated.
+        app.token_usage.insert("tend~1".into(), GoalTokenStats {
+            session_count: 1,
+            total_prompt_tokens: 5_000,
+            total_completion_tokens: 800,
+            total_cached_tokens: 0,
+        });
+        app.token_usage.insert("tend~2".into(), GoalTokenStats {
+            session_count: 1,
+            total_prompt_tokens: 3_000,
+            total_completion_tokens: 400,
+            total_cached_tokens: 0,
+        });
+        let agg = app.aggregated_token_stats("tend");
+        assert_eq!(agg.session_count, 2);
+        assert_eq!(agg.total_prompt_tokens, 8_000);
+        assert_eq!(agg.total_completion_tokens, 1_200);
+        assert_eq!(agg.avg_prompt_per_session(), 4_000);
+        assert_eq!(agg.avg_completion_per_session(), 600);
+    }
+
+    // spec (tui — token-usage metrics): deeply nested sub-sessions
+    // (tend~1~3) roll up to the same root as direct children (tend~1).
+    #[test]
+    fn test_spec_aggregated_token_stats_rolls_up_deeply_nested() {
+        let mut app = App::new();
+        app.token_usage.insert("tend~1".into(), GoalTokenStats {
+            session_count: 1,
+            total_prompt_tokens: 2_000,
+            total_completion_tokens: 300,
+            total_cached_tokens: 0,
+        });
+        app.token_usage.insert("tend~1~3".into(), GoalTokenStats {
+            session_count: 1,
+            total_prompt_tokens: 1_000,
+            total_completion_tokens: 100,
+            total_cached_tokens: 0,
+        });
+        app.token_usage.insert("tend~2".into(), GoalTokenStats {
+            session_count: 1,
+            total_prompt_tokens: 4_000,
+            total_completion_tokens: 500,
+            total_cached_tokens: 0,
+        });
+        let agg = app.aggregated_token_stats("tend");
+        assert_eq!(agg.session_count, 3);
+        assert_eq!(agg.total_prompt_tokens, 7_000);
+        assert_eq!(agg.total_completion_tokens, 900);
+    }
+
+    // spec (tui — token-usage metrics): aggregated stats include the
+    // parent's own calls PLUS its children's — the two are summed, not
+    // one replacing the other.
+    #[test]
+    fn test_spec_aggregated_token_stats_sums_parent_and_children() {
+        let mut app = App::new();
+        app.token_usage.insert("tend".into(), GoalTokenStats {
+            session_count: 1,
+            total_prompt_tokens: 6_000,
+            total_completion_tokens: 1_000,
+            total_cached_tokens: 200,
+        });
+        app.token_usage.insert("tend~1".into(), GoalTokenStats {
+            session_count: 1,
+            total_prompt_tokens: 4_000,
+            total_completion_tokens: 500,
+            total_cached_tokens: 100,
+        });
+        let agg = app.aggregated_token_stats("tend");
+        assert_eq!(agg.session_count, 2);
+        assert_eq!(agg.total_prompt_tokens, 10_000);
+        assert_eq!(agg.total_completion_tokens, 1_500);
+        assert_eq!(agg.total_cached_tokens, 300);
+    }
+
+    // spec (tui — token-usage metrics): goals that happen to share a name
+    // prefix but are different goals (e.g. "tend" vs "tendril") must not
+    // contaminate each other's aggregates. session_base_id splits on the
+    // first '~', so "tendril~1" → "tendril", not "tend".
+    #[test]
+    fn test_spec_aggregated_token_stats_does_not_match_prefix_neighbors() {
+        let mut app = App::new();
+        app.token_usage.insert("tend".into(), GoalTokenStats {
+            session_count: 1,
+            total_prompt_tokens: 1_000,
+            total_completion_tokens: 100,
+            total_cached_tokens: 0,
+        });
+        app.token_usage.insert("tendril~1".into(), GoalTokenStats {
+            session_count: 1,
+            total_prompt_tokens: 99_999,
+            total_completion_tokens: 99_999,
+            total_cached_tokens: 0,
+        });
+        let agg = app.aggregated_token_stats("tend");
+        assert_eq!(agg.session_count, 1);
+        assert_eq!(agg.total_prompt_tokens, 1_000);
+        assert_eq!(agg.total_completion_tokens, 100);
+    }
+
+    // spec (tui — token-usage metrics): a goal with no token data at all
+    // (neither own nor children) returns empty stats with has_data() == false.
+    #[test]
+    fn test_spec_aggregated_token_stats_empty_when_no_data() {
+        let app = App::new();
+        let agg = app.aggregated_token_stats("nobody");
+        assert!(!agg.has_data());
+        assert_eq!(agg.session_count, 0);
     }
 }

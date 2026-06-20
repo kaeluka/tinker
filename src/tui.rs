@@ -524,11 +524,22 @@ fn draw_goal_tree(
                     Span::raw(reason.to_string()),
                 ]));
             }
-            // Token-usage breakdown for the detail pane.
-            if let Some(stats) = app.token_usage.get(&g.id).filter(|s| s.has_data()) {
+            // Token-usage breakdown for the detail pane — aggregated across
+            // the goal's own API calls and all its ephemeral sub-sessions.
+            let stats = app.aggregated_token_stats(&g.id);
+            if stats.has_data() {
                 let dim = Style::default().fg(Color::DarkGray);
+                // Count how many ephemeral sub-sessions contributed token data.
+                let child_count = app.token_usage.keys()
+                    .filter(|k| session_base_id(k.as_str()) == g.id.as_str() && k.as_str() != g.id.as_str())
+                    .count();
+                let subtitle = if child_count > 0 {
+                    format!(" (incl. {} sub-session{})", child_count, if child_count == 1 { "" } else { "s" })
+                } else {
+                    String::new()
+                };
                 lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled("Token usage", dim)));
+                lines.push(Line::from(Span::styled(format!("Token usage{}", subtitle), dim)));
                 lines.push(Line::from(vec![
                     Span::styled("  Sessions: ", dim),
                     Span::raw(stats.session_count.to_string()),
@@ -709,9 +720,12 @@ fn goal_list_row_line(
             // avg input per session, avg output per session) rendered DarkGray
             // so they read as ambient cost-driver status — not competing with
             // the goal name. Only permanent goals with recorded data show
-            // metrics; ephemeral sub-sessions never do.
-            let stats = app.token_usage.get(g.id.as_str());
-            let has_metrics = stats.is_some_and(|s| s.has_data());
+            // metrics; ephemeral sub-sessions never do. The stats are
+            // aggregated across the goal's own API calls and all its
+            // ephemeral sub-sessions' calls so the cost of delegated work
+            // shows on the parent.
+            let stats = app.aggregated_token_stats(&g.id);
+            let has_metrics = stats.has_data();
             let metrics_width = if has_metrics { METRICS_WIDTH } else { 0 };
 
             // Truncate the summary to leave room for the metrics block when
@@ -736,7 +750,6 @@ fn goal_list_row_line(
             // the summary text and the metrics is filled with raw (unstyled)
             // spaces so the metrics form neat columns across all goal rows.
             if has_metrics {
-                let stats = stats.unwrap();
                 let left_width = prefix_width
                     + if preview.is_empty() { 0 } else { 3 + preview.chars().count() };
                 let padding = (pane_width as usize).saturating_sub(left_width + metrics_width);
@@ -2350,6 +2363,71 @@ plain trailing line";
         );
     }
 
+    /// Spec (tui — token-usage metrics): a permanent goal that delegates
+    /// all work to sub-sessions shows aggregated metrics on its row. Token
+    /// data stored only under ephemeral IDs (e.g. `tend~1`) rolls up to
+    /// the permanent goal ID (`tend`) so the parent shows non-zero cost.
+    #[test]
+    fn test_spec_goal_list_row_shows_aggregated_ephemeral_metrics() {
+        let mut app = App::new();
+        app.tinker_dirs = vec![PathBuf::from("/proj/.tinker")];
+        app.goals = vec![Goal {
+            id: "tend".to_string(),
+            summary: "a short summary".to_string(),
+            description: String::new(),
+            parent_id: String::new(),
+            children: vec![],
+            related: vec![],
+            tier: None,
+            kind: None,
+            source_path: None,
+        }];
+        // No token_usage entry for "tend" — all work delegated to sub-sessions.
+        // tend~1: 1 session, 5000 prompt tokens, 800 completion tokens.
+        // tend~2: 1 session, 3000 prompt tokens, 400 completion tokens.
+        app.token_usage.insert(
+            "tend~1".to_string(),
+            crate::app::GoalTokenStats {
+                session_count: 1,
+                total_prompt_tokens: 5_000,
+                total_completion_tokens: 800,
+                total_cached_tokens: 0,
+            },
+        );
+        app.token_usage.insert(
+            "tend~2".to_string(),
+            crate::app::GoalTokenStats {
+                session_count: 1,
+                total_prompt_tokens: 3_000,
+                total_completion_tokens: 400,
+                total_cached_tokens: 0,
+            },
+        );
+
+        let mut depth_by_id = std::collections::HashMap::new();
+        depth_by_id.insert("tend".to_string(), 0usize);
+        let running = std::collections::HashSet::new();
+        let item = GoalListItem::Goal(app.goals[0].clone());
+        let line = goal_list_row_line(&item, &depth_by_id, None, &running, &app, 38);
+
+        let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        // Aggregated: 2 sessions, 8000 prompt (avg 4.0k), 1200 completion (avg 600).
+        assert!(
+            line_text.contains(" 2 "),
+            "aggregated metrics must contain session count 2; got: {:?}",
+            line_text,
+        );
+        assert!(
+            line_text.contains("4.0k"),
+            "aggregated metrics must contain avg input 4.0k; got: {:?}",
+            line_text,
+        );
+        assert!(
+            line_text.contains("600"),
+            "aggregated metrics must contain avg output 600; got: {:?}",
+            line_text,
+        );
+    }
 
 }
 

@@ -1,6 +1,6 @@
 id = "fresh-agents"
 kind = "feature"
-summary = "This goal owns the fresh-dispatch mechanism: goal agents dispatch to ephemeral sub-sessions whenever possible; sub-sessions receive full dispatch capability and may act as coordinators, depth is unbounded, all sub-sessions are retired when the batch ends, and the harness provides the spawn-session tool as the sole sub-session spawning surface to the exclusion of any built-in LLM-backend spawn capability."
+summary = "This goal owns the fresh-dispatch mechanism: goal agents dispatch to ephemeral sub-sessions when a task's context would crowd the main session's subsequent reasoning; sub-sessions receive full dispatch capability and may act as coordinators, depth is unbounded, all sub-sessions are retired when the batch ends, and the harness provides the spawn-session tool as the sole sub-session spawning surface to the exclusion of any built-in LLM-backend spawn capability."
 description = """
 ## WHAT
 
@@ -14,6 +14,15 @@ acting as a coordinator: it remains reachable for replies until the
 batch ends. Each dispatched sub-task must be a genuine decomposition —
 narrower than the problem the dispatcher received, with the LLM
 deciding when a task is atomic enough not to decompose further. The
+decision to dispatch is driven by context hygiene: a task that fills
+the main session with material it won't need for subsequent decisions
+— file contents, search results, intermediate reasoning — is
+dispatched so the main session stays clean for what comes next. A
+single-shot task with no follow-up stays in the main session: the
+sub-session's startup cost (system prompt, goal text, framework
+preamble) buys no protection when there is no subsequent reasoning to
+protect. The principle is reasoning quality;
+parallelism is a side benefit. The
 system carries a global batch state — **active** whenever any work is
 in flight (a session is processing, a reply is being routed, or a user
 message is pending), **idle** when nothing is outstanding. A
@@ -28,13 +37,17 @@ routing, sub-session visibility, and batch tracking.
 
 ## WHY
 
-The right default is to distribute work into fresh sub-sessions
-whenever possible. All work accumulating in one session degrades
-quality as context grows and burdens the dispatching session with
-content it doesn't need. Fresh dispatches keep each session clean and
-focused; results return via send_message. The same rationale applies
-at every level: a coordinator that can decompose its task further
-should do so.
+Reasoning quality depends on a clean context — there is no task
+where accumulated detail produces better results than a clean session
+for the same work. The right default is to dispatch a task to a fresh
+sub-session when its context would crowd the main session's
+subsequent reasoning, keeping the main session clean and focused. The
+single-shot exception follows from the same principle: when nothing
+comes next, the cost of a fresh session protects nothing. The same
+rationale applies at every level: a coordinator that can decompose
+its task further should do so, unless that task is the coordinator's
+last. Fresh dispatches are the mechanism; context hygiene is the
+reason.
 
 The harness-only constraint exists because the visibility the user
 experiences — sub-sessions nested in the goals pane, result routing back to the dispatcher — is only available when
