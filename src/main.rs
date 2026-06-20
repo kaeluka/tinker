@@ -1934,16 +1934,23 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, log: &logger::LogS
                 app.input_delete_word();
                 KeyAction::None
             }
-            // Word-backward: Ctrl+Left or Alt+Left (covers macOS Opt+Left).
-            // Must precede the bare `(_, Left)` arm.
+            // Word-backward: Ctrl+Left, Alt+Left, or Alt+b (readline Meta-b).
+            // Alt+b is what many macOS terminals send for Option+Left when
+            // "Use Option as Meta key" is enabled — the ESC+char encoding
+            // produces `KeyCode::Char('b')` with `KeyModifiers::ALT`, not
+            // `KeyCode::Left` with `KeyModifiers::ALT`. Must precede the
+            // `(_, Char(c))` catch-all.
             (KeyModifiers::CONTROL, KeyCode::Left)
-            | (KeyModifiers::ALT, KeyCode::Left) => {
+            | (KeyModifiers::ALT, KeyCode::Left)
+            | (KeyModifiers::ALT, KeyCode::Char('b')) => {
                 app.input_cursor_word_left();
                 KeyAction::None
             }
-            // Word-forward: Ctrl+Right or Alt+Right.
+            // Word-forward: Ctrl+Right, Alt+Right, or Alt+f (readline Meta-f).
+            // Alt+f is what many macOS terminals send for Option+Right.
             (KeyModifiers::CONTROL, KeyCode::Right)
-            | (KeyModifiers::ALT, KeyCode::Right) => {
+            | (KeyModifiers::ALT, KeyCode::Right)
+            | (KeyModifiers::ALT, KeyCode::Char('f')) => {
                 app.input_cursor_word_right();
                 KeyAction::None
             }
@@ -5271,5 +5278,62 @@ mod tests {
         app.input_cursor = 11;
         handle_key(&mut app, KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL), &logger::noop_sender(), BUILTIN_SESSION_IDS);
         assert_eq!(app.input, "hello ");
+    }
+
+    /// Spec (tui — input cursor): Alt+b (Meta-b, readline word-backward)
+    /// navigates the cursor back one word. This is the encoding macOS
+    /// terminals produce for Option+Left when "Use Option as Meta key"
+    /// is enabled — `\eb` is parsed as `Char('b')` with `ALT`, not as
+    /// `Left` with `ALT`.
+    #[test]
+    fn test_spec_repl_alt_b_jumps_word_backward() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "hello world".into();
+        app.input_cursor = 11;
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.input_cursor, 6, "Alt+b must jump to start of 'world'");
+    }
+
+    /// Spec (tui — input cursor): Alt+f (Meta-f, readline word-forward)
+    /// navigates the cursor forward one word. macOS terminals send `\ef`
+    /// for Option+Right.
+    #[test]
+    fn test_spec_repl_alt_f_jumps_word_forward() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "hello world".into();
+        app.input_cursor = 0;
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.input_cursor, 6, "Alt+f must jump to start of 'world'");
+    }
+
+    /// Spec (tui — input cursor): Alt+b must not insert the character 'b'
+    /// into the input. Regression guard for the `(_, Char(c))` catch-all
+    /// swallowing word-navigation events.
+    #[test]
+    fn test_spec_repl_alt_b_does_not_insert_char() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "hello".into();
+        app.input_cursor = 5;
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.input, "hello", "Alt+b must not insert 'b' into the input");
+    }
+
+    /// Spec (tui — input cursor): Alt+f must not insert the character 'f'
+    /// into the input.
+    #[test]
+    fn test_spec_repl_alt_f_does_not_insert_char() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App::new();
+        app.phase = crate::app::Phase::Idle;
+        app.input = "hello".into();
+        app.input_cursor = 0;
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT), &logger::noop_sender(), BUILTIN_SESSION_IDS);
+        assert_eq!(app.input, "hello", "Alt+f must not insert 'f' into the input");
     }
 }
