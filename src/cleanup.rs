@@ -16,6 +16,7 @@
 //! marker text aren't at the start of comment lines.
 
 use crate::cap::{Filesystem, OpenCodeRunner};
+use crate::logger;
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
@@ -141,6 +142,7 @@ pub async fn run_cleanup(
     oc: &dyn OpenCodeRunner,
     fs: &dyn Filesystem,
     work_dir: &Path,
+    log: logger::LogSender,
 ) -> Result<CleanupOutcome> {
     let mut remaining = find_marker_files(fs, work_dir)?;
     if remaining.is_empty() {
@@ -148,7 +150,7 @@ pub async fn run_cleanup(
     }
     for _ in 0..MAX_RETRIES {
         let prompt = build_cleanup_prompt(&remaining);
-        run_oc_oneshot(oc, &prompt, work_dir).await?;
+        run_oc_oneshot(oc, &prompt, work_dir, log.clone()).await?;
         remaining = find_marker_files(fs, work_dir)?;
         if remaining.is_empty() {
             return Ok(CleanupOutcome::Clean);
@@ -170,10 +172,29 @@ async fn run_oc_oneshot(
     oc: &dyn OpenCodeRunner,
     message: &str,
     work_dir: &Path,
+    log: logger::LogSender,
 ) -> Result<()> {
     let on_sid: Box<dyn FnMut(String) + Send> = Box::new(|_| {});
     let on_chunk: Box<dyn FnMut(String) + Send> = Box::new(|_| {});
-    let on_usage: crate::cap::UsageChunk = Box::new(|_| {});
+    // Wire the per-API-call token-usage callback so the cleanup agent's
+    // LLM calls are tracked in the runtime event log, tagged
+    // `cleanup-hook`. This closes the gap where cleanup's cheap-agent
+    // API calls were silently discarded — every other production call
+    // site (`goal_agent_loop`) routes usage through SessionEvent →
+    // LogEvent::ApiTokenUsage; cleanup goes directly to the LogSender
+    // because it is a pre-session hook with no session channel.
+    let on_usage: crate::cap::UsageChunk = Box::new(move |usage| {
+        log.emit(
+            "cleanup",
+            logger::LogEvent::ApiTokenUsage {
+                goal_id: "cleanup-hook".to_string(),
+                prompt_tokens: usage.prompt_tokens,
+                completion_tokens: usage.completion_tokens,
+                total_tokens: usage.total_tokens,
+                cached_tokens: usage.cached_tokens,
+            },
+        );
+    });
     oc.run(message, None, work_dir, None, on_sid, on_chunk, on_usage, None, None).await?;
     Ok(())
 }
@@ -491,7 +512,7 @@ mod tests {
             fs: fs.clone(),
             calls: AtomicUsize::new(0),
         };
-        let outcome = run_cleanup(&runner, fs.as_ref(), Path::new("/proj"))
+        let outcome = run_cleanup(&runner, fs.as_ref(), Path::new("/proj"), logger::noop_sender())
             .await
             .unwrap();
         assert!(matches!(outcome, CleanupOutcome::Clean));
@@ -506,7 +527,7 @@ mod tests {
         let runner = InertRunner {
             calls: AtomicUsize::new(0),
         };
-        let outcome = run_cleanup(&runner, &fs, Path::new("/proj"))
+        let outcome = run_cleanup(&runner, &fs, Path::new("/proj"), logger::noop_sender())
             .await
             .unwrap();
         assert!(matches!(outcome, CleanupOutcome::Clean));
@@ -522,7 +543,7 @@ mod tests {
         let runner = InertRunner {
             calls: AtomicUsize::new(0),
         };
-        let outcome = run_cleanup(&runner, &fs, Path::new("/proj"))
+        let outcome = run_cleanup(&runner, &fs, Path::new("/proj"), logger::noop_sender())
             .await
             .unwrap();
         match outcome {
@@ -533,5 +554,94 @@ mod tests {
         }
         // Three attempts, all no-ops.
         assert_eq!(runner.calls.load(Ordering::SeqCst), MAX_RETRIES);
+    }
+
+    /// Mock runner that fires `on_usage` with known token values on every
+    /// call but does not clean markers. Used to verify cleanup agent API
+    /// calls produce token-usage log events.
+    struct UsageFiringRunner {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl OpenCodeRunner for UsageFiringRunner {
+        async fn run(
+            &self,
+            _message: &str,
+            _session_id: Option<&str>,
+            _work_dir: &Path,
+            _system_prompt: Option<&str>,
+            _on_session_id: Chunk,
+            _on_chunk: Chunk,
+            mut on_usage: crate::cap::UsageChunk,
+            _send_message: Option<crate::cap::SendMessageFn>,
+            _spawn_session: Option<crate::cap::SpawnSessionFn>,
+        ) -> std::result::Result<String, crate::cap::RunError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            on_usage(crate::cap::TokenUsage {
+                prompt_tokens: 100,
+                completion_tokens: 50,
+                total_tokens: 150,
+                cached_tokens: Some(25),
+            });
+            Ok(String::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_spec_cleanup_token_usage_is_tracked() {
+        // Goal decision: the cleanup agent's API calls must be tracked for
+        // token usage, just like every other API call. Before the fix,
+        // `run_oc_oneshot` wired a no-op `on_usage` and the cleanup agent's
+        // tokens were silently discarded — structurally no path to the event
+        // log. This test proves the fix: a runner that fires `on_usage`
+        // produces `ApiTokenUsage` events tagged `cleanup-hook` in the logger.
+        let fs = MockFs::new();
+        fs.add_dir(Path::new("/proj"));
+        fs.add_file(Path::new("/proj/a.rs"), "// tinker-test-case: probe\n");
+        let runner = UsageFiringRunner {
+            calls: AtomicUsize::new(0),
+        };
+        let (log, mut rx) = logger::test_sender();
+        let outcome = run_cleanup(&runner, &fs, Path::new("/proj"), log)
+            .await
+            .unwrap();
+
+        // The runner doesn't clean markers, so we expect
+        // FailedAfterRetries and MAX_RETRIES API calls.
+        assert!(matches!(outcome, CleanupOutcome::FailedAfterRetries(_)));
+        assert_eq!(runner.calls.load(Ordering::SeqCst), MAX_RETRIES);
+
+        // Collect every emitted ApiTokenUsage event.
+        let mut usage_events = vec![];
+        while let Ok(entry) = rx.try_recv() {
+            if let logger::LogEvent::ApiTokenUsage {
+                goal_id,
+                prompt_tokens,
+                completion_tokens,
+                total_tokens,
+                cached_tokens,
+            } = entry.event
+            {
+                usage_events.push((goal_id, prompt_tokens, completion_tokens, total_tokens, cached_tokens));
+            }
+        }
+
+        // Every cleanup API call must produce a token-usage event.
+        assert_eq!(
+            usage_events.len(),
+            MAX_RETRIES,
+            "every cleanup API call must emit a token-usage event; got {}",
+            usage_events.len(),
+        );
+
+        // Verify the events are tagged cleanup-hook and carry the right values.
+        for (goal_id, prompt, completion, total, cached) in &usage_events {
+            assert_eq!(*goal_id, "cleanup-hook", "events must be tagged cleanup-hook");
+            assert_eq!(*prompt, 100);
+            assert_eq!(*completion, 50);
+            assert_eq!(*total, 150);
+            assert_eq!(*cached, Some(25));
+        }
     }
 }

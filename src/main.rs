@@ -117,7 +117,7 @@ async fn goal_agent_loop(
         // Skipped for ephemeral fresh sub-sessions (skip_cleanup = true).
         if !skip_cleanup && llm_session_id.is_none() {
             let cleanup_t0 = std::time::Instant::now();
-            let cleanup_result = cleanup::run_cleanup(oc_cleanup.as_ref(), fs.as_ref(), &work_dir).await;
+            let cleanup_result = cleanup::run_cleanup(oc_cleanup.as_ref(), fs.as_ref(), &work_dir, log.clone()).await;
             let cleanup_ms = cleanup_t0.elapsed().as_millis() as u64;
             match cleanup_result {
                 Ok(cleanup::CleanupOutcome::Clean) => {

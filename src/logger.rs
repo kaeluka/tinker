@@ -339,6 +339,15 @@ pub fn noop_sender() -> LogSender {
     }
 }
 
+/// Test sender that returns the receiver so tests can inspect emitted
+/// events through the same async channel path production uses. Companion
+/// to `noop_sender()` for tests that need to assert on what was emitted.
+#[cfg(test)]
+pub fn test_sender() -> (LogSender, mpsc::UnboundedReceiver<LogEntry>) {
+    let (tx, rx) = mpsc::unbounded_channel();
+    (LogSender { inner: LogSenderInner::Async(tx) }, rx)
+}
+
 // ── Startup ──────────────────────────────────────────────────────────────────
 
 /// Per-goal token-usage stats reconstructed by replaying the event log on
