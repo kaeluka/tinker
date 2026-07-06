@@ -34,6 +34,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 pub struct PaneRects {
     pub repl: Rect,
@@ -260,13 +262,14 @@ fn draw_repl(frame: &mut Frame, app: &mut App, area: Rect) {
     // Place the terminal cursor at the correct (x, y) within the input pane.
     // Only when the REPL is focused and input is not locked (Initializing).
     if focused && !input_locked {
-        let prompt_width = prompt.chars().count() as u16;
-        let cursor_col = prompt_width + app.input_cursor as u16;
-        let pane_width = input_area.width.max(1);
-        // Account for wrapping: the cursor's position within the wrapped text
-        // determines which row and column it lands on.
-        let wrapped_row = cursor_col / pane_width;
-        let col_in_row = cursor_col % pane_width;
+        // Build the text up to the cursor position: prompt + input[:cursor].
+        // The cursor sits after this prefix, so its screen position is the
+        // (row, col) that this prefix maps to after word wrapping.
+        let prefix: String = prompt.chars()
+            .chain(app.input.chars().take(app.input_cursor))
+            .collect();
+        let (wrapped_row, col_in_row) =
+            cursor_row_col(&prefix, input_area.width.max(1));
         let cursor_y = input_area.y + wrapped_row.saturating_sub(input_scroll);
         let cursor_x = input_area.x + col_in_row;
         frame.set_cursor_position((cursor_x, cursor_y));
@@ -295,6 +298,103 @@ fn input_pane_layout(prompt: &str, input: &str, width: u16, max: u16) -> (u16, u
     let height = needed.min(max.max(1));
     let scroll = needed.saturating_sub(height);
     (height, scroll)
+}
+
+/// Compute the screen `(row, col)` of the position immediately after
+/// `text` when rendered as a single-line `Paragraph` with `Wrap { trim: false }`
+/// at the given `width`.
+///
+/// This is a faithful grapheme-by-grapheme simulation of ratatui's
+/// `WordWrapper` (trim: false). Ratatui's word-boundary wrapping consumes the
+/// space at each wrap boundary — it doesn't appear on either line — so
+/// subsequent characters shift left relative to a naive
+/// `display_width / pane_width` division. This function accounts for that.
+///
+/// The caller passes the text *up to the cursor position* (e.g. prompt + the
+/// input characters before the cursor). The returned `(row, col)` is where
+/// the terminal cursor should be placed.
+fn cursor_row_col(text: &str, width: u16) -> (u16, u16) {
+    let max_w = width.max(1) as usize;
+
+    // State matching WordWrapper's fields (trim: false).
+    let mut line_width: usize = 0; // committed content on the current line
+    let mut word_width: usize = 0; // pending_word display width
+    let mut ws_width: usize = 0; // pending_whitespace display width
+    let mut non_ws_prev = false;
+    let mut row: u16 = 0;
+
+    for grapheme in UnicodeSegmentation::graphemes(text, true) {
+        let sw = UnicodeWidthStr::width(grapheme);
+        let is_ws = grapheme.chars().all(|c| c.is_whitespace());
+
+        // Ignore symbols wider than the line (matching WordWrapper behavior).
+        if sw > max_w {
+            continue;
+        }
+
+        let word_found = non_ws_prev && is_ws;
+        // untrimmed_overflow fires when the pending word + whitespace would
+        // exceed the line AND nothing has been committed to the current line
+        // yet. This is what breaks long words (no spaces) across lines.
+        let untrimmed_overflow =
+            line_width == 0 && word_width + ws_width + sw > max_w;
+
+        // Commit the finished segment (pending_whitespace + pending_word) to
+        // the current line.
+        if word_found || untrimmed_overflow {
+            line_width += ws_width + word_width;
+            ws_width = 0;
+            word_width = 0;
+        }
+
+        let line_full = line_width >= max_w;
+        let pending_word_overflow =
+            sw > 0 && line_width + ws_width + word_width >= max_w;
+
+        if line_full || pending_word_overflow {
+            // Consume pending whitespace up to the remaining width on the
+            // current line.
+            let remaining = max_w.saturating_sub(line_width);
+            let consumed = ws_width.min(remaining);
+            ws_width -= consumed;
+            line_width = 0;
+
+            row += 1;
+
+            // If the current grapheme is whitespace and all pending whitespace
+            // was consumed, drop it entirely (matching WordWrapper's `continue`).
+            if is_ws && ws_width == 0 {
+                continue;
+            }
+        }
+
+        // Add the current grapheme to its pending buffer.
+        if is_ws {
+            ws_width += sw;
+        } else {
+            word_width += sw;
+        }
+        non_ws_prev = !is_ws;
+    }
+
+    // Final cursor position: all uncommitted content on the current line.
+    let col = line_width + ws_width + word_width;
+
+    // Edge case: if the content exactly fills the last line, the cursor
+    // wraps to the start of the next line.
+    if col >= max_w && col > 0 {
+        row += 1;
+        // The cursor would be at col 0 on the next line. But if col exceeds
+        // max_w (shouldn't normally happen), wrap further.
+        let mut remaining = col - max_w;
+        while remaining > 0 {
+            row += 1;
+            remaining = remaining.saturating_sub(max_w);
+        }
+        return (row, 0);
+    }
+
+    (row, col as u16)
 }
 
 #[allow(dead_code)]
@@ -632,8 +732,15 @@ fn draw_goal_tree(
             lines
         }
     };
+    // Content-aware cache key: folds pane width with an FNV-1a hash over all
+    // span content. Any change to the rendered content — including dynamic
+    // additions like the token-usage section (which arrives after a session
+    // runs) or the running-reason line — changes the key and invalidates the
+    // cached wrapped-line total. Without this, a width-only key would keep
+    // the stale total pinned and the scroll boundary too low, making the
+    // token-usage section unreachable until a resize forced a recalculation.
+    let cache_key = goal_text_cache_key(text_area.width, &text_lines);
     let p = Paragraph::new(text_lines).wrap(Wrap { trim: false });
-    let cache_key = text_area.width as u64;
     let total = if app.goal_text_scroll.is_cache_valid(cache_key) {
         app.goal_text_scroll.last_total
     } else {
@@ -877,6 +984,38 @@ fn normalize_list_marker(line: &str) -> String {
     line.to_string()
 }
 
+/// Compute a content-aware cache key for the goal-text pane's scroll cache.
+/// The key folds the pane width together with an FNV-1a hash over every
+/// span's content. Any change to the rendered content — including dynamic
+/// additions like the token-usage section (which arrives after a session
+/// runs), the running-reason line, or switching to a different goal at the
+/// same width — changes the key and invalidates the cached wrapped-line
+/// total so the scroll boundary always matches the rendered content.
+///
+/// A width-only key would miss all content changes: when token-usage data
+/// arrives, the content grows but the width stays the same, so the stale
+/// `line_count` would be reused and the new content would be unreachable by
+/// scrolling.
+///
+/// Performance: the goal-text pane's content is bounded by the goal file
+/// size (typically a few hundred lines). Hashing a few KB per frame is
+/// negligible — the unbounded-growth concern that motivated the REPL's
+/// `ReplBuffer` does not apply here.
+fn goal_text_cache_key(width: u16, lines: &[Line]) -> u64 {
+    // FNV-1a offset basis and prime.
+    let mut hash: u64 = 0xcbf29ce484222325;
+    // Mix in the width first so different widths always produce different keys.
+    hash = (hash ^ width as u64).wrapping_mul(0x100000001b3);
+    for line in lines {
+        for span in &line.spans {
+            for byte in span.content.bytes() {
+                hash = (hash ^ byte as u64).wrapping_mul(0x100000001b3);
+            }
+        }
+    }
+    hash
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1039,7 +1178,131 @@ mod tests {
         );
     }
 
-    /// Spec: scrolling back to the bottom re-engages follow.
+    /// Spec (tui — input cursor): when text wraps at a word boundary, the
+    /// cursor's column position must account for the space consumed at the
+    /// wrap boundary. Ratatui's WordWrapper drops the space between the two
+    /// lines, so the wrapped text shifts left by one column relative to a
+    /// naive `display_width % pane_width` division. This was the root cause
+    /// of the off-by-one cursor drift bug.
+    #[test]
+    fn test_spec_cursor_col_accounts_for_consumed_wrap_space() {
+        // "ab cd ef" at width 5:
+        // WordWrapper wraps: "ab cd" (5 chars) | "ef" (2 chars)
+        // The space before "ef" is consumed.
+        // Cursor at end (after "ef"): row 1, col 2.
+        // Naive division would say: 8 % 5 = 3 (WRONG — off by one).
+        let (row, col) = cursor_row_col("ab cd ef", 5);
+        assert_eq!(row, 1, "text wraps to 2 rows");
+        assert_eq!(col, 2, "cursor col must be 2 (space consumed at boundary), not 3");
+    }
+
+    /// Spec (tui — input cursor): cursor at the end of text that exactly
+    /// fills the first line (no word wrapping needed) must be at the start
+    /// of the next line (col 0, row 1), matching terminal cursor behavior.
+    #[test]
+    fn test_spec_cursor_at_exact_line_fill_wraps_to_next_row() {
+        // 5 chars at width 5: fills exactly. Cursor goes to next line.
+        let (row, col) = cursor_row_col("abcde", 5);
+        assert_eq!(row, 1, "cursor at exact fill wraps to next row");
+        assert_eq!(col, 0, "cursor at exact fill is at col 0 of next row");
+    }
+
+    /// Spec (tui — input cursor): cursor at end of text shorter than the
+    /// line width stays on row 0 with the correct column.
+    #[test]
+    fn test_spec_cursor_no_wrap_stays_on_row_zero() {
+        let (row, col) = cursor_row_col("abc", 10);
+        assert_eq!(row, 0);
+        assert_eq!(col, 3);
+    }
+
+    /// Spec (tui — input cursor): multiple word-boundary wraps compound the
+    /// consumed-space offset. Each wrap boundary consumes one space, so the
+    /// cursor drifts further from the naive division with each wrap.
+    #[test]
+    fn test_spec_cursor_multiple_word_wraps() {
+        // "ab cd ef gh" at width 5:
+        // Wrap 1: "ab cd" (5) → consume space → "ef" starts new line
+        // Wrap 2: "ef gh"? "ef" (2) + " " (1) + "gh" (2) = 5, fits!
+        // Row 0: "ab cd" | Row 1: "ef gh"
+        // Cursor at end: row 1, col 5 → wraps to row 2, col 0
+        let (row, col) = cursor_row_col("ab cd ef gh", 5);
+        assert_eq!(row, 2, "text wraps to 3 rows");
+        assert_eq!(col, 0, "last line exactly fills → cursor on next row");
+    }
+
+    /// Spec (tui — input cursor): cursor in the middle of text (not at end)
+    /// maps to the correct wrapped position. This covers the backspace case
+    /// where the cursor is mid-string.
+    #[test]
+    fn test_spec_cursor_mid_string_before_wrap_boundary() {
+        // "ab cd ef" at width 5. Cursor after "ab c" (4 chars).
+        // "ab c" fits on row 0 (4 < 5), so cursor is at row 0, col 4.
+        let (row, col) = cursor_row_col("ab c", 5);
+        assert_eq!(row, 0);
+        assert_eq!(col, 4);
+    }
+
+    /// Spec (tui — input cursor): cursor in the second word after a wrap
+    /// boundary lands on the correct row and column.
+    #[test]
+    fn test_spec_cursor_in_second_word_after_wrap() {
+        // "ab cd ef" at width 5. Text up to cursor: "ab cd e" (7 chars).
+        // Word wrapping: "ab cd" (row 0), then "e" on row 1.
+        // Cursor after "e": row 1, col 1.
+        // Naive: 7 % 5 = 2 (WRONG).
+        let (row, col) = cursor_row_col("ab cd e", 5);
+        assert_eq!(row, 1, "text up to cursor wraps to 2 rows");
+        assert_eq!(col, 1, "cursor col must be 1 (space consumed), not 2");
+    }
+
+    /// Spec (tui — input cursor): text without spaces wraps at exact
+    /// character boundaries (no word wrapping), so the cursor position
+    /// matches the naive division.
+    #[test]
+    fn test_spec_cursor_no_spaces_matches_naive_division() {
+        // "abcdefghij" (10 chars) at width 4:
+        // Character wrap: "abcd" | "efgh" | "ij"
+        // Cursor at end: row 2, col 2.
+        let (row, col) = cursor_row_col("abcdefghij", 4);
+        assert_eq!(row, 2);
+        assert_eq!(col, 2);
+    }
+
+    /// Spec (tui — input cursor): empty text → cursor at (0, 0).
+    #[test]
+    fn test_spec_cursor_empty_text() {
+        let (row, col) = cursor_row_col("", 10);
+        assert_eq!(row, 0);
+        assert_eq!(col, 0);
+    }
+
+    /// Spec (tui — input cursor): realistic prompt scenario. "tend> "
+    /// prefix wrapping with multi-word input.
+    #[test]
+    fn test_spec_cursor_with_prompt_prefix_wrapping() {
+        // "tend> hello world" at width 10.
+        // WordWrapper: "tend>" (5) | "hello" (5) | "world" (5)
+        // Each word fills a line. Cursor at end of "world": row 2, col 5.
+        let prefix = "tend> hello world";
+        let (row, col) = cursor_row_col(prefix, 10);
+        assert_eq!(row, 2);
+        assert_eq!(col, 5);
+    }
+
+    /// Spec (tui — input cursor): cursor at position mid-input that fits on
+    /// one line gives the correct column.
+    #[test]
+    fn test_spec_cursor_fits_on_one_line() {
+        // "hello world" (11 chars) at width 12 fits on one line.
+        let prefix = "hello world";
+        let (row, col) = cursor_row_col(prefix, 12);
+        assert_eq!(row, 0);
+        assert_eq!(col, 11);
+    }
+
+    /// Spec (tui — scroll behavior): scrolling back to the bottom re-engages
+    /// follow-tail mode (y snaps to None).
     #[test]
     fn test_spec_scroll_back_to_bottom_reengages_follow_tail() {
         let mut s = ScrollState::new();
@@ -2455,6 +2718,126 @@ plain trailing line";
             line_text.contains("600"),
             "aggregated metrics must contain avg output 600; got: {:?}",
             line_text,
+        );
+    }
+
+    /// Spec (tui — scroll behavior): the goal-text pane's scroll cache key must
+    /// be content-aware. When token-usage data arrives (adding lines to the
+    /// detail pane content) at the same pane width, the cache key must change
+    /// so the stale wrapped-line total is invalidated and the scroll boundary
+    /// expands to include the new content. This was the root cause of the bug
+    /// where the token-usage section was unreachable by scrolling until a
+    /// resize forced a recalculation.
+    #[test]
+    fn test_spec_goal_text_cache_key_changes_when_content_grows() {
+        // Simulate the goal detail pane content before and after token-usage
+        // data arrives — same pane width, more lines.
+        let width = 40u16;
+        let before: Vec<Line> = vec![
+            Line::from("header"),
+            Line::from(""),
+            Line::from("description line one"),
+            Line::from("description line two"),
+        ];
+        let mut after = before.clone();
+        // Token-usage section is appended dynamically when a session completes.
+        after.push(Line::from(""));
+        after.push(Line::from("Token usage"));
+        after.push(Line::from("  Sessions: 1    Total in: 5000    Total out: 800"));
+        after.push(Line::from("  Avg in/session: 5000    Avg out/session: 800"));
+
+        let key_before = goal_text_cache_key(width, &before);
+        let key_after = goal_text_cache_key(width, &after);
+        assert_ne!(
+            key_before, key_after,
+            "cache key must change when token-usage lines are added at the same width — \
+             otherwise the scroll boundary stays pinned to the stale total",
+        );
+    }
+
+    /// Spec (tui — scroll behavior): the cache key must change when switching
+    /// between goals at the same pane width, so the scroll boundary matches
+    /// the newly-selected goal's content rather than the previous one's.
+    #[test]
+    fn test_spec_goal_text_cache_key_changes_on_goal_switch_same_width() {
+        let width = 40u16;
+        let goal_a: Vec<Line> = vec![
+            Line::from("Goal A header"),
+            Line::from(""),
+            Line::from("A description line one"),
+            Line::from("A description line two"),
+        ];
+        let goal_b: Vec<Line> = vec![
+            Line::from("Goal B header"),
+            Line::from(""),
+            Line::from("B description line one"),
+            Line::from("B description line two"),
+        ];
+        let key_a = goal_text_cache_key(width, &goal_a);
+        let key_b = goal_text_cache_key(width, &goal_b);
+        assert_ne!(
+            key_a, key_b,
+            "cache key must differ for different goals at the same width — \
+             otherwise the scroll boundary from the previous goal persists",
+        );
+    }
+
+    /// Spec (tui — scroll behavior): the cache key must stay stable across
+    /// renders when neither the content nor the width changes, so the cached
+    /// wrapped-line total is reused (the optimization the cache exists for).
+    #[test]
+    fn test_spec_goal_text_cache_key_stable_when_content_unchanged() {
+        let width = 40u16;
+        let lines: Vec<Line> = vec![
+            Line::from("header"),
+            Line::from(""),
+            Line::from("description line one"),
+            Line::from("description line two"),
+        ];
+        let key1 = goal_text_cache_key(width, &lines);
+        let key2 = goal_text_cache_key(width, &lines);
+        assert_eq!(
+            key1, key2,
+            "cache key must be stable when content and width are unchanged",
+        );
+    }
+
+    /// Spec (tui — scroll behavior): the cache key must change when the pane
+    /// width changes, so the wrapped-line total is recomputed for the new
+    /// wrapping.
+    #[test]
+    fn test_spec_goal_text_cache_key_changes_on_width_change() {
+        let lines: Vec<Line> = vec![
+            Line::from("a line that might wrap differently at different widths"),
+        ];
+        let key_wide = goal_text_cache_key(80, &lines);
+        let key_narrow = goal_text_cache_key(40, &lines);
+        assert_ne!(
+            key_wide, key_narrow,
+            "cache key must change when pane width changes",
+        );
+    }
+
+    /// Spec (tui — scroll behavior): the cache key must change when the
+    /// running-reason line appears (session starts) at the same width,
+    /// so the scroll boundary expands to include it.
+    #[test]
+    fn test_spec_goal_text_cache_key_changes_when_reason_line_added() {
+        let width = 40u16;
+        let idle: Vec<Line> = vec![
+            Line::from("header"),
+            Line::from(""),
+            Line::from("description"),
+        ];
+        let mut running = idle.clone();
+        running.push(Line::from(""));
+        running.push(Line::from("▶ triggered by user message"));
+
+        let key_idle = goal_text_cache_key(width, &idle);
+        let key_running = goal_text_cache_key(width, &running);
+        assert_ne!(
+            key_idle, key_running,
+            "cache key must change when the running-reason line is added",
         );
     }
 

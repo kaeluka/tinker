@@ -6,6 +6,8 @@ build = "build.rs"
 
 [dependencies]
 ratatui = { version = "0.28", features = ["unstable-rendered-line-info"] }
+unicode-segmentation = "1.13"
+unicode-width = "0.1"
 crossterm = "0.28"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
